@@ -1,56 +1,125 @@
-# Claude Code
-# settings.local.json is per-developer (personal permission overrides); the
-# rest of .claude/ (settings.json, agents/, skills/) is shared, version-
-# controlled project config — part of the Module 5 agent extension pack
-# (05-agent-capabilities).
-.claude/settings.local.json
+# ConsoleTrack .gitignore
+# Folder patterns are anchored to specific paths on purpose: broad ones like
+# lib/ or build/ would silently ignore frontend/src/lib/ and chart folders.
 
-# Python
+# --- Secrets and local config ----------------------------------------------
+# .env is the single config file; only the example is committed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+kubeconfig
+kubeconfig*
+*.kubeconfig
+.kube/
+.aws/
+credentials.json
+
+# --- Claude Code ------------------------------------------------------------
+# settings.local.json and CLAUDE.local.md are per-developer overrides; the rest
+# of .claude/ (settings.json, agents/, skills/, hooks) is shared project config
+# and part of the agent extension pack.
+.claude/settings.local.json
+CLAUDE.local.md
+
+# --- Terraform --------------------------------------------------------------
+# Commit .terraform.lock.hcl so provider versions are pinned for CI.
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.json
+tfplan
+plan.out
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# Generated from .env by the Makefile
+*.auto.tfvars
+*.auto.tfvars.json
+backend.hcl
+.tflint.d/
+
+# --- Helm / Kubernetes ------------------------------------------------------
+# Commit Chart.lock; dependency tarballs are fetched by `helm dependency build`.
+helm/**/charts/*.tgz
+# Generated from .env by the Makefile
+helm/**/values.generated.yaml
+values.local.yaml
+
+# --- Python (backend, mcp-server, agent) -----------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
+.eggs/
+/backend/dist/
+/backend/build/
+/mcp-server/**/dist/
+/mcp-server/**/build/
 .venv/
 venv/
-ENV/
-env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+.ipynb_checkpoints/
 
-# Django
+# --- Node (frontend) --------------------------------------------------------
+node_modules/
+/frontend/dist/
+/frontend/build/
+/frontend/.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+coverage/
+
+# --- End-to-end tests -------------------------------------------------------
+playwright-report/
+test-results/
+blob-report/
+/playwright/.cache/
+
+# --- Local runtime data -----------------------------------------------------
 *.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-media/
-
-# SQLite (local dev databases, e.g. 02-development/src/backend/waitflow.db)
 *.db
 *.db-journal
+*.sqlite3
+# Local Postgres / ElasticMQ volumes from docker compose
+.data/
+tmp/
+.tmp/
 
-# Environment variables
-.env
-.env.*
-!.env.example
+# --- Recordings -------------------------------------------------------------
+# Raw demo recordings stay out of git; publish them and link from the README.
+*.mp4
+*.mov
+*.webm
 
-# IDE & OS
+# --- IDE & OS ---------------------------------------------------------------
 .DS_Store
+Thumbs.db
 .idea/
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 *.swp
+*.swo
+*~
+.devcontainer/.env
