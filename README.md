@@ -1,7 +1,5 @@
 # ConsoleTrack
 
-> ConsoleTrack turns undocumented cloud changes into documented, reviewable records.
-
 <!-- TODO badges: CI | Terraform | License -->
 <!-- TODO screenshot: docs/mockups/change-log.png -->
 
