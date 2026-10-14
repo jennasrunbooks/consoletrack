@@ -129,7 +129,7 @@ See [docs/agent-extension-pack.md](docs/agent-extension-pack.md): `agent-capabil
 
 - No long-lived AWS keys: GitHub Actions uses OIDC roles (plan, apply, revert, deploy), and pods use EKS Pod Identity.
 - Least-privilege IAM under the `/ct/` path with a permissions boundary.
-- Apply and Revert require approval in the `infra-apply` and `revert` GitHub environments.
+- Apply and Revert require approval in the `consoletrack-apply` and `consoletrack-revert` GitHub environments.
 - Private nodes; the API endpoint is public, restricted with `ALLOWED_CIDRS` <!-- TODO confirm -->
 
 Details: [docs/permissions.md](docs/permissions.md) · [security/](security/)
