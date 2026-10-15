@@ -9,10 +9,16 @@ info:
     `backend/tests/contract/` fails if FastAPI's generated schema drifts from it.
 
     **Auth.** Two fixed accounts, `admin` and a read-only `viewer`, each get a session cookie
-    from `POST /api/v1/auth/login`. Every read accepts either role; every write requires
-    `admin` (listed as the `admin` role on the `sessionCookie` requirement, and stated in the
-    operation's description). Alertmanager authenticates with a bearer token; GitHub signs its
-    webhook with HMAC (see `githubSignature`).
+    from `POST /api/v1/auth/login`. The cookie is `HttpOnly; Secure; SameSite=Strict`, which is
+    what keeps another site from triggering an admin write (CSRF). Every read accepts either
+    role; every write requires `admin` (listed as the `admin` role on the `sessionCookie`
+    requirement, and stated in the operation's description). Alertmanager authenticates with a
+    bearer token; GitHub signs its webhook with HMAC-SHA256 (see `githubSignature`).
+
+    **Revert status.** The backend polls the dispatched workflow run's status through the GitHub
+    API, which works with any `EXPOSURE`. The `workflow_run` webhook is an optional extra for
+    `EXPOSURE=alb`, where GitHub can reach the backend. Either path moves the change through the
+    same state machine, and whichever reports first wins.
 
     **Phases.** Operations without `x-phase` are Phase 1. `x-phase: 2` marks operations whose
     contract is fixed now but that ship in Phase 2; until then they return `501`.
@@ -70,7 +76,11 @@ paths:
           description: Logged in. The session cookie is set.
           headers:
             Set-Cookie:
-              description: "`ct_session`, HttpOnly, Secure (except on localhost), SameSite=Lax."
+              description: |
+                `ct_session=<opaque>; HttpOnly; Secure; SameSite=Strict; Path=/`. SameSite=Strict
+                is the CSRF defense for every admin write: another site can't make the browser
+                send this cookie. Browsers treat http://localhost as secure, so Secure also works
+                locally.
               schema:
                 type: string
           content:
@@ -121,7 +131,8 @@ paths:
       summary: List changes (the change log)
       description: |
         Newest first by `event_time`. Filters combine with AND; repeated values of one filter
-        (`status=a&status=b`) combine with OR. `counts` in the response ignores the filters.
+        (`status=a&status=b`) combine with OR. `counts` in the response applies every filter
+        except `status`, so the status chips keep their numbers while one status is selected.
       parameters:
         - name: status
           in: query
@@ -226,9 +237,11 @@ paths:
       description: |
         Requires admin. Dispatches `revert.yaml` for this change; the run then waits in the
         `consoletrack-revert` GitHub environment for a reviewer before anything is applied. The
-        change moves `awaiting_review` → `reverting`, and to `reverted` or `failed` when the
-        GitHub `workflow_run` webhook reports the outcome. `run_url` is null if GitHub hasn't
-        returned the run yet; it then appears on the change's remediation. In replay mode
+        change moves `awaiting_review` → `reverting`, and to `reverted` or `failed` when the run
+        finishes. The backend learns that by polling the run's status (the default, and the only
+        path with `EXPOSURE=port-forward`), or sooner from the optional `workflow_run` webhook.
+        `run_url` is null if GitHub hasn't returned the run yet; it then appears on the change's
+        remediation. In replay mode
         (`IntakeState` = `replay`) this returns `409` ("AWS required").
       security:
         - sessionCookie: [admin]
@@ -643,7 +656,10 @@ paths:
       operationId: receiveGithubWorkflowRun
       summary: Update a revert's status when its workflow run finishes
       description: |
-        GitHub `workflow_run` webhook, signed with `X-Hub-Signature-256`. Only `revert.yaml`
+        Optional. The backend already polls each revert run's status, so Revert works without
+        this webhook; it only shortens the wait when GitHub can reach the backend
+        (`EXPOSURE=alb`). Signed with `X-Hub-Signature-256` using `GITHUB_WEBHOOK_SECRET`; the
+        backend returns `401` on a missing or bad signature. Only `revert.yaml`
         runs are acted on, matched to a change by the run's `display_title`
         (`revert change <id>`); other events are acknowledged and ignored. A `completed` run
         moves the change to `reverted` (conclusion `success`) or `failed` (anything else).
@@ -793,8 +809,9 @@ components:
       in: cookie
       name: ct_session
       description: |
-        Session cookie from `POST /api/v1/auth/login`. Roles: `admin` (everything) and `viewer`
-        (reads only). A requirement listing `admin` means the viewer gets `403`.
+        Session cookie from `POST /api/v1/auth/login`, set `HttpOnly; Secure; SameSite=Strict`.
+        Roles: `admin` (everything) and `viewer` (reads only). A requirement listing `admin`
+        means the viewer gets `403`.
     webhookBearer:
       type: http
       scheme: bearer
@@ -804,8 +821,10 @@ components:
       in: header
       name: X-Hub-Signature-256
       description: |
-        `sha256=<hex>` HMAC of the raw body with the webhook secret, as GitHub sends it. GitHub
-        webhooks can't send an `Authorization` header, so a bearer token doesn't work here.
+        `sha256=<hex>`: HMAC-SHA256 of the raw request body, keyed with `GITHUB_WEBHOOK_SECRET`
+        from `.env`, as GitHub sends it. The backend recomputes it over the raw bytes and compares
+        with a constant-time comparison (`hmac.compare_digest`). GitHub webhooks can't send an
+        `Authorization` header, so a bearer token doesn't work here.
 
   parameters:
     ChangeId:
@@ -899,10 +918,11 @@ components:
     Via:
       type: string
       description: |
-        Where an out-of-band change came from, from the CloudTrail user agent. CloudShell counts
-        as `cli`. `terraform_outside_pipeline` is a Terraform user agent from a caller that isn't
-        a pipeline role.
-      enum: [console, cli, sdk, terraform_outside_pipeline]
+        Where an out-of-band change came from, from the CloudTrail user agent. `cloudshell` is
+        an AWS CLI call that carries CloudShell's user-agent marker; the plain `aws-cli/...`
+        agent is `cli`. `terraform_outside_pipeline` is a Terraform user agent from a caller that
+        isn't a pipeline role.
+      enum: [console, cli, cloudshell, sdk, terraform_outside_pipeline]
     Risk:
       type: string
       enum: [low, medium, high]
@@ -1263,14 +1283,15 @@ components:
     ChangeCounts:
       type: object
       description: |
-        Numbers for the change log's summary tiles and status chips, over all changes
-        (filters don't apply). "Closed" = `reverted` + `accepted` + `codified`.
+        Numbers for the change log's summary tiles and status chips. Every list filter applies
+        except `status`, which is ignored here so that viewing `accepted` still shows
+        "awaiting review: 3" on its chip. "Closed" = `reverted` + `accepted` + `codified`.
       required:
         [by_status, total, awaiting_review, high_risk_open, linked_to_incident, closed_last_7_days]
       properties:
         by_status:
           type: object
-          description: Count per `ChangeStatus`; every status is present, zero if none.
+          description: Count per `ChangeStatus` (ignoring the `status` filter); every status is present, zero if none.
           propertyNames:
             $ref: "#/components/schemas/ChangeStatus"
           additionalProperties:

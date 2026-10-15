@@ -76,15 +76,15 @@ make open                   # port-forwards the UI (EXPOSURE=alb for a load bala
 ### Demo scenarios
 
 ```bash
-make scenario-drift         # ClickOps change to demo-app-sg
-make scenario-identity      # IAM change that breaks demo-app's Pod Identity → AccessDenied
+make demo-drift             # opens port 22 to the internet on demo-app-sg (no outage)
+make demo-identity          # removes s3:GetObject from the demo app role → AccessDenied incident
 ```
 
 ### Teardown
 
 ```bash
 make down
-make teardown-verify        # confirms nothing billable is left
+make verify-clean           # confirms nothing billable is left
 ```
 
 ## Cost
@@ -137,7 +137,7 @@ Details: [docs/permissions.md](docs/permissions.md) · [security/](security/)
 See [AGENTS.md](AGENTS.md) for conventions used by humans and coding agents.
 
 ```bash
-make dev                    # <!-- TODO -->
+make help                   # lists every target
 make test
 make lint
 ```
