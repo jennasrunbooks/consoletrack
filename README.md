@@ -146,10 +146,10 @@ make lint
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `ci.yml` | PR, push | lint, unit + integration tests, image build |
-| `terraform.yml` | PR / merge touching `terraform/**` | per-account matrix: plan on PR, apply on `main` after `<account>-apply` approval |
-| `revert.yml` | Revert button | re-applies `terraform/demo-app/us-east-1` after `revert` approval |
-| `deploy.yml` | merge to `main` | pushes arm64 images to GHCR, Helm upgrade |
+| `ci.yaml` | PR, push | lint, unit + integration tests, image build |
+| `terraform.yaml` | PR / merge touching `terraform/**` | per-account matrix: plan on PR, apply on `main` after `<account>-apply` approval |
+| `revert.yaml` | Revert button | re-applies `terraform/demo-app/us-east-1` after `revert` approval |
+| `deploy.yaml` | merge to `main` | pushes arm64 images to GHCR, Helm upgrade |
 
 ## Repository layout
 
