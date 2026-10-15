@@ -120,7 +120,7 @@ and the `main` ruleset. Don't try to work around a block — report it.
 
 **Frontend**
 - Only `frontend/src/api/` calls the backend. Keep types in sync with `openapi.yaml`.
-- Match the mockups in `docs/design/` (light and dark theme, yellow prompt-caret logo).
+- Match the mockups in `docs/mockups/` (light and dark theme, yellow prompt-caret logo).
 
 **YAML and files**
 - Use `.yaml`, not `.yml`.
