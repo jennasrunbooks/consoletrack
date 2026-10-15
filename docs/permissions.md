@@ -17,7 +17,7 @@ bypassed.
 | GitHub token | Fine-grained PAT, owned by a human (see the spec's "Development-time access") | Contents and PRs only. No Workflows permission, so pushes that touch `.github/workflows/` are rejected; no Administration, Secrets, or Environments, so no ruleset, secret, or environment changes. | Pushing feature branches and opening PRs, which is the job. |
 | `main` ruleset | GitHub repo settings | Direct pushes and merges to `main`: everything needs a PR with your approval and passing CI. A commit made on local `main` can't land. | What's in the PR; that's what review is for. |
 | Environments | GitHub environments `consoletrack-apply`, `consoletrack-revert` (with the Terraform and revert workflows) | `terraform apply` and Revert runs wait for a named reviewer, and only those environments' OIDC roles can write to AWS. | Plans, which are read-only. |
-| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). | — |
+| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
 | `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env` and the common `.env.<name>` variants (listed one by one, because deny globs can't exclude `.env.example`, which the agent maintains), editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
 | PreToolUse guard | `agent-hooks/guard.py` | Tokenizes each command and file path and blocks everything in `AGENTS.md → Hard rules` that a tool call can break, including chained, wrapped, and nested forms. See [agent-extension-pack.md](agent-extension-pack.md#hooks). | See "What the guard can't see" below. |
 | PostToolUse lint | `agent-hooks/lint_edited.py` | Lint errors in edited Python, frontend, and Terraform files, reported back in the same turn. | It's a quality check, not a security control. |
@@ -76,3 +76,10 @@ the spec's reviewer setup), and a human reviews every PR, including any script t
   `agent-hooks/tests/test_guard.py`, a mirror in `permissions.deny` if a simple pattern fits,
   and a row in the tables here and in [agent-extension-pack.md](agent-extension-pack.md).
 - A false positive → add the command to the `ALLOWED` list in the tests first, then fix the guard.
+- New `make` test or lint target → add its own exact `Bash(make <target>)` entry to
+  `permissions.allow`. Never use a wildcard on `make`: an allow rule matches the rest of the
+  line, so `Bash(make test-*)` would also let `make test-hooks down` run without a prompt. The
+  guard can't see what a `make` target does, so this matters.
+- **No `make` target that touches AWS or a cluster is ever added to `permissions.allow`**: not
+  `up`, `down`, `deploy`, `revert`, `demo-*`, `domain*`, `bootstrap`, `audit-rbac`, or
+  `test-k8s` (kind). They always prompt, and the agent's own PRs follow this rule too.
