@@ -8,25 +8,46 @@ MAKEFILE := $(lastword $(MAKEFILE_LIST))
 # --- Configuration from .env ------------------------------------------------------------------
 # .env holds plain KEY=value lines (see .env.example). Anything already set in the shell wins,
 # so `op run --env-file=.env -- make up` and keychain exports work: remember the shell's
-# variables, include .env, then put back any shell variable that .env overrode.
+# variables, include .env, then put back any shell variable that .env overrode. A secret can
+# therefore be empty (or an op:// reference) in .env and still arrive from the shell.
+# ENV_FILE points somewhere else for a second config or for testing.
 # Recipes must never echo these values; print names only.
+ENV_FILE ?= .env
 _SHELL_VARS := $(foreach v,$(.VARIABLES),$(if $(filter environment,$(origin $v)),$v))
 $(foreach v,$(_SHELL_VARS),$(eval _shell_$v := $$(value $v)))
--include .env
+-include $(ENV_FILE)
 $(foreach v,$(_SHELL_VARS),$(if $(filter file,$(origin $v)),$(eval $v := $$(_shell_$v))))
 export
 
-# Required for anything that touches AWS. Conditional ones are added below.
-REQUIRED_VARS := AWS_PROFILE AWS_REGION ANTHROPIC_API_KEY
+# What each kind of target requires. lint, test, fmt, and help require none of these, so CI
+# and reviewers without AWS access or an API key can always run them.
+# AWS access only: teardown and scenarios, so `make down` works even without an API key.
+ENV_AWS := AWS_PROFILE AWS_REGION
+# Running the triage agent locally (kind, Compose, demo-replay, evals).
+ENV_LOCAL := ANTHROPIC_API_KEY
+# Standing up the platform: AWS, the API key it stores in the cluster, and settings that the
+# enabled features need.
+ENV_UP := $(ENV_AWS) ANTHROPIC_API_KEY
 ifeq ($(ENABLE_GITHUB_OIDC),true)
-REQUIRED_VARS += GITHUB_REPO
+ENV_UP += GITHUB_REPO
 endif
 ifeq ($(ENABLE_BUDGET),true)
-REQUIRED_VARS += BUDGET_EMAIL
+ENV_UP += BUDGET_EMAIL
 endif
 ifneq ($(strip $(DOMAIN)),)
-REQUIRED_VARS += DNS_PARENT
+ENV_UP += DNS_PARENT
 endif
+
+# Fails listing the names in $(1) that are unset, empty, or still an unresolved op:// reference
+# (`make` run without `op run`). Never prints a value.
+check_env = @missing="$(strip $(foreach v,$(1),$(if $(filter-out op://%,$(strip $($v))),,$v)))"; \
+	if [ -n "$$missing" ]; then \
+		echo "make $@: missing required variables (set them in your shell or $(ENV_FILE);" \
+			"an op:// reference needs \`op run --env-file=$(ENV_FILE) -- make $(MAKECMDGOALS)\`):" >&2; \
+		for v in $$missing; do echo "  $$v" >&2; done; \
+		exit 1; \
+	fi; \
+	echo "make $@: required variables are set: $(strip $(1))"
 
 # .env names passed to Terraform as TF_VAR_<lowercase name>. Secrets such as ANTHROPIC_API_KEY
 # are deliberately absent: they go to Kubernetes Secrets, never into Terraform state. Only
@@ -49,7 +70,7 @@ TERRAFORM ?= terraform
 todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
-.PHONY: help lint test fmt env-check tf-env \
+.PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local tf-env \
 	test-hooks lint-hooks lint-openapi lint-terraform \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
@@ -102,14 +123,16 @@ test-k8s: ## k8s-mcp against kind with real RBAC (stub)
 
 ##@ Configuration
 
-env-check: ## Fail with the names of required variables that are missing (never prints values)
-	@missing="$(strip $(foreach v,$(REQUIRED_VARS),$(if $(strip $($v)),,$v)))"; \
-	if [ -n "$$missing" ]; then \
-		echo "Missing required variables (set them in .env or your shell):" >&2; \
-		for v in $$missing; do echo "  $$v" >&2; done; \
-		exit 1; \
-	fi; \
-	echo "All required variables are set: $(REQUIRED_VARS)"
+env-check: env-check-up ## Everything `make up` needs; same as env-check-up
+
+env-check-up: ## Required for preflight, up: AWS, API key, enabled features (names only)
+	$(call check_env,$(ENV_UP))
+
+env-check-aws: ## Required for AWS-only targets (deploy, down, scenarios, revert)
+	$(call check_env,$(ENV_AWS))
+
+env-check-local: ## Required for local, demo-replay, eval: the API key only
+	$(call check_env,$(ENV_LOCAL))
 
 tf-env: ## Show which .env names map to which TF_VAR_* and whether each is set (no values)
 	@$(foreach v,$(TF_INPUTS),printf "  %-26s <- %-20s %s\n" "$(call tf_var,$v)" "$v" \
@@ -117,66 +140,66 @@ tf-env: ## Show which .env names map to which TF_VAR_* and whether each is set (
 
 ##@ AWS deployment
 
-preflight: ## Check tools, AWS identity, quotas, K8s version, API key, CAA (stub)
+preflight: env-check-up ## Check tools, AWS identity, quotas, K8s version, API key, CAA (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-bootstrap: ## Create the Terraform state bucket and NAME_SUFFIX (stub)
+bootstrap: env-check-aws ## Create the Terraform state bucket and NAME_SUFFIX (stub)
 	$(call todo,#3)
 
-up: ## Create the platform, add-ons, and app; print the dashboard URL (stub)
+up: env-check-up ## Create the platform, add-ons, and app; print the dashboard URL (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-deploy: ## helm upgrade the consoletrack chart (stub)
+deploy: env-check-aws ## helm upgrade the consoletrack chart (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-open: ## Port-forward the dashboard and open it (stub)
+open: env-check-aws ## Port-forward the dashboard and open it (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-down: ## Destroy demo-app and the regional platform; keep global and state (stub)
+down: env-check-aws ## Destroy demo-app and the regional platform; keep global and state (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-down-all: ## down, plus the global root and the state bucket (stub)
+down-all: env-check-aws ## down, plus the global root and the state bucket (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-verify-clean: ## Fail if project-tagged billable resources remain (stub)
+verify-clean: env-check-aws ## Fail if project-tagged billable resources remain (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
 ##@ Custom domain
 
-domain: ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
+domain: env-check-aws ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-domain-zone: ## Create the Route 53 zone and print the NS records (stub)
+domain-zone: env-check-aws ## Create the Route 53 zone and print the NS records (stub)
 	$(call todo,#3)
 
-domain-cert: ## Wait for delegation, then issue the ACM certificate (stub)
+domain-cert: env-check-aws ## Wait for delegation, then issue the ACM certificate (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-domain-destroy: ## Remove the zone (stub)
+domain-destroy: env-check-aws ## Remove the zone (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
 ##@ Demo and evaluation
 
-local: ## Full stack on kind + Compose, no AWS (stub)
+local: env-check-local ## Full stack on kind + Compose, no AWS (stub)
 	$(call todo,the tests + evals workstream; no issue yet)
 
-demo-replay: ## Local stack with recorded CloudTrail events, no AWS (stub)
+demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
 	$(call todo,the change intake + aws-mcp workstream; no issue yet)
 
-demo: ## Run the three cluster fault scenarios (stub)
+demo: env-check-aws ## Run the three cluster fault scenarios (stub)
 	$(call todo,the agent loop workstream; no issue yet)
 
-demo-drift: ## Open port 22 on the demo security group as the developer role (stub)
+demo-drift: env-check-aws ## Open port 22 on the demo security group as the developer role (stub)
 	$(call todo,the cloud scenarios + revert workstream; no issue yet)
 
-demo-identity: ## Remove s3:GetObject from the demo app role as the developer role (stub)
+demo-identity: env-check-aws ## Remove s3:GetObject from the demo app role as the developer role (stub)
 	$(call todo,the cloud scenarios + revert workstream; no issue yet)
 
-revert: ## Plan and apply the demo-app root for CHANGE=<id>, with confirmation (stub)
+revert: env-check-aws ## Plan and apply the demo-app root for CHANGE=<id>, with confirmation (stub)
 	$(call todo,the cloud scenarios + revert workstream; no issue yet)
 
-eval: ## Agent eval against kind with the real model (stub)
+eval: env-check-local ## Agent eval against kind with the real model (stub)
 	$(call todo,the tests + evals workstream; no issue yet)
 
-audit-rbac: ## kubectl auth can-i --list for each ServiceAccount (stub)
+audit-rbac: env-check-aws ## kubectl auth can-i --list for each ServiceAccount (stub)
 	$(call todo,the tests + evals workstream; no issue yet)
