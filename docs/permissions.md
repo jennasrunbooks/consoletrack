@@ -25,17 +25,18 @@ bypassed.
 
 ### Guard and deny rules
 
-Both block the same things on purpose, so a gap in one is covered by the other. Which one
-answers first depends on the tool (observed with Claude Code 2.1.300):
+What we observed in fresh sessions on Claude Code 2.1.300:
 
-- **Bash.** The PreToolUse guard runs before permission rules. When it blocks (exit 2), the
-  agent sees the guard's message, which names the rule and points to `AGENTS.md`. The `Bash(…)`
-  deny rules only matter if the guard lets a command through.
-- **Read, Edit, Write on a denied path.** The tool rejects the path while validating its input,
-  before hooks run. The agent sees Claude Code's generic `File is in a directory that is denied
-  by your permission settings.` For `.github/workflows/`, that means the agent doesn't see the
-  guard's pointer to `docs/proposed-workflows/`. `AGENTS.md` rule 4 gives the same instruction.
-  If a path gets past the deny rules, the guard still runs and blocks it with its own message.
+- **Bash.** The guard runs first, and its message is what the agent sees. That held for
+  `terraform apply` even though `Bash(terraform apply*)` is also a deny rule.
+- **Edit and Write on denied paths** (`.github/workflows/**`, `CLAUDE.md`). The deny rule is
+  checked first. The agent gets the generic `File is in a directory that is denied by your
+  permission settings.`, and the guard doesn't run. For `.github/workflows/`, that means the
+  agent doesn't see the guard's pointer to `docs/proposed-workflows/`. `AGENTS.md` rule 4
+  gives the same instruction.
+
+The call is blocked either way. The deny rules are kept as a backup in case the hook fails:
+for example, if `python3` is missing, the hook times out, or the guard has a parsing gap.
 
 ### What the guard can't see
 
