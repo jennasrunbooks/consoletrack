@@ -1,23 +1,182 @@
-# ConsoleTrack Makefile. Minimal for now: the full skeleton (up, deploy, demo-*, ...)
-# comes in the next issue.
+# ConsoleTrack Makefile: the one interface for humans, the agent, and CI.
+# `make help` lists every target. Targets marked "stub" exist so the interface is fixed early;
+# they fail with the issue or workstream that fills them in.
 
+# This file's own path, taken before .env is included (help must never read .env).
+MAKEFILE := $(lastword $(MAKEFILE_LIST))
+
+# --- Configuration from .env ------------------------------------------------------------------
+# .env holds plain KEY=value lines (see .env.example). Anything already set in the shell wins,
+# so `op run --env-file=.env -- make up` and keychain exports work: remember the shell's
+# variables, include .env, then put back any shell variable that .env overrode.
+# Recipes must never echo these values; print names only.
+_SHELL_VARS := $(foreach v,$(.VARIABLES),$(if $(filter environment,$(origin $v)),$v))
+$(foreach v,$(_SHELL_VARS),$(eval _shell_$v := $$(value $v)))
+-include .env
+$(foreach v,$(_SHELL_VARS),$(if $(filter file,$(origin $v)),$(eval $v := $$(_shell_$v))))
+export
+
+# Required for anything that touches AWS. Conditional ones are added below.
+REQUIRED_VARS := AWS_PROFILE AWS_REGION ANTHROPIC_API_KEY
+ifeq ($(ENABLE_GITHUB_OIDC),true)
+REQUIRED_VARS += GITHUB_REPO
+endif
+ifeq ($(ENABLE_BUDGET),true)
+REQUIRED_VARS += BUDGET_EMAIL
+endif
+ifneq ($(strip $(DOMAIN)),)
+REQUIRED_VARS += DNS_PARENT
+endif
+
+# .env names passed to Terraform as TF_VAR_<lowercase name>. Secrets such as ANTHROPIC_API_KEY
+# are deliberately absent: they go to Kubernetes Secrets, never into Terraform state. Only
+# non-empty values are exported, so Terraform falls back to the variable's default otherwise.
+# ALLOWED_CIDRS and WATCHED_IAM_PATHS stay comma-separated strings; the roots split them.
+TF_INPUTS := AWS_REGION NAME_SUFFIX GITHUB_REPO ENABLE_GITHUB_OIDC K8S_VERSION USE_SPOT \
+	NODE_INSTANCE_TYPE EXPOSURE ALLOWED_CIDRS DOMAIN DNS_PARENT ENABLE_BUDGET BUDGET_LIMIT_USD \
+	BUDGET_EMAIL WATCHED_IAM_PATHS
+tf_var = TF_VAR_$(shell echo '$(1)' | tr '[:upper:]' '[:lower:]')
+$(foreach v,$(TF_INPUTS),$(if $(strip $($v)),$(eval export $(call tf_var,$v) = $$($v))))
+
+# --- Tools ------------------------------------------------------------------------------------
 # Pinned so `make lint` gives the same answer everywhere. Bump deliberately.
 RUFF ?= uvx ruff@0.16.10
 PYTEST ?= uvx pytest@9.1.1
+OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
+TERRAFORM ?= terraform
+
+# Stub for a target a later issue fills in: says where it belongs and fails.
+todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
-.PHONY: help test lint test-hooks lint-hooks
+.PHONY: help lint test fmt env-check tf-env \
+	test-hooks lint-hooks lint-openapi lint-terraform \
+	test-backend test-frontend test-contract test-integration test-k8s \
+	preflight bootstrap up down down-all verify-clean deploy open \
+	domain domain-zone domain-cert domain-destroy \
+	local demo demo-replay demo-drift demo-identity revert eval audit-rbac
+
+##@ Development
 
 help: ## List targets
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
+	@awk 'BEGIN {FS = ":.*## "} \
+		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
+		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
+
+lint: lint-hooks lint-openapi ## Lint and format checks (run before every commit)
 
 test: test-hooks ## Unit tests (run before every commit)
 
-lint: lint-hooks ## Lint and format checks
-
-test-hooks: ## Tests for agent-hooks/
-	$(PYTEST) agent-hooks/tests -q
+fmt: ## Format Python and Terraform in place
+	$(RUFF) format agent-hooks
+	@if command -v $(TERRAFORM) >/dev/null; then $(TERRAFORM) fmt -recursive terraform/; \
+		else echo "terraform not installed; skipped terraform fmt" >&2; fi
 
 lint-hooks: ## ruff check + format check for agent-hooks/
 	$(RUFF) check agent-hooks
 	$(RUFF) format --check agent-hooks
+
+lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
+	$(OPENAPI_VALIDATOR) openapi.yaml
+
+lint-terraform: ## terraform fmt check (CI job terraform-fmt)
+	$(TERRAFORM) fmt -check -recursive terraform/
+
+test-hooks: ## Tests for agent-hooks/
+	$(PYTEST) agent-hooks/tests -q
+
+test-backend: ## Backend unit tests (stub)
+	$(call todo,#4)
+
+test-contract: ## FastAPI schema matches openapi.yaml (stub)
+	$(call todo,#4)
+
+test-integration: ## Backend integration tests, needs Docker (stub)
+	$(call todo,#4)
+
+test-frontend: ## Frontend lint and Vitest (stub)
+	$(call todo,the frontend + change log workstream; no issue yet)
+
+test-k8s: ## k8s-mcp against kind with real RBAC (stub)
+	$(call todo,the tests + evals workstream; no issue yet)
+
+##@ Configuration
+
+env-check: ## Fail with the names of required variables that are missing (never prints values)
+	@missing="$(strip $(foreach v,$(REQUIRED_VARS),$(if $(strip $($v)),,$v)))"; \
+	if [ -n "$$missing" ]; then \
+		echo "Missing required variables (set them in .env or your shell):" >&2; \
+		for v in $$missing; do echo "  $$v" >&2; done; \
+		exit 1; \
+	fi; \
+	echo "All required variables are set: $(REQUIRED_VARS)"
+
+tf-env: ## Show which .env names map to which TF_VAR_* and whether each is set (no values)
+	@$(foreach v,$(TF_INPUTS),printf "  %-26s <- %-20s %s\n" "$(call tf_var,$v)" "$v" \
+		"$(if $(strip $($v)),set,unset (Terraform default))";)
+
+##@ AWS deployment
+
+preflight: ## Check tools, AWS identity, quotas, K8s version, API key, CAA (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+bootstrap: ## Create the Terraform state bucket and NAME_SUFFIX (stub)
+	$(call todo,#3)
+
+up: ## Create the platform, add-ons, and app; print the dashboard URL (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+deploy: ## helm upgrade the consoletrack chart (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+open: ## Port-forward the dashboard and open it (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+down: ## Destroy demo-app and the regional platform; keep global and state (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+down-all: ## down, plus the global root and the state bucket (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+verify-clean: ## Fail if project-tagged billable resources remain (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+##@ Custom domain
+
+domain: ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+domain-zone: ## Create the Route 53 zone and print the NS records (stub)
+	$(call todo,#3)
+
+domain-cert: ## Wait for delegation, then issue the ACM certificate (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+domain-destroy: ## Remove the zone (stub)
+	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+
+##@ Demo and evaluation
+
+local: ## Full stack on kind + Compose, no AWS (stub)
+	$(call todo,the tests + evals workstream; no issue yet)
+
+demo-replay: ## Local stack with recorded CloudTrail events, no AWS (stub)
+	$(call todo,the change intake + aws-mcp workstream; no issue yet)
+
+demo: ## Run the three cluster fault scenarios (stub)
+	$(call todo,the agent loop workstream; no issue yet)
+
+demo-drift: ## Open port 22 on the demo security group as the developer role (stub)
+	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+
+demo-identity: ## Remove s3:GetObject from the demo app role as the developer role (stub)
+	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+
+revert: ## Plan and apply the demo-app root for CHANGE=<id>, with confirmation (stub)
+	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+
+eval: ## Agent eval against kind with the real model (stub)
+	$(call todo,the tests + evals workstream; no issue yet)
+
+audit-rbac: ## kubectl auth can-i --list for each ServiceAccount (stub)
+	$(call todo,the tests + evals workstream; no issue yet)
