@@ -1,8 +1,9 @@
 # PROPOSED: a human needs to move this to .github/workflows/ci.yaml.
 # (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
 #
-# Runs the same checks as `make lint` and `make test`. Today that is the agent-hooks
-# tests; later issues add backend, frontend, Terraform, and Helm jobs here.
+# The job names `lint` and `test` are stable on purpose: the main ruleset requires them
+# as status checks. `make lint` and `make test` grow as backend, frontend, and Terraform
+# checks are added, so these names stay correct and the ruleset doesn't need to change.
 name: ci
 
 on:
@@ -18,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  hooks:
-    name: lint + test (agent-hooks)
+  lint:
+    name: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -30,4 +31,16 @@ jobs:
         with:
           python-version: "3.12"
       - run: make lint
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
       - run: make test
