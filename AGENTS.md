@@ -65,6 +65,8 @@ Run from the repo root unless noted. Prefer `make` targets over ad-hoc commands.
 
 If a `make` target doesn't exist yet, add it in the same PR instead of documenting a one-off command.
 
+Integration tests, `make local`, and `make demo-replay` need Docker, which the devcontainer deliberately doesn't have, so they run in CI (and on the host); don't try to install Docker.
+
 ## Hard rules
 
 These are enforced by `.claude/settings.json`, hooks in `agent-hooks/`, the agent's GitHub token,
