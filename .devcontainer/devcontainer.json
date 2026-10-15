@@ -1,5 +1,5 @@
 {
-  "name": "Full-Stack Claude Agent Workspace",
+  "name": "ConsoleTrack agent workspace",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -7,7 +7,16 @@
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers-extra/features/uv:1": {},
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
-    "ghcr.io/devcontainers/features/node:2": {}
+    "ghcr.io/devcontainers/features/node:2": {},
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "1.13.4",
+      "tflint": "latest"
+},
+    "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+      "version": "latest",
+      "helm": "latest",
+      "minikube": "none"
+}
   },
   "runArgs": [
     "--cap-drop=ALL",
@@ -31,7 +40,10 @@
         "anthropic.claude-code",
         "ms-python.python",
         "ms-python.vscode-pylance",
-        "batisteo.vscode-django",
+        "hashicorp.terraform",
+        "redhat.vscode-yaml",
+        "charliermarsh.ruff",
+        "dbaeumer.vscode-eslint",
         "shd101wyy.markdown-preview-enhanced"
       ]
     }
