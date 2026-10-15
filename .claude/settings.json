@@ -54,6 +54,8 @@
       "Read(./.env.*)",
       "Read(./**/.env)",
       "Read(./**/.env.*)",
+      "Edit(./.github/workflows/**)",
+      "Write(./.github/workflows/**)",
       "Edit(./**/CLAUDE.md)",
       "Write(./**/CLAUDE.md)",
       "Edit(./**/CLAUDE.local.md)",

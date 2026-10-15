@@ -95,7 +95,8 @@ layers that hold even if a hook is bypassed are the ones outside the agent's pro
   locally can't land.
 - **Environments.** Terraform apply and revert run only from GitHub environments that need a
   named reviewer (once the Terraform and revert workflows land).
-- **`permissions.deny`** in `.claude/settings.json` mirrors the main guard rules as a first,
-  simpler pattern match.
+- **`permissions.deny`** in `.claude/settings.json` mirrors the main guard rules as a backup
+  pattern match. For Bash the guard answers first; for a denied file path the deny rule does.
+  See [permissions.md](permissions.md#guard-and-deny-rules).
 
 See [permissions.md](permissions.md) for what each layer stops and what the guard can't see.
