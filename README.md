@@ -59,7 +59,7 @@ make demo-replay            # Compose + ElasticMQ + recorded CloudTrail fixtures
 - Terraform >= 1.11, kubectl, Helm, AWS CLI v2 <!-- TODO pin versions -->
 - A fork of this repo (the GitHub OIDC roles trust your repo)
 - Anthropic API key
-- Optional: a domain (`DOMAIN`, `DNS_PARENT=route53|external`)
+- Optional: a domain (`DOMAIN`, `DNS_PARENT=route53|external`), required only for `EXPOSURE=alb`
 
 ### Steps
 
@@ -102,8 +102,8 @@ About **$0.16/hour** with the defaults (EKS standard support, 2× Spot t4g.mediu
 | `GITHUB_REPO` | yes | | `owner/repo` trusted by the OIDC roles |
 | `ANTHROPIC_API_KEY` | yes | | Triage agent |
 | `EXPOSURE` | no | `port-forward` | `port-forward` or `alb` |
-| `ALLOWED_CIDRS` | with `alb` | | Source CIDRs allowed to reach the ALB |
-| `DOMAIN` | no | | e.g. `consoletrack.example.com` |
+| `ALLOWED_CIDRS` | with `alb` | your IP | Source CIDRs allowed to reach the ALB |
+| `DOMAIN` | with `alb` | | e.g. `consoletrack.example.com`; the ALB serves HTTPS only |
 | `DNS_PARENT` | with `DOMAIN` | | `route53` or `external` |
 <!-- TODO complete from .env.example -->
 

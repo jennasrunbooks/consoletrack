@@ -80,7 +80,9 @@ paths:
                 `ct_session=<opaque>; HttpOnly; Secure; SameSite=Strict; Path=/`. SameSite=Strict
                 is the CSRF defense for every admin write: another site can't make the browser
                 send this cookie. Browsers treat http://localhost as secure, so Secure also works
-                locally.
+                locally and through `make open`. A public deployment is HTTPS only:
+                `EXPOSURE=alb` requires `DOMAIN` and its certificate, because a browser drops a
+                Secure cookie over plain HTTP.
               schema:
                 type: string
           content:

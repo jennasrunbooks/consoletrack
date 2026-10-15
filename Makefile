@@ -37,6 +37,12 @@ endif
 ifneq ($(strip $(DOMAIN)),)
 ENV_UP += DNS_PARENT
 endif
+# An ALB without DOMAIN serves plain HTTP on its AWS DNS name: the browser drops the Secure
+# session cookie (login silently fails), and the admin password would cross the internet in
+# clear text. So EXPOSURE=alb requires DOMAIN, which brings the ACM certificate and HTTPS.
+ifeq ($(EXPOSURE),alb)
+ENV_UP += DOMAIN
+endif
 
 # Fails listing the names in $(1) that are unset, empty, or still an unresolved op:// reference
 # (`make` run without `op run`). Never prints a value.
@@ -66,11 +72,14 @@ PYTEST ?= uvx pytest@9.1.1
 OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
 
+# One Terraform root per folder (product-spec.md → Terraform layout).
+TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
+
 # Stub for a target a later issue fills in: says where it belongs and fails.
 todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
-.PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local tf-env \
+.PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local tf-env tf-validate \
 	test-hooks lint-hooks lint-openapi lint-terraform \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
@@ -103,6 +112,17 @@ lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 lint-terraform: ## terraform fmt check (CI job terraform-fmt)
 	$(TERRAFORM) fmt -check -recursive terraform/
 
+tf-validate: ## terraform init -backend=false + validate for every root (no AWS calls, no state)
+	@for r in $(TF_ROOTS); do \
+		if ls $$r/*.tf >/dev/null 2>&1; then \
+			echo "$$r:"; \
+			$(TERRAFORM) -chdir=$$r init -backend=false -input=false >/dev/null || exit 1; \
+			$(TERRAFORM) -chdir=$$r validate || exit 1; \
+		else \
+			echo "$$r: no .tf files yet, skipped"; \
+		fi; \
+	done
+
 test-hooks: ## Tests for agent-hooks/
 	$(PYTEST) agent-hooks/tests -q
 
@@ -125,7 +145,10 @@ test-k8s: ## k8s-mcp against kind with real RBAC (stub)
 
 env-check: env-check-up ## Everything `make up` needs; same as env-check-up
 
-env-check-up: ## Required for preflight, up: AWS, API key, enabled features (names only)
+env-check-up: ## Required for preflight, up: AWS, API key, enabled features; alb needs DOMAIN
+	@if [ "$(EXPOSURE)" = alb ] && [ -z "$(strip $(DOMAIN))" ]; then \
+		echo "make $@: EXPOSURE=alb requires DOMAIN: the ALB serves HTTPS only (see .env.example)" >&2; \
+	fi
 	$(call check_env,$(ENV_UP))
 
 env-check-aws: ## Required for AWS-only targets (deploy, down, scenarios, revert)
