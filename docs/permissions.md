@@ -29,7 +29,9 @@ What we observed in fresh sessions on Claude Code 2.1.300:
 
 - **Bash.** The guard runs first, and its message is what the agent sees. That held for
   `terraform apply` even though `Bash(terraform apply*)` is also a deny rule.
-- **Edit and Write on denied paths** (`.github/workflows/**`, `CLAUDE.md`). The deny rule is
+- **Edit and Write on denied paths** (`.github/workflows/**`, `CLAUDE.md`). There are only
+  `Edit(…)` rules: Claude Code applies them to every file-writing tool, including Write, and
+  warns at startup about separate `Write(…)` rules. The deny rule is
   checked first. The agent gets the generic `File is in a directory that is denied by your
   permission settings.`, and the guard doesn't run. For `.github/workflows/`, that means the
   agent doesn't see the guard's pointer to `docs/proposed-workflows/`. `AGENTS.md` rule 4
@@ -40,6 +42,11 @@ What we observed in fresh sessions on Claude Code 2.1.300:
   `.env.*.local`, `.env.production`, `.env.bak`, …) by name. The guard still blocks every
   `.env.*` name except `.env.example`, so an unusual name like `.env.mine` is stopped by the
   guard alone.
+
+- **Allow rules keep `*` at the end only.** Claude Code warns at startup about a wildcard in the
+  middle of a command (`uvx ruff@* check *`, `terraform -chdir=* validate`). Those commands
+  run through `make` targets instead (`make lint`, `make test`, `make tf-validate`), which
+  hold the pinned versions and are allowed by exact name.
 
 The call is blocked either way. The deny rules are kept as a backup in case the hook fails:
 for example, if `python3` is missing, the hook times out, or the guard has a parsing gap.
