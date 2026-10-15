@@ -119,7 +119,7 @@ test-frontend: ## Frontend lint and Vitest (stub)
 	$(call todo,the frontend + change log workstream; no issue yet)
 
 test-k8s: ## k8s-mcp against kind with real RBAC (stub)
-	$(call todo,the tests + evals workstream; no issue yet)
+	$(call todo,#10)
 
 ##@ Configuration
 
@@ -181,10 +181,10 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 ##@ Demo and evaluation
 
 local: env-check-local ## Full stack on kind + Compose, no AWS (stub)
-	$(call todo,the tests + evals workstream; no issue yet)
+	$(call todo,the local-run workstream; no issue yet)
 
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
-	$(call todo,the change intake + aws-mcp workstream; no issue yet)
+	$(call todo,the local-run workstream; no issue yet. #9 provides scripts/replay-fixtures.py)
 
 demo: env-check-aws ## Run the three cluster fault scenarios (stub)
 	$(call todo,the agent loop workstream; no issue yet)
