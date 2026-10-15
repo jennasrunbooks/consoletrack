@@ -1,0 +1,67 @@
+# PROPOSED: a human needs to move this to .github/workflows/ci.yaml, replacing the current file.
+# (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
+#
+# Changes from the current .github/workflows/ci.yaml: adds the `terraform-fmt` job. `lint` now
+# also validates openapi.yaml, through `make lint`, so that job's steps don't change.
+#
+# Job names `lint`, `test`, and `terraform-fmt` are stable on purpose: the main ruleset requires
+# them as status checks. `make lint` and `make test` grow as backend, frontend, and Terraform
+# checks are added, so these names stay correct and the ruleset doesn't need to change.
+# After moving this file, add `terraform-fmt` to the ruleset's required checks.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+      - run: make lint
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+      - run: make test
+
+  terraform-fmt:
+    name: terraform-fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          # Keep identical to the terraform feature's version in .devcontainer/devcontainer.json,
+          # so `terraform fmt` gives the same answer locally and in CI.
+          terraform_version: 1.13.4
+          terraform_wrapper: false
+      # Same as `terraform fmt -check -recursive terraform/`.
+      - run: make lint-terraform

@@ -59,7 +59,7 @@ make demo-replay            # Compose + ElasticMQ + recorded CloudTrail fixtures
 - Terraform >= 1.11, kubectl, Helm, AWS CLI v2 <!-- TODO pin versions -->
 - A fork of this repo (the GitHub OIDC roles trust your repo)
 - Anthropic API key
-- Optional: a domain (`DOMAIN`, `DNS_PARENT=route53|external`)
+- Optional: a domain (`DOMAIN`, `DNS_PARENT=route53|external`), required only for `EXPOSURE=alb`
 
 ### Steps
 
@@ -76,15 +76,15 @@ make open                   # port-forwards the UI (EXPOSURE=alb for a load bala
 ### Demo scenarios
 
 ```bash
-make scenario-drift         # ClickOps change to demo-app-sg
-make scenario-identity      # IAM change that breaks demo-app's Pod Identity → AccessDenied
+make demo-drift             # opens port 22 to the internet on demo-app-sg (no outage)
+make demo-identity          # removes s3:GetObject from the demo app role → AccessDenied incident
 ```
 
 ### Teardown
 
 ```bash
 make down
-make teardown-verify        # confirms nothing billable is left
+make verify-clean           # confirms nothing billable is left
 ```
 
 ## Cost
@@ -102,8 +102,8 @@ About **$0.16/hour** with the defaults (EKS standard support, 2× Spot t4g.mediu
 | `GITHUB_REPO` | yes | | `owner/repo` trusted by the OIDC roles |
 | `ANTHROPIC_API_KEY` | yes | | Triage agent |
 | `EXPOSURE` | no | `port-forward` | `port-forward` or `alb` |
-| `ALLOWED_CIDRS` | with `alb` | | Source CIDRs allowed to reach the ALB |
-| `DOMAIN` | no | | e.g. `consoletrack.example.com` |
+| `ALLOWED_CIDRS` | with `alb` | your IP | Source CIDRs allowed to reach the ALB |
+| `DOMAIN` | with `alb` | | e.g. `consoletrack.example.com`; the ALB serves HTTPS only |
 | `DNS_PARENT` | with `DOMAIN` | | `route53` or `external` |
 <!-- TODO complete from .env.example -->
 
@@ -137,7 +137,7 @@ Details: [docs/permissions.md](docs/permissions.md) · [security/](security/)
 See [AGENTS.md](AGENTS.md) for conventions used by humans and coding agents.
 
 ```bash
-make dev                    # <!-- TODO -->
+make help                   # lists every target
 make test
 make lint
 ```
