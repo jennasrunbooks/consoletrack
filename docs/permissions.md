@@ -18,7 +18,7 @@ bypassed.
 | `main` ruleset | GitHub repo settings | Direct pushes and merges to `main`: everything needs a PR with your approval and passing CI. A commit made on local `main` can't land. | What's in the PR; that's what review is for. |
 | Environments | GitHub environments `consoletrack-apply`, `consoletrack-revert` (with the Terraform and revert workflows) | `terraform apply` and Revert runs wait for a named reviewer, and only those environments' OIDC roles can write to AWS. | Plans, which are read-only. |
 | `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). | — |
-| `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env*`, editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
+| `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env` and the common `.env.<name>` variants (listed one by one, because deny globs can't exclude `.env.example`, which the agent maintains), editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
 | PreToolUse guard | `agent-hooks/guard.py` | Tokenizes each command and file path and blocks everything in `AGENTS.md → Hard rules` that a tool call can break, including chained, wrapped, and nested forms. See [agent-extension-pack.md](agent-extension-pack.md#hooks). | See "What the guard can't see" below. |
 | PostToolUse lint | `agent-hooks/lint_edited.py` | Lint errors in edited Python, frontend, and Terraform files, reported back in the same turn. | It's a quality check, not a security control. |
 | Human review | PR review, `CODEOWNERS` | Anything the layers above miss, including code that would do something harmful once a human runs it. | — |
@@ -34,6 +34,12 @@ What we observed in fresh sessions on Claude Code 2.1.300:
   permission settings.`, and the guard doesn't run. For `.github/workflows/`, that means the
   agent doesn't see the guard's pointer to `docs/proposed-workflows/`. `AGENTS.md` rule 4
   gives the same instruction.
+- **`.env` files.** A `Read` deny rule also stops `Edit` and `Write` on the matching path, so
+  the earlier `Read(./.env.*)` glob kept the agent from maintaining `.env.example`. Deny globs
+  have no "except", so the rules now list `.env` and the common variants (`.env.local`,
+  `.env.*.local`, `.env.production`, `.env.bak`, …) by name. The guard still blocks every
+  `.env.*` name except `.env.example`, so an unusual name like `.env.mine` is stopped by the
+  guard alone.
 
 The call is blocked either way. The deny rules are kept as a backup in case the hook fails:
 for example, if `python3` is missing, the hook times out, or the guard has a parsing gap.
