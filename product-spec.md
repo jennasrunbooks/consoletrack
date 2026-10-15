@@ -1,6 +1,6 @@
 # ConsoleTrack: Product Spec
 
-Last updated Oct 14, 2026
+Last updated Oct 15, 2026
 
 ## Summary
 
@@ -207,7 +207,7 @@ All AWS resources come from community-maintained terraform-aws-modules, pinned t
 | State bucket | `terraform-aws-modules/s3-bucket/aws` | Versioning, encryption, public access blocked |
 | Cluster add-ons | `hashicorp/helm` provider with upstream charts | Gateway API CRDs, kube-prometheus-stack, cloudnative-pg; aws-load-balancer-controller with Gateway API enabled only when `EXPOSURE=alb` |
 
-The app chart itself is deployed by `make deploy` or CI with `helm upgrade`, not by Terraform, so app releases don't need a Terraform run. Module versions are pinned in `versions.tf` and updated by Renovate PRs.
+The app chart itself is deployed by `make deploy` or CI with `helm upgrade`, not by Terraform, so app releases don't need a Terraform run. Module versions are pinned in `versions.tf` and updated by Dependabot PRs.
 
 Pod Identity replaces IRSA throughout. Each role trusts `pods.eks.amazonaws.com` and is bound to one namespace and service account by an EKS association, so roles don't depend on a cluster's OIDC issuer and survive cluster rebuilds unchanged. Pods need the eks-pod-identity-agent add-on and a recent AWS SDK (boto3 qualifies); the agent calls the EKS Auth API, which private nodes reach through the NAT instance. Because associations live in EKS, the EventBridge rule also watches EKS association changes, which is what the Phase 2 identity scenario breaks. One item to confirm at build time: that the chosen VPC CNI add-on version accepts a Pod Identity association. If it doesn't, the CNI stays on the node role as the single documented exception.
 
@@ -264,7 +264,7 @@ Every principal gets its own identity with the smallest permission set that work
 | `k8s-mcp` ServiceAccount | Kubernetes Role in each allowlisted namespace | get, list, watch on pods, pods/log, events, deployments, replicasets, statefulsets | Secrets, ConfigMaps, exec, any write verb |
 | `remediator` ServiceAccount (backend) | Kubernetes Role in each allowlisted namespace | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
 | GitHub token held by backend | Fine-grained token for `jennasrunbooks/consoletrack` | Dispatch the revert workflow; open pull requests (Phase 2) | Merging, admin, any other repo |
-| Terraform plan role | GitHub OIDC, trust limited to `pull_request` runs of this repo | Read-only describe and list on project resources, read state, write only the lock file | Any resource change; fork PRs get no token |
+| Terraform plan role | GitHub OIDC, trust limited to this repo's `consoletrack-plan` environment, used by pull request runs | Read-only describe and list on project resources, read state, write only the lock file | Any resource change; fork PRs get no token |
 | Terraform apply role | GitHub OIDC, trust limited to `main` in the `consoletrack-apply` environment, which requires your approval | Apply the `terraform/consoletrack/global`, `terraform/consoletrack/us-east-1`, and `terraform/demo-app/us-east-1` roots under a permissions boundary | Resources outside the `ct-` and `demo-app-` prefixes, their IAM paths, and the project tags; IAM beyond the boundary |
 | Revert workflow role | GitHub OIDC, trust limited to the `consoletrack-revert` environment, which requires a reviewer | Apply the `terraform/demo-app/us-east-1` root only, including the demo app's Pod Identity association | The `consoletrack` roots and anything with the `ct-` prefix or `/ct/` path; anything outside the `demo-app-` prefix and `/demo-app/` path |
 | App deploy role | GitHub OIDC → IAM role + EKS access entry mapped to a namespaced Role | `eks:DescribeCluster`; Helm upgrade in the `consoletrack` namespace | Cluster admin, any AWS change |
@@ -463,12 +463,12 @@ The pack is cheap because its centerpiece already exists: the same `k8s-mcp` ser
 
 | Required piece | Deliverable | Location |
 | --- | --- | --- |
-| Project instructions | Stack, commands, conventions, "contract first", "never apply to a cluster" | `AGENTS.md` (imported by `CLAUDE.md`) |
+| Project instructions | Stack, commands, conventions, "contract first", "never apply to a cluster" | `AGENTS.md`, read by Claude Code directly; the repo has no `CLAUDE.md`, which would stop it loading |
 | Reusable workflow | `add-endpoint` skill: edit openapi.yaml → regenerate client → write failing test → implement → run contract test | `agent-capabilities/add-endpoint/SKILL.md` |
 | Reusable workflow | `break-demo` skill: apply one of the fault scenarios to kind and check an incident appears | `agent-capabilities/break-demo/SKILL.md` |
 | Subagent / specialist | `k8s-manifest-reviewer`: reviews Helm and RBAC diffs for least privilege, limits, probes | `custom-agent/k8s-manifest-reviewer.md` |
 | MCP server | `k8s-mcp` and `aws-mcp`, read-only tools, plus a `.mcp.json` for local use against kind and a sandbox AWS profile | `mcp-server/` |
-| Hook / guardrail | PreToolUse hook blocking mutating `kubectl`, `helm`, and `terraform apply/destroy` from the agent; PostToolUse runs ruff and eslint on edited files | `agent-hooks/` |
+| Hook / guardrail | PreToolUse guard enforcing every `AGENTS.md` hard rule a tool call can break: commits and pushes to `main`, force pushes, Terraform/kubectl/helm/AWS writes, `.env` access, edits under `.github/workflows/`, and `CLAUDE.md` files. `.claude/settings.json` deny rules back it up. PostToolUse runs ruff, eslint, or `terraform fmt` on edited files | `agent-hooks/` |
 | Permission notes | Who can do what: dev-time agent, runtime agent, backend apply SA, CI deploy role | `docs/permissions.md` |
 | Overview | How the pieces fit and how to install them | `docs/agent-extension-pack.md` |
 
@@ -503,7 +503,7 @@ Integration tests live in `backend/tests/integration/` behind a pytest marker so
 
 A fourth workflow, `revert.yaml`, is dispatched only by the backend. It runs in the `consoletrack-revert` environment, which requires reviewer approval, and plans then applies the `terraform/demo-app/us-east-1` root.
 
-**Which account each workflow deploys to.** Each account has its own directory, `terraform/<account>/...`, and its own GitHub environments (`<account>-plan`, `<account>-apply`, `<account>-revert`). Each environment stores that account's role ARN as an environment secret. The ARN isn't a credential, since OIDC stores no keys, but keeping it secret means the public repo and the workflow logs never show the account ID. Terraform never hardcodes account IDs; it reads them from aws\_caller\_identity. After authenticating, each job masks the bare account ID (from aws sts get-caller-identity), so logs hide it inside every ARN in the plan, not only the full role ARN. The plan comment on PRs replaces the account ID with a placeholder before it is posted, because masking doesn't apply to comments. This is best-effort hygiene, not a security boundary. The recorded CloudTrail fixtures for demo-replay use the placeholder 123456789012. `terraform.yaml` builds a matrix from the account directories a change touches, and each matrix job runs with its account's environments. For the course there is one entry, `consoletrack`, and `terraform/demo-app/us-east-1` uses the hub's roles: `ct-gh-plan`, `ct-gh-apply`, and `ct-gh-revert`. Each role trusts only this repo, and the apply and revert roles trust only their environment. When `demo-app` becomes its own account, a new `terraform/demo-app/global/` root creates its GitHub OIDC provider and its `demo-app-gh-plan`, `demo-app-gh-apply`, and `demo-app-gh-revert` roles. The demo-app environments then get their own values, and it becomes a second matrix entry with no workflow changes. Each account trusting GitHub directly is preferred over going through the hub. A compromised hub role can't reach the spoke, and each account's CloudTrail shows which workflow run made each change.
+**Which account each workflow deploys to.** Each account has its own directory, `terraform/<account>/...`, and its own GitHub environments (`<account>-plan`, `<account>-apply`, `<account>-revert`). Each environment stores that account's role ARN as an environment secret. The ARN isn't a credential, since OIDC stores no keys, but keeping it secret means the public repo and the workflow logs never show the account ID. Terraform never hardcodes account IDs; it reads them from aws\_caller\_identity. After authenticating, each job masks the bare account ID (from aws sts get-caller-identity), so logs hide it inside every ARN in the plan, not only the full role ARN. The plan comment on PRs replaces the account ID with a placeholder before it is posted, because masking doesn't apply to comments. This is best-effort hygiene, not a security boundary. The recorded CloudTrail fixtures for demo-replay use the placeholder 123456789012. `terraform.yaml` builds a matrix from the account directories a change touches, and each matrix job runs with its account's environments. For the course there is one entry, `consoletrack`, and `terraform/demo-app/us-east-1` uses the hub's roles: `ct-gh-plan-<suffix>`, `ct-gh-apply-<suffix>`, and `ct-gh-revert-<suffix>` (plus `ct-gh-deploy-<suffix>` for app deploys). Each role trusts only this repo, and the apply and revert roles trust only their environment. When `demo-app` becomes its own account, a new `terraform/demo-app/global/` root creates its GitHub OIDC provider and its `demo-app-gh-plan`, `demo-app-gh-apply`, and `demo-app-gh-revert` roles. The demo-app environments then get their own values, and it becomes a second matrix entry with no workflow changes. Each account trusting GitHub directly is preferred over going through the hub. A compromised hub role can't reach the spoke, and each account's CloudTrail shows which workflow run made each change.
 
 **Proof of deployment.** The README holds the URL and the dates it is live; keeping the cluster up through the one-week peer-review window costs about $27. Screenshots of the dashboard, Grafana, and a green deploy run stay valid after teardown. A short demo video on YouTube (change detected → reverted; alert fires → incident → approve → resolved) is optional, as time allows; it is not a course requirement.
 
@@ -514,7 +514,7 @@ The layout keeps every path the course lists at the root and adds `terraform/` (
 ```text
 README.md                 # problem, architecture, reviewer quick start, screenshots
 product-spec.md           # this document, exported
-AGENTS.md  CLAUDE.md
+AGENTS.md                 # the only agent instructions file; no CLAUDE.md
 openapi.yaml
 docker-compose.yaml
 .env.example              # every setting a reviewer changes, with comments; the only config file
@@ -545,7 +545,7 @@ scripts/                  # bootstrap-state.sh, preflight.sh, teardown-verify.sh
 .github/workflows/        # ci.yaml, deploy.yaml, terraform.yaml, revert.yaml
 .devcontainer/            # pinned tool versions for reviewers who prefer a container
 agent-capabilities/  agent-hooks/  custom-agent/
-docs/                     # architecture, ai-workflow, agent-extension-pack, permissions, evals, troubleshooting, design/
+docs/                     # architecture, ai-workflow, agent-extension-pack, permissions, evals, troubleshooting, mockups/
 security/  ops/           # placeholders until P2 work
 ```
 
