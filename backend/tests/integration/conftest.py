@@ -44,7 +44,9 @@ def database_url() -> Iterator[str]:
         check_disposable(url)
         yield url
         return
-    from testcontainers.postgres import PostgresContainer
+    # testcontainers >= 4.15 deprecates `testcontainers.postgres`, and pytest treats warnings
+    # as errors.
+    from testcontainers.community.postgres import PostgresContainer
 
     with PostgresContainer("postgres:16-alpine", driver="psycopg") as postgres:
         yield postgres.get_connection_url()

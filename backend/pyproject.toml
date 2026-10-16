@@ -22,7 +22,7 @@ dev = [
     "pytest-cov>=6.0",
     "pyyaml>=6.0",
     "ruff==0.16.10",
-    "testcontainers[postgres]>=4.9",
+    "testcontainers[postgres]>=4.15",
 ]
 
 [tool.uv]
