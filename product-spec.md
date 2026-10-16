@@ -1,6 +1,6 @@
 # ConsoleTrack: Product Spec
 
-Last updated Oct 15, 2026
+Last updated Oct 16, 2026
 
 ## Summary
 
@@ -129,10 +129,10 @@ The cluster runs only when needed, with private nodes and nothing public by defa
 
 - `terraform/consoletrack/` holds everything in the ConsoleTrack hub account:
   - `global/` (account-wide and long-lived, pennies a month): GitHub OIDC provider and the plan, apply, deploy, and revert roles (only when `enable_github_oidc = true`; reviewers leave it off), the permissions boundary, the demo "developer" role, the Route 53 zone when `DOMAIN` is set, and an optional AWS Budgets alert at $25. The alert is controlled by `enable_budget`: on by default for reviewers with standalone accounts, and off for the author, whose billing, budgets, and Cost Explorer live only in the AWS Organizations management account. Files: `iam.tf`, `route53.tf`, `budgets.tf`.
-  - `us-east-1/` (regional platform, created and destroyed freely, about 15 to 20 minutes each way): `vpc.tf` (private subnets, S3 gateway endpoint), `nat.tf` (fck-nat instance), `eks.tf` (cluster, Spot node group, add-ons, access entries), `pod-identity.tf`, `intake.tf` (CloudTrail trail and log bucket, EventBridge rule, SQS queue), `acm.tf`, and `addons.tf` (Helm releases for third-party charts). Pod Identity roles live here, next to the cluster they bind to, even though IAM is global.
-- `terraform/demo-app/us-east-1/` (applies in under a minute): the AWS side of the demo app, matching `helm/demo-app` for its Kubernetes side. That is its IAM role and policy, S3 bucket, security group, and Pod Identity association: the resources the demo scenarios drift on purpose and the revert workflow re-applies. The directory is named for the `demo-app` spoke account it belongs in; to save time it deploys into the ConsoleTrack account for the course, so moving it later changes the provider's target account, not the layout. Keeping it in its own state is what lets the revert role touch nothing else.
+  - `us-east-1/` (regional platform, created and destroyed freely, about 15 to 20 minutes each way): `vpc.tf` (private subnets, S3 gateway endpoint), `nat.tf` (fck-nat instance), `eks.tf` (cluster, Spot node group, add-ons, access entries), `pod-identity.tf`, `intake.tf` (CloudTrail trail and log bucket, EventBridge rule, SQS queue), `acm.tf`. Terraform manages AWS resources only, including EKS managed add-ons such as `vpc-cni`, `coredns`, `aws-ebs-csi-driver`, and `eks-pod-identity-agent`; it installs nothing inside Kubernetes. Every chart in the cluster, third-party and ConsoleTrack's own, is managed by Helmfile from `helm/helmfile.yaml.gotmpl`. Pod Identity roles live here, next to the cluster they bind to, even though IAM is global.
+- `terraform/demo-app/us-east-1/` (applies in under a minute): the AWS side of the demo app, matching `helm/charts/demo-app` for its Kubernetes side. That is its IAM role and policy, S3 bucket, security group, and Pod Identity association: the resources the demo scenarios drift on purpose and the revert workflow re-applies. The directory is named for the `demo-app` spoke account it belongs in; to save time it deploys into the ConsoleTrack account for the course, so moving it later changes the provider's target account, not the layout. Keeping it in its own state is what lets the revert role touch nothing else.
 
-Configuration comes from one place: `.env`. The Makefile turns it into `TF_VAR_*` variables, the backend settings (state bucket name with its random suffix), and a generated Helm values file, so there are no tfvars or per-environment folders to keep in sync. The S3 state bucket itself is created once by `scripts/bootstrap-state.sh` (AWS CLI: versioned, encrypted, public access blocked), so no Terraform root has to manage its own backend.
+Configuration comes from one place: `.env`. The Makefile turns it into `TF_VAR_*` variables, the backend settings (state bucket name with its random suffix), and a generated values file that `helm/helmfile.yaml.gotmpl` reads as its environment values, so there are no tfvars or per-environment folders to keep in sync. The S3 state bucket itself is created once by `scripts/bootstrap-state.sh` (AWS CLI: versioned, encrypted, public access blocked), so no Terraform root has to manage its own backend.
 
 State locking uses S3's native lockfile: every root's backend sets `use_lockfile = true`, and there is no DynamoDB lock table, the legacy approach that Terraform now deprecates. Each root's state key mirrors its directory (`consoletrack/global/terraform.tfstate`, `consoletrack/us-east-1/terraform.tfstate`, `demo-app/us-east-1/terraform.tfstate`), and the lock is a `.tflock` object written next to it, which is why the plan role may write only `*.tflock` keys. Bucket versioning stays on so a bad state write can be rolled back.
 
@@ -177,7 +177,7 @@ Prices: [EKS pricing](https://aws.amazon.com/eks/pricing/), [public IPv4 charge]
 
 Network and ingress references: [fck-nat cost comparison](https://pypi.org/project/cdk-fck-nat), [interface endpoint cost](https://dev.to/enforza/how-to-reduce-aws-nat-gateway-costs-7-ways-ranked-by-savings-ll4), [Load Balancer Controller Gateway API GA](https://www.infoq.com/news/2026/03/aws-gateway-api-ga), [Gateway API implementations](https://gateway-api.sigs.k8s.io/docs/implementations/).
 
-**Custom domain (optional, for any deployment).** Anyone deploying ConsoleTrack can serve the dashboard over HTTPS at a hostname they own by setting `DOMAIN` (for example `consoletrack.example.com`) together with `EXPOSURE=alb`. The author's deployment uses `consoletrack.jennasrunbooks.com`. Leaving `DOMAIN` empty keeps `make open` or the ALB's own DNS name, and nothing in the code, chart, or Terraform hardcodes a domain.
+**Custom domain (optional, for any deployment).** Anyone deploying ConsoleTrack can serve the dashboard over HTTPS at a hostname they own by setting `DOMAIN` (for example `consoletrack.example.com`) together with `EXPOSURE=alb`. The author's deployment uses `consoletrack.jennasrunbooks.com`. Leaving `DOMAIN` empty keeps `make open`. `EXPOSURE=alb` requires `DOMAIN`, because an ALB without a certificate serves plain HTTP: the browser would drop the `Secure` session cookie, so login would fail, and the admin password would travel unencrypted. `make env-check-up` enforces this. Nothing in the code, chart, or Terraform hardcodes a domain.
 
 | Piece | Where | How |
 | --- | --- | --- |
@@ -205,9 +205,9 @@ All AWS resources come from community-maintained terraform-aws-modules, pinned t
 | EventBridge rule | `terraform-aws-modules/eventbridge/aws` | Pattern on `AWS API Call via CloudTrail` for IAM, EC2, S3, KMS, and EKS (Pod Identity association changes), excluding the Terraform and CI role ARNs |
 | SQS queue | `terraform-aws-modules/sqs/aws` | Dead-letter queue, queue policy allowing only the EventBridge rule to send |
 | State bucket | `terraform-aws-modules/s3-bucket/aws` | Versioning, encryption, public access blocked |
-| Cluster add-ons | `hashicorp/helm` provider with upstream charts | Gateway API CRDs, kube-prometheus-stack, cloudnative-pg; aws-load-balancer-controller with Gateway API enabled only when `EXPOSURE=alb` |
+| Cluster add-ons | Not Terraform: Helmfile (`helm/helmfile.yaml.gotmpl`) with every chart version pinned, applied by `make addons` and `make deploy` | Gateway API CRDs, kube-prometheus-stack, cloudnative-pg; aws-load-balancer-controller with Gateway API enabled only when `EXPOSURE=alb` |
 
-The app chart itself is deployed by `make deploy` or CI with `helm upgrade`, not by Terraform, so app releases don't need a Terraform run. Module versions are pinned in `versions.tf` and updated by Dependabot PRs.
+Terraform manages AWS only and never installs anything inside Kubernetes. Helmfile owns every release: `make addons` applies the third-party ones, and `make deploy` or CI applies only the `consoletrack` and `demo-app` releases (`helmfile -l tier=app apply`), so app releases don't need a Terraform run. Module versions are pinned in `versions.tf` and updated by Dependabot PRs. Chart versions are pinned in `helm/helmfile.yaml.gotmpl`; Dependabot's Helm support covers the local charts' `Chart.yaml` dependencies, not Helmfile, so third-party chart bumps are manual PRs. Helmfile environments are deployment targets, not apps: `eks` (the default) and `local` (kind, which leaves out the Load Balancer Controller and ExternalDNS). Releases are grouped by labels instead: `tier=addons` for the third-party charts and the Gateway API CRDs, `tier=app` for `consoletrack` and `demo-app`.
 
 Pod Identity replaces IRSA throughout. Each role trusts `pods.eks.amazonaws.com` and is bound to one namespace and service account by an EKS association, so roles don't depend on a cluster's OIDC issuer and survive cluster rebuilds unchanged. Pods need the eks-pod-identity-agent add-on and a recent AWS SDK (boto3 qualifies); the agent calls the EKS Auth API, which private nodes reach through the NAT instance. Because associations live in EKS, the EventBridge rule also watches EKS association changes, which is what the Phase 2 identity scenario breaks. One item to confirm at build time: that the chosen VPC CNI add-on version accepts a Pod Identity association. If it doesn't, the CNI stays on the node role as the single documented exception.
 
@@ -222,7 +222,7 @@ The demo trades a few production properties for cost. These upgrades change only
 | 1. Managed NAT gateways | Replace the fck-nat instance with a managed NAT gateway in each AZ | AWS-operated, highly available egress with no instance to patch; the standard choice for productionized workloads | About $0.045/hr per AZ plus $0.045/GB processed |
 | 2. Claude through Amazon Bedrock over PrivateLink | The worker calls Claude through Bedrock using a `bedrock-runtime` interface endpoint, with `bedrock:InvokeModel` on specific model or inference-profile ARNs granted through Pod Identity | Model traffic never leaves the AWS network, there is no API key to store or rotate, and every call is IAM-authorized and logged in CloudTrail | Interface endpoint per AZ plus Bedrock usage pricing |
 | 3. Images through an ECR pull-through cache | ECR caches the GHCR images; nodes pull through ECR interface endpoints and the S3 gateway endpoint | No image pulls over the internet; ECR image scanning | ECR storage plus endpoints |
-| 4. Private API endpoint with Argo CD | Turn off public access to the EKS API; Argo CD in the cluster pulls the Helm chart from Git instead of CI pushing with `helm upgrade` | Removes the main remaining exposure; deploys become declarative, auditable, and self-healing | Self-managed Argo CD runs on the existing nodes; EKS also offers a managed Argo CD capability billed per application-hour ([EKS capabilities pricing](https://komodor.com/learn/amazon-eks-pricing-quick-guide-and-6-ways-to-cut-eks-costs/)) |
+| 4. Private API endpoint with Argo CD | Turn off public access to the EKS API; Argo CD in the cluster pulls the Helm chart from Git instead of CI pushing with `helmfile apply` | Removes the main remaining exposure; deploys become declarative, auditable, and self-healing | Self-managed Argo CD runs on the existing nodes; EKS also offers a managed Argo CD capability billed per application-hour ([EKS capabilities pricing](https://komodor.com/learn/amazon-eks-pricing-quick-guide-and-6-ways-to-cut-eks-costs/)) |
 | 5. Egress allowlisting | Limit what's left (GitHub, for Argo CD and the revert dispatch) with AWS Network Firewall domain rules | Nodes can reach only the endpoints they need | Network Firewall hourly; since Feb 6, 2026 AWS waives the NAT gateway hourly fee for gateways behind Network Firewall ([details](https://dev.to/enforza/how-to-reduce-aws-nat-gateway-costs-7-ways-ranked-by-savings-ll4)) |
 
 After steps 1 to 4, GitHub is the only external dependency, and step 5 narrows egress to it. Steps 2 and 4 also show the identity story end to end: no static credentials anywhere, from the model call to the deploy.
@@ -267,7 +267,7 @@ Every principal gets its own identity with the smallest permission set that work
 | Terraform plan role | GitHub OIDC, trust limited to this repo's `consoletrack-plan` environment, used by pull request runs | Read-only describe and list on project resources, read state, write only the lock file | Any resource change; fork PRs get no token |
 | Terraform apply role | GitHub OIDC, trust limited to `main` in the `consoletrack-apply` environment, which requires your approval | Apply the `terraform/consoletrack/global`, `terraform/consoletrack/us-east-1`, and `terraform/demo-app/us-east-1` roots under a permissions boundary | Resources outside the `ct-` and `demo-app-` prefixes, their IAM paths, and the project tags; IAM beyond the boundary |
 | Revert workflow role | GitHub OIDC, trust limited to the `consoletrack-revert` environment, which requires a reviewer | Apply the `terraform/demo-app/us-east-1` root only, including the demo app's Pod Identity association | The `consoletrack` roots and anything with the `ct-` prefix or `/ct/` path; anything outside the `demo-app-` prefix and `/demo-app/` path |
-| App deploy role | GitHub OIDC → IAM role + EKS access entry mapped to a namespaced Role | `eks:DescribeCluster`; Helm upgrade in the `consoletrack` namespace | Cluster admin, any AWS change |
+| App deploy role | GitHub OIDC → IAM role + EKS access entry mapped to a namespaced Role | `eks:DescribeCluster`; `helmfile -l tier=app apply` of the app releases only, in the `consoletrack` and `demo` namespaces | Cluster admin, any AWS change |
 | Demo "developer" role | Assumed by `make demo-*` to simulate ClickOps | Edit the demo app's policy and security group only | Everything else; exists only for the scenarios |
 | Operator running Terraform (you or a reviewer) | Their own IAM identity + EKS access entry | Cluster admin, needed to install add-ons | Documented as the only admin |
 
@@ -296,7 +296,7 @@ Changes and incidents are separate records that link to each other: a change can
 1. A developer edits a project resource in the console. CloudTrail records it, the EventBridge rule matches because the caller isn't the Terraform or CI role, and the event lands in SQS, typically within a few minutes.
 2. The worker dedupes on the CloudTrail event ID, opens a change in `detected`, and looks up the resource's Terraform address in the demo-app root's state.
 3. The agent uses `aws-mcp` to read the current resource and related CloudTrail events, then writes a summary (who, what, when, console or CLI, source IP), a risk rating, and options. The change moves to `awaiting_review`.
-4. The reviewer picks Revert, Codify (Phase 2), or Accept with a note. Revert dispatches the gated GitHub workflow; the change moves to `reverting` and then `reverted` when the run succeeds.
+4. The reviewer picks Revert, Codify (Phase 2), or Accept with a note. Revert dispatches the gated GitHub workflow; the change moves to `reverting` and then `reverted` when the run succeeds, which the backend learns by polling the run's status.
 5. Every outcome closes the change with a decision, who made it, and a reason. That record is the documentation that was missing.
 
 **What counts as out-of-band.** Detection keys on who made the call, not which tool, so the console is only one source. The change record's `via` field shows where it came from.
@@ -304,7 +304,7 @@ Changes and incidents are separate records that link to each other: a change can
 | Source | How it's recognized in CloudTrail | Treated as |
 | --- | --- | --- |
 | AWS console | Console user agent, `sessionCredentialFromConsole` set | Out-of-band change, `via = console` |
-| AWS CLI and CloudShell | `aws-cli/...` user agent | Out-of-band change, `via = cli` |
+| AWS CLI and CloudShell | `aws-cli/...` user agent | Out-of-band change, `via = cli`, or `via = cloudshell` when the user agent carries CloudShell's marker |
 | SDK scripts and other tools | SDK user agents such as `Boto3/...` | Out-of-band change, `via = sdk` |
 | Terraform run from someone's laptop | Terraform user agent, caller isn't a pipeline role | Out-of-band, labeled "Terraform outside the pipeline": the code may match, but nobody reviewed the apply |
 | Pipeline Terraform (plan, apply, revert roles) | Assumed-role session named `gh-<run id>`, assumable only through GitHub OIDC | Excluded |
@@ -342,7 +342,7 @@ ConsoleTrack must be able to tell "nothing changed" apart from "intake is broken
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| changes | id, cloudtrail\_event\_id, event\_time, principal\_arn, session\_name, via (console, cli, sdk), source\_ip, service, event\_name, resource\_arn, tf\_address, risk, status, decision, decided\_by, reason | One row per out-of-band write; the change log |
+| changes | id, cloudtrail\_event\_id, event\_time, principal\_arn, session\_name, via (console, cli, cloudshell, sdk, terraform\_outside\_pipeline), source\_ip, service, event\_name, resource\_arn, tf\_address, risk, status, decision, decided\_by, reason | One row per out-of-band write; the change log |
 | incidents | id, fingerprint, alertname, severity, namespace, workload, status, opened\_at, resolved\_at | One row per alert episode |
 | incident\_changes | incident\_id, change\_id, confidence | Links symptoms to causes |
 | agent\_runs | id, subject\_type (change or incident), subject\_id, model, started\_at, finished\_at, input\_tokens, output\_tokens, outcome | Cost and latency analytics |
@@ -371,13 +371,13 @@ ConsoleTrack must be able to tell "nothing changed" apart from "intake is broken
 | POST | /api/v1/incidents/{id}/remediation/approve | Approve button | Apply the proposed cluster fix, or trigger the linked change's revert |
 | POST | /api/v1/incidents/{id}/remediation/reject | Reject button | Close with a reason |
 | PUT | /api/v1/incidents/{id}/postmortem | Postmortem editor | Save edited markdown |
-| POST | /api/v1/integrations/github/workflow-run | GitHub webhook | Update revert status when the run finishes |
+| POST | /api/v1/integrations/github/workflow-run | GitHub webhook | Optional, with EXPOSURE=alb: update revert status as soon as the run finishes; by default the backend polls the run's status |
 | GET | /api/v1/intake/health | Header indicator and panel | Intake state, last event and canary times, queue age, dead-letter count, trail status |
 | GET | /api/v1/stats | Analytics strip (Phase 2) | Changes by principal, time to document, reverted vs codified |
 | GET | /metrics | Prometheus | Intake and agent metrics for Grafana and alert rules |
 | GET | /healthz, /readyz | Kubernetes probes | Liveness and readiness (DB check) |
 
-**Contract workflow.** Edit `openapi.yaml` → `openapi-typescript` regenerates `frontend/src/api/schema.d.ts` → backend Pydantic models are hand-written to match → `tests/contract/test_openapi.py` compares `app.openapi()` with the file. Auth for the MVP is two fixed accounts, admin and a read-only viewer, each issued a session cookie, with every write endpoint requiring admin; the webhook uses its own bearer token.
+**Contract workflow.** Edit `openapi.yaml` → `openapi-typescript` regenerates `frontend/src/api/schema.d.ts` → backend Pydantic models are hand-written to match → `tests/contract/test_openapi.py` compares `app.openapi()` with the file. Auth for the MVP is two fixed accounts, admin and a read-only viewer, each issued a session cookie by `POST /api/v1/auth/login` (with `/auth/logout` and `/auth/me`), with every write endpoint requiring admin. The Alertmanager webhook uses its own bearer token; the GitHub webhook can't send one, so it is verified with GitHub's `X-Hub-Signature-256` HMAC of the body and a shared webhook secret.
 
 ## Triage agent and guardrails
 
@@ -426,7 +426,7 @@ Cloud-specific guardrails: CloudTrail fields such as request parameters and user
 Each alert type maps to a remediation policy. The MVP ships every policy as `manual`; a scenario moves to `auto` only after it has been tested, through a reviewed pull request. Even in `auto`, the agent never touches the cluster: the backend's policy gate approves on the human's behalf and applies through the same `remediator` ServiceAccount.
 
 ```yaml
-# helm/consoletrack/values.yaml
+# helm/charts/consoletrack/values.yaml
 remediation:
   autoEnabled: false          # global kill switch, also toggled from the dashboard
   policies:
@@ -468,7 +468,7 @@ The pack is cheap because its centerpiece already exists: the same `k8s-mcp` ser
 | Reusable workflow | `break-demo` skill: apply one of the fault scenarios to kind and check an incident appears | `agent-capabilities/break-demo/SKILL.md` |
 | Subagent / specialist | `k8s-manifest-reviewer`: reviews Helm and RBAC diffs for least privilege, limits, probes | `custom-agent/k8s-manifest-reviewer.md` |
 | MCP server | `k8s-mcp` and `aws-mcp`, read-only tools, plus a `.mcp.json` for local use against kind and a sandbox AWS profile | `mcp-server/` |
-| Hook / guardrail | PreToolUse guard enforcing every `AGENTS.md` hard rule a tool call can break: commits and pushes to `main`, force pushes, Terraform/kubectl/helm/AWS writes, `.env` access, edits under `.github/workflows/`, and `CLAUDE.md` files. `.claude/settings.json` deny rules back it up. PostToolUse runs ruff, eslint, or `terraform fmt` on edited files | `agent-hooks/` |
+| Hook / guardrail | PreToolUse guard enforcing every `AGENTS.md` hard rule a tool call can break: commits and pushes to `main`, force pushes, Terraform/kubectl/helm/helmfile/AWS writes, `.env` access, edits under `.github/workflows/`, and `CLAUDE.md` files. `.claude/settings.json` deny rules back it up. PostToolUse runs ruff, eslint, or `terraform fmt` on edited files | `agent-hooks/` |
 | Permission notes | Who can do what: dev-time agent, runtime agent, backend apply SA, CI deploy role | `docs/permissions.md` |
 | Overview | How the pieces fit and how to install them | `docs/agent-extension-pack.md` |
 
@@ -498,7 +498,7 @@ Integration tests live in `backend/tests/integration/` behind a pytest marker so
 **GitHub Actions.**
 
 1. `ci.yaml` on every PR and push: ruff, eslint, all automated test layers, and arm64 image builds on native arm64 runners. An amd64 variant is built only so reviewers on x86 machines can run Compose locally; the cluster runs arm64 only.
-2. `deploy.yaml` after CI passes on `main`: deploy role through GitHub OIDC → push arm64 images to GHCR tagged with the commit SHA → if the cluster exists, `helm upgrade --atomic` → smoke test `/readyz` through a port-forward from the runner. If the cluster is down the job logs a skip and stays green.
+2. `deploy.yaml` after CI passes on `main`: deploy role through GitHub OIDC → push arm64 images to GHCR tagged with the commit SHA → if the cluster exists, `helmfile -l tier=app apply` (atomic, waits for rollout) → smoke test `/readyz` through a port-forward from the runner. If the cluster is down the job logs a skip and stays green.
 3. `terraform.yaml` for Terraform. On pull requests that touch `terraform/**`, the plan role (GitHub OIDC) runs `fmt`, `validate`, tflint, and `terraform plan` for each changed root and posts the plans as a PR comment. Because the roots are siblings, a change to `demo-app/` plans only that root. After merge to `main`, the apply role applies in the `consoletrack-apply` environment once you approve the run. Manual dispatch remains for `destroy`.
 
 A fourth workflow, `revert.yaml`, is dispatched only by the backend. It runs in the `consoletrack-revert` environment, which requires reviewer approval, and plans then applies the `terraform/demo-app/us-east-1` root.
@@ -509,7 +509,7 @@ A fourth workflow, `revert.yaml`, is dispatched only by the backend. It runs in 
 
 ## Repository layout
 
-The layout keeps every path the course lists at the root and adds `terraform/` (by AWS account, then global or region, one root per folder) and `helm/` (one chart per app). The name `demo-app` is used for both halves of the demo application: `helm/demo-app` for its Kubernetes side and `terraform/demo-app/us-east-1` for its AWS side.
+The layout keeps every path the course lists at the root and adds `terraform/` (by AWS account, then global or region, one root per folder) and `helm/` (one chart per app, with every release, ours and third-party, in `helm/helmfile.yaml.gotmpl`). The name `demo-app` is used for both halves of the demo application: `helm/charts/demo-app` for its Kubernetes side and `terraform/demo-app/us-east-1` for its AWS side.
 
 ```text
 README.md                 # problem, architecture, reviewer quick start, screenshots
@@ -533,13 +533,17 @@ mcp-server/aws/          # aws-mcp (FastMCP, boto3), Dockerfile, IAM policy note
 terraform/
   consoletrack/           # the ConsoleTrack hub account
     global/               # iam.tf (GitHub OIDC, CI roles, boundary, demo developer role), route53.tf, budgets.tf (optional)
-    us-east-1/            # vpc.tf, nat.tf, eks.tf, pod-identity.tf, intake.tf, acm.tf, addons.tf
+    us-east-1/            # vpc.tf, nat.tf, eks.tf, pod-identity.tf, intake.tf, acm.tf
   demo-app/               # named for its future spoke account; deployed into consoletrack for now
     us-east-1/            # demo app IAM, S3, security group, Pod Identity association: the drift target
 helm/
-  consoletrack/           # backend, worker, frontend, MCP servers, canary CronJob, Gateway API routes, RBAC, alert rules, dashboards, policies
-  demo-app/               # the demo workload; faults (oom, bad-image, bad-probe) are values toggles
-  addons/                 # values for third-party charts (kube-prometheus-stack, cloudnative-pg, LBC, ExternalDNS)
+  helmfile.yaml.gotmpl    # repositories, every release (tier=addons|app labels), pinned chart versions, environments
+  charts/
+    consoletrack/         # backend, worker, frontend, MCP servers, canary CronJob, Gateway API routes, RBAC, alert rules, dashboards, policies
+    demo-app/             # the demo workload in the demo namespace; faults (oom, bad-image, bad-probe) are values toggles
+    gateway-api-crds/     # pinned upstream Gateway API CRDs wrapped as a chart, so Helmfile manages them too
+  values/                 # values for third-party releases (kube-prometheus-stack, cloudnative-pg, LBC, ExternalDNS)
+  environments/           # eks.yaml (default), local.yaml (kind); values.generated.yaml from .env (gitignored)
 scripts/                  # bootstrap-state.sh, preflight.sh, teardown-verify.sh, wait-for.sh
   scenarios/              # drift.sh, identity.sh: cloud scenarios run as the demo developer role
 .github/workflows/        # ci.yaml, deploy.yaml, terraform.yaml, revert.yaml
@@ -559,16 +563,16 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 | --- | --- |
 | AWS account | Admin access, ideally a sandbox account; a CLI profile configured |
 | Anthropic API key | With a monthly spend limit set; a full demo uses a handful of triage runs |
-| Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 3, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
+| Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 3 with the helm-diff plugin, Helmfile, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
 | Budget | About $0.19/hour while up; the README states this before any command |
 
 **Steps (README "Quick start" mirrors this exactly).**
 
 1. `cp .env.example .env` and set `AWS_PROFILE`, `AWS_REGION`, `ANTHROPIC_API_KEY`. `ALLOWED_CIDRS` defaults to the reviewer's current public IP. Any variable already set in the shell overrides `.env`, so `ANTHROPIC_API_KEY` can stay empty in the file and come from a keychain or password manager instead (for example `op run --env-file=.env -- make up`). That keeps the key out of the repo folder, which the devcontainer mounts.
 2. `make preflight` checks tool versions, the AWS identity, Spot vCPU quota in the region, that the Kubernetes version is in standard support there, that the API key works, and that no resources with the same name exist.
-3. `make up` creates the state bucket, the cluster, add-ons, and the app from the public GHCR images, then prints the dashboard URL and a generated admin password. It is safe to rerun.
+3. `make up` creates the state bucket and the cluster with Terraform, then the add-ons and the app with Helmfile from the public GHCR images, then prints the dashboard URL and a generated admin password. It is safe to rerun.
 4. `make demo` applies the three fault scenarios one at a time, waits for each incident to reach `awaiting_review`, and prints its link.
-5. `make down` removes the Gateway and Helm releases first, then destroys `terraform/demo-app/us-east-1` and `terraform/consoletrack/us-east-1`, leaving `terraform/consoletrack/global` (roles, zone, optional budget) and the state bucket for next time. `make down-all` also destroys `global` and the state bucket for a fully clean account. `make verify-clean` lists any project-tagged load balancers, ENIs, EBS volumes, or public IPs still present and exits non-zero if it finds one.
+5. `make down` runs `helmfile destroy` first (app releases, Gateway, then add-ons), then destroys `terraform/demo-app/us-east-1` and `terraform/consoletrack/us-east-1`, leaving `terraform/consoletrack/global` (roles, zone, optional budget) and the state bucket for next time. `make down-all` also destroys `global` and the state bucket for a fully clean account. `make verify-clean` lists any project-tagged load balancers, ENIs, EBS volumes, or public IPs still present and exits non-zero if it finds one.
 
 **No-AWS option.** `make local` runs the same stack on kind with Docker Compose, covering every criterion except cloud deployment, for which the README has the live URL during review and screenshots of the EKS deployment. `make demo-replay` then fills in the cloud side without an AWS account: it replays the recorded CloudTrail events used by the change-flow integration tests into a local SQS-compatible queue (ElasticMQ), so the change log, change detail, agent analysis, and linked incident all appear as they would on EKS. The agent runs for real against the Claude API; its AWS lookups are answered from the same recorded fixtures through a `fixtures` mode of `aws-mcp`. Revert and Codify are disabled in this mode and labeled "AWS required" in the UI, and the cluster-side faults (OOM, bad image, bad probe) work normally on kind.
 
@@ -582,7 +586,7 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 **What makes this reliable.**
 
 - Every AWS name starts with `ct-` and ends with a random suffix, and every resource carries `project` and `owner` tags, so two reviewers in one account don't collide and cleanup can find everything.
-- No hardcoded account IDs, ARNs, or domains. The dashboard opens with `make open` (a port-forward) by default; with `EXPOSURE=alb` it is served on an ALB DNS name restricted to `ALLOWED_CIDRS`. HTTPS with a custom domain is an optional variable.
+- No hardcoded account IDs, ARNs, or domains. The dashboard opens with `make open` (a port-forward) by default; with `EXPOSURE=alb` it is served over HTTPS at `DOMAIN`, which `EXPOSURE=alb` requires, on an ALB restricted to `ALLOWED_CIDRS`.
 - The API key and admin password are written to Kubernetes Secrets by a script, not passed through Terraform, so they never land in state.
 - Spot capacity errors fall back to on-demand via `USE_SPOT=false`, documented in `docs/troubleshooting.md` with the other known failure modes (quota, slow ALB deletion).
 - Before submitting, the author runs the full guide from a fresh clone in a clean AWS account and fixes every step that needed knowledge not written down.
@@ -661,5 +665,5 @@ The change intake and `aws-mcp` start on day 3 because they are the riskiest new
 | The single NAT instance fails or is replaced mid-demo | Low | fck-nat runs in an Auto Scaling group of one and recovers on its own; `make up` checks egress to the Claude and GitHub APIs before the demo starts |
 | Spot reclaim during the review window or a recording | Medium | Node group allows t4g.medium and t4g.large; switch to on-demand for demo day |
 | Memory pressure from the Prometheus stack on 8 GiB total | Medium | Short retention, exporters trimmed, resource requests set; add a third node if pods go Pending |
-| `terraform destroy` hangs on load balancer or ENI cleanup | Medium | Destroy script removes Gateway and Helm releases first |
+| `terraform destroy` hangs on load balancer or ENI cleanup | Medium | `make down` runs `helmfile destroy` (Gateway included) before Terraform |
 | Schedule slip | High | Oct 22 go/no-go with Nov 16 as the planned fallback, instead of cutting the differentiator |
