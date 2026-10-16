@@ -17,7 +17,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28",
+    "httpx2>=2.9",
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "pyyaml>=6.0",
@@ -46,9 +46,6 @@ testpaths = ["tests"]
 addopts = "--strict-markers"
 filterwarnings = [
     "error",
-    # Starlette now prefers httpx2 for its TestClient; httpx still works and is what the
-    # issue specifies. Revisit when FastAPI's TestClient moves.
-    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]
 markers = [
     "integration: needs Docker (Testcontainers Postgres) or CT_TEST_DATABASE_URL; run with -m integration",
