@@ -17,8 +17,8 @@
 # same Makefile targets as a laptop. Set: AWS_REGION, NAME_SUFFIX, ENABLE_BUDGET,
 # BUDGET_LIMIT_USD, DOMAIN, DNS_PARENT, K8S_VERSION, USE_SPOT, NODE_INSTANCE_TYPE, EXPOSURE,
 # WATCHED_IAM_PATHS. OPERATOR_ARN is a repository secret: it contains the account ID.
-# BUDGET_EMAIL is an environment secret on <account>-plan and <account>-apply, passed to Terraform
-# as TF_VAR_budget_email in those jobs only, never from a variable or a file in the repo.
+# BUDGET_EMAIL is a repository secret, passed to Terraform as TF_VAR_budget_email in the plan and
+# apply jobs only, never from a variable or a file in the repo.
 #
 # Every job sets role-session-name: gh-${{ github.run_id }}. The roles' trust policies require
 # the gh- prefix, and the intake's EventBridge rule excludes pipeline calls by it.
@@ -135,7 +135,7 @@ jobs:
         account: ${{ fromJSON(needs.changes.outputs.accounts) }}
     environment: ${{ matrix.account }}-plan
     env:
-      # Environment secret; the variable is sensitive, so plans show (sensitive value).
+      # Repository secret; the variable is sensitive, so plans show (sensitive value).
       TF_VAR_budget_email: ${{ secrets.BUDGET_EMAIL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -211,7 +211,7 @@ jobs:
     # Requires a reviewer's approval before any step runs.
     environment: ${{ matrix.account }}-apply
     env:
-      # Environment secret; the variable is sensitive, so plans show (sensitive value).
+      # Repository secret; the variable is sensitive, so plans show (sensitive value).
       TF_VAR_budget_email: ${{ secrets.BUDGET_EMAIL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
