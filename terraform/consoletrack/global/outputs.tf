@@ -3,9 +3,12 @@ output "state_bucket" {
   value       = local.state_bucket
 }
 
+# Sensitive because the ARN contains the account ID; without this, only CI's log masking
+# would hide it.
 output "boundary_arn" {
   description = "ARN of the ct permissions boundary. Every project role must carry it."
   value       = module.boundary.arn
+  sensitive   = true
 }
 
 # Sensitive because the ARNs contain the account ID. `make gh-secrets` reads this map and stores

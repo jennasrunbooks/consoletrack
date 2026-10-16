@@ -91,6 +91,8 @@ variable "budget_email" {
   description = "Where budget alerts go. Required when enable_budget is true."
   type        = string
   default     = ""
+  # Personal data: plans show (sensitive value). CI reads it from an environment secret.
+  sensitive = true
 
   validation {
     condition     = !var.enable_budget || can(regex("^[^@\\s]+@[^@\\s]+$", var.budget_email))

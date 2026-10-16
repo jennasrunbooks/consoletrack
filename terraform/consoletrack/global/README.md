@@ -26,7 +26,9 @@ This is the one root a human applies locally; it creates the roles CI uses for e
    plan with the resource list in the PR that last changed this root.
 4. `make tf-apply ROOT=consoletrack/global` with an admin session. Terraform shows the plan and asks
    for `yes`; the target refuses to run in CI or without a terminal.
-5. `make gh-secrets`: stores each role ARN as its GitHub environment's `AWS_ROLE_ARN` (below).
+5. `make gh-secrets`: stores each role ARN as its GitHub environment's `AWS_ROLE_ARN` (below). If
+   `ENABLE_BUDGET=true`, also add `BUDGET_EMAIL` as an environment secret on `consoletrack-plan`
+   and `consoletrack-apply`; CI passes it to Terraform as `TF_VAR_budget_email`.
 6. If `DOMAIN` is set with `DNS_PARENT=external`, add the NS records (below).
 
 `make domain-zone` applies only the zone (`-target`) and prints the NS records, for setting up a
