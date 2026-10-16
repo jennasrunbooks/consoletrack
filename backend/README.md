@@ -35,5 +35,6 @@ From `backend/`: `uv sync`, then `uv run pytest -m "not integration"`, `uv run a
 
 Integration tests start a `postgres:16-alpine` container through Testcontainers. To use a
 Postgres you already have, point `CT_TEST_DATABASE_URL` at an empty, disposable database (the
-tests truncate every table), e.g.
+tests truncate every table and downgrade to base). The tests refuse any URL that isn't a loopback
+host (`localhost`, `127.0.0.1`, `::1`) with `test` in the database name, e.g.
 `CT_TEST_DATABASE_URL=postgresql+psycopg://user@localhost:5432/ct_test make test-integration`.

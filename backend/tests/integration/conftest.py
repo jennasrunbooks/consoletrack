@@ -2,7 +2,8 @@
 
 By default a Testcontainers Postgres is started (needs Docker; CI and the host have it, the
 devcontainer doesn't). Set `CT_TEST_DATABASE_URL` to an empty, disposable database to use that
-instead; every test truncates all tables.
+instead; every test truncates all tables, and one downgrades to base. `guard.py` refuses any URL
+that isn't a loopback host with "test" in the database name.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from app.enums import Role
 from app.main import create_app
 from app.schemas import User
 from app.settings import Settings
+from tests.integration.guard import check_disposable
 
 BACKEND = Path(__file__).resolve().parents[2]
 WEBHOOK_TOKEN = "integration-webhook-token"
@@ -39,6 +41,7 @@ def alembic_config(database_url: str) -> Config:
 def database_url() -> Iterator[str]:
     url = os.environ.get("CT_TEST_DATABASE_URL")
     if url:
+        check_disposable(url)
         yield url
         return
     from testcontainers.postgres import PostgresContainer
