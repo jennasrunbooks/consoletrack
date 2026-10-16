@@ -64,6 +64,10 @@ paths:
       tags: [auth]
       operationId: login
       summary: Log in and receive a session cookie
+      description: |
+        An unknown username and a wrong password get the same `401`. After 5 failed attempts
+        for one username, or from one client address, within 5 minutes, further attempts get
+        `429` until the oldest failure is 5 minutes old. The session lasts 8 hours.
       security: []
       requestBody:
         required: true
@@ -95,6 +99,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
 
   /api/v1/auth/logout:
     post:
@@ -897,6 +903,17 @@ components:
             $ref: "#/components/schemas/Error"
     UnprocessableEntity:
       description: The request failed validation; `details` lists each problem.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Too many failed logins for this username or address; see `Retry-After`.
+      headers:
+        Retry-After:
+          description: Seconds until another attempt is allowed.
+          schema:
+            type: integer
       content:
         application/json:
           schema:

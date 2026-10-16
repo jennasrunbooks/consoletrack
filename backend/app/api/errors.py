@@ -12,7 +12,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.deps import Forbidden, Unauthorized
 from app.schemas import Error, ErrorDetail
-from app.services.errors import InvalidTransition, MissingReason, NotFound
+from app.services.errors import (
+    InvalidCredentials,
+    InvalidTransition,
+    MissingReason,
+    NotFound,
+    TooManyLoginAttempts,
+)
 
 # Response declarations for routers: {status: Error schema}.
 ERROR_DESCRIPTIONS = {
@@ -22,6 +28,7 @@ ERROR_DESCRIPTIONS = {
     404: "No such change or incident.",
     409: "Not allowed in the subject's current state.",
     422: "The request failed validation; `details` lists each problem.",
+    429: "Too many failed logins for this username or address; see `Retry-After`.",
     501: "The operation is part of a later phase.",
 }
 
@@ -38,10 +45,16 @@ class NotImplementedYet(Exception):
 
 
 def error_response(
-    status: int, code: str, message: str, details: list[ErrorDetail] | None = None
+    status: int,
+    code: str,
+    message: str,
+    details: list[ErrorDetail] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body = Error(code=code, message=message, details=details)
-    return JSONResponse(body.model_dump(mode="json", exclude_none=True), status_code=status)
+    return JSONResponse(
+        body.model_dump(mode="json", exclude_none=True), status_code=status, headers=headers
+    )
 
 
 def _http_code(status: int) -> str:
@@ -75,6 +88,16 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(Unauthorized)
     async def unauthorized(_: Request, exc: Unauthorized) -> JSONResponse:
         return error_response(401, "unauthorized", str(exc))
+
+    @app.exception_handler(InvalidCredentials)
+    async def invalid_credentials(_: Request, exc: InvalidCredentials) -> JSONResponse:
+        return error_response(401, "unauthorized", str(exc))
+
+    @app.exception_handler(TooManyLoginAttempts)
+    async def too_many_logins(_: Request, exc: TooManyLoginAttempts) -> JSONResponse:
+        return error_response(
+            429, "too_many_requests", str(exc), headers={"Retry-After": str(exc.retry_after)}
+        )
 
     @app.exception_handler(Forbidden)
     async def forbidden(_: Request, exc: Forbidden) -> JSONResponse:

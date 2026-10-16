@@ -5,10 +5,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from argon2 import PasswordHasher
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.deps import SESSION_COOKIE, InMemorySessionStore
+from app.api.deps import SESSION_COOKIE
 from app.db.models import AgentRunRow, AnalysisRow, ChangeRow, IncidentChangeRow, IncidentRow
 from app.enums import AgentRunOutcome, Confidence, Role, SubjectType, Via
 from app.main import create_app
@@ -21,8 +22,12 @@ from tests.unit.fakes import FakeStore
 
 NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 WEBHOOK_TOKEN = "test-webhook-token"
-ADMIN_TOKEN = "admin-session"
-VIEWER_TOKEN = "viewer-session"
+ADMIN_PASSWORD = "admin-test-password"
+VIEWER_PASSWORD = "viewer-test-password"
+# Low-cost argon2id parameters keep the tests fast; production hashes use the library defaults.
+_fast_hasher = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+ADMIN_HASH = _fast_hasher.hash(ADMIN_PASSWORD)
+VIEWER_HASH = _fast_hasher.hash(VIEWER_PASSWORD)
 ACCOUNT = "123456789012"  # placeholder account ID (AGENTS.md → Hard rules)
 
 
@@ -33,15 +38,24 @@ def store() -> FakeStore:
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(database_url=None, alert_webhook_token=WEBHOOK_TOKEN, grafana_url=None)
+    return Settings(
+        database_url=None,
+        alert_webhook_token=WEBHOOK_TOKEN,
+        grafana_url=None,
+        admin_password_hash=ADMIN_HASH,
+        viewer_password_hash=VIEWER_HASH,
+    )
 
 
 @pytest.fixture
 def app(store: FakeStore, settings: Settings) -> FastAPI:
-    sessions = InMemorySessionStore()
-    sessions.put(ADMIN_TOKEN, User(username="admin", role=Role.admin))
-    sessions.put(VIEWER_TOKEN, User(username="viewer", role=Role.viewer))
-    return create_app(settings, uow_factory=store.uow, sessions=sessions, clock=lambda: NOW)
+    return create_app(settings, uow_factory=store.uow, clock=lambda: NOW)
+
+
+def session_token(app: FastAPI, username: str) -> str:
+    """A valid signed `ct_session` value, as login would issue it at NOW."""
+    role = Role.admin if username == "admin" else Role.viewer
+    return app.state.sessions.issue(User(username=username, role=role), NOW)
 
 
 @pytest.fixture
@@ -52,14 +66,14 @@ def anon(app: FastAPI) -> TestClient:
 @pytest.fixture
 def viewer(app: FastAPI) -> TestClient:
     client = TestClient(app)
-    client.cookies.set(SESSION_COOKIE, VIEWER_TOKEN)
+    client.cookies.set(SESSION_COOKIE, session_token(app, "viewer"))
     return client
 
 
 @pytest.fixture
 def admin(app: FastAPI) -> TestClient:
     client = TestClient(app)
-    client.cookies.set(SESSION_COOKIE, ADMIN_TOKEN)
+    client.cookies.set(SESSION_COOKIE, session_token(app, "admin"))
     return client
 
 

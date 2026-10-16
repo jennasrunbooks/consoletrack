@@ -1,8 +1,8 @@
 """Backend configuration, read from environment variables with the names in `.env.example`.
 
-Nothing here has a default that is a secret. Secrets (`ALERT_WEBHOOK_TOKEN`,
-`GITHUB_WEBHOOK_SECRET`) arrive from Kubernetes Secrets or the shell and are `SecretStr`, so
-they never show up in a repr or a log line.
+Nothing here has a default that is a secret. Secrets (`SESSION_SECRET`, the password hashes,
+`ALERT_WEBHOOK_TOKEN`, `GITHUB_WEBHOOK_SECRET`) arrive from Kubernetes Secrets or the shell and
+are `SecretStr`, so they never show up in a repr or a log line.
 """
 
 from __future__ import annotations
@@ -29,6 +29,14 @@ class Settings(BaseSettings):
 
     # The region the intake watches (product-spec.md → AWS design and cost).
     aws_region: str = "us-east-1"
+
+    # Login for the two fixed accounts: argon2id hashes from `make hash-password`. An unset hash
+    # means that account can't log in.
+    admin_password_hash: SecretStr | None = None
+    viewer_password_hash: SecretStr | None = None
+    # Signs the session cookie. Required, at least 32 bytes: `create_app` refuses to start
+    # without it, and there is no default, not even locally.
+    session_secret: SecretStr | None = None
 
     # Bearer token Alertmanager sends to POST /api/v1/alerts/webhook. Unset means every
     # webhook call is rejected with 401 (fail closed).

@@ -7,12 +7,10 @@ import pytest
 from fastapi.testclient import TestClient
 from prometheus_client.parser import text_string_to_metric_families
 
-from app.enums import Role
 from app.main import create_app
-from app.schemas import User
 from app.services.intake_health import IntakeSnapshot
 from app.settings import IntakeMode, Settings
-from tests.unit.conftest import NOW, VIEWER_TOKEN, ChangeFactory
+from tests.unit.conftest import NOW, ChangeFactory, session_token
 from tests.unit.fakes import FakeStore
 
 
@@ -68,9 +66,8 @@ def test_intake_health_live_from_a_source(store: FakeStore) -> None:
         intake_status=StaticIntake(HEALTHY),
         clock=lambda: NOW,
     )
-    app.state.sessions.put(VIEWER_TOKEN, _viewer())
     client = TestClient(app)
-    client.cookies.set("ct_session", VIEWER_TOKEN)
+    client.cookies.set("ct_session", session_token(app, "viewer"))
     body = client.get("/api/v1/intake/health").json()
     assert body["state"] == "live"
     assert body["reasons"] == []
@@ -80,10 +77,11 @@ def test_intake_health_live_from_a_source(store: FakeStore) -> None:
 
 
 def test_intake_health_replay_mode(store: FakeStore) -> None:
-    app = create_app(Settings(intake_mode=IntakeMode.replay), uow_factory=store.uow)
-    app.state.sessions.put("t", _viewer())
+    app = create_app(
+        Settings(intake_mode=IntakeMode.replay), uow_factory=store.uow, clock=lambda: NOW
+    )
     client = TestClient(app)
-    client.cookies.set("ct_session", "t")
+    client.cookies.set("ct_session", session_token(app, "viewer"))
     assert client.get("/api/v1/intake/health").json()["state"] == "replay"
 
 
@@ -149,25 +147,6 @@ def test_readyz_db_down(store: FakeStore) -> None:
 def test_create_app_needs_a_database_url_without_a_factory() -> None:
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
         create_app(Settings(database_url=None))
-
-
-# --- Auth placeholder ------------------------------------------------------------------------
-
-
-def _viewer() -> User:
-    return User(username="viewer", role=Role.viewer)
-
-
-def test_me_returns_the_session_user(viewer: TestClient, anon: TestClient) -> None:
-    assert viewer.get("/api/v1/auth/me").json() == {"username": "viewer", "role": "viewer"}
-    assert anon.get("/api/v1/auth/me").status_code == 401
-
-
-def test_login_and_logout_are_501(anon: TestClient, viewer: TestClient) -> None:
-    login = anon.post("/api/v1/auth/login", json={"username": "admin", "password": "x"})
-    assert login.status_code == 501
-    assert viewer.post("/api/v1/auth/logout").status_code == 501
-    assert anon.post("/api/v1/auth/logout").status_code == 401
 
 
 def test_stats_is_phase_2(viewer: TestClient) -> None:
