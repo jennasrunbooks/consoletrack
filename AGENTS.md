@@ -91,6 +91,9 @@ and the `main` ruleset. Don't try to work around a block — report it.
 7. **The triage agent never applies anything.** Cluster remediation goes through the policy gate
    (manual by default); AWS-side changes always go through Revert or Codify with human approval.
    Don't add code paths that bypass the gate.
+8. **Don't download and run binaries or installers from the internet.** Install tools only through
+   the project's package managers (uv, npm) or the devcontainer. If a task needs a tool the
+   container doesn't have, stop and ask.
 
 ## Conventions
 

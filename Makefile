@@ -76,6 +76,8 @@ OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
 TFLINT ?= tflint
 SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
+# The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
+BACKEND_RUN ?= cd backend && uv run --locked
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
@@ -98,7 +100,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply gh-secrets \
-	test-hooks lint-hooks lint-openapi lint-terraform lint-shell \
+	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
 	domain domain-zone domain-cert domain-destroy \
@@ -111,18 +113,23 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-openapi lint-shell ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-openapi lint-shell ## Lint and format checks (run before every commit)
 
-test: test-hooks ## Unit tests (run before every commit)
+test: test-hooks test-backend test-contract ## Unit and contract tests (run before every commit)
 
 fmt: ## Format Python and Terraform in place
-	$(RUFF) format agent-hooks
+	$(RUFF) format agent-hooks backend
+	$(RUFF) check --fix-only --select I backend
 	@if command -v $(TERRAFORM) >/dev/null; then $(TERRAFORM) fmt -recursive terraform/; \
 		else echo "terraform not installed; skipped terraform fmt" >&2; fi
 
 lint-hooks: ## ruff check + format check for agent-hooks/
 	$(RUFF) check agent-hooks
 	$(RUFF) format --check agent-hooks
+
+lint-backend: ## ruff check + format check for backend/ (config in backend/pyproject.toml)
+	$(RUFF) check backend
+	$(RUFF) format --check backend
 
 lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 	$(OPENAPI_VALIDATOR) openapi.yaml
@@ -163,14 +170,18 @@ tf-test: ## terraform test for every root with tests/ (offline: AWS calls are ov
 test-hooks: ## Tests for agent-hooks/
 	$(PYTEST) agent-hooks/tests -q
 
-test-backend: ## Backend unit tests (stub)
-	$(call todo,#4)
+test-backend: ## Backend unit tests, with app/services/ coverage >= 90%
+	$(BACKEND_RUN) pytest tests/unit -q -m "not integration" \
+		--cov=app/services --cov-report=term-missing --cov-fail-under=90
 
-test-contract: ## FastAPI schema matches openapi.yaml (stub)
-	$(call todo,#4)
+test-contract: ## FastAPI schema matches openapi.yaml
+	$(BACKEND_RUN) pytest tests/contract -q
 
-test-integration: ## Backend integration tests, needs Docker (stub)
-	$(call todo,#4)
+test-integration: ## Backend integration tests on Postgres: Testcontainers (Docker) or CT_TEST_DATABASE_URL
+	$(BACKEND_RUN) pytest tests/integration -q -m integration
+
+db-sql: ## Print the full schema migration as SQL, offline (no database needed)
+	$(BACKEND_RUN) alembic upgrade head --sql
 
 test-frontend: ## Frontend lint and Vitest (stub)
 	$(call todo,the frontend + change log workstream; no issue yet)
@@ -245,7 +256,7 @@ verify-clean: env-check-aws ## Fail if project-tagged billable resources remain 
 domain: env-check-aws ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-gh-secrets: env-check-tf ## Set each GitHub environment's AWS_ROLE_ARN secret from the global root's outputs
+gh-secrets: ## Set each GitHub environment's AWS_ROLE_ARN from the global root's outputs (humans only)
 	$(call check_env,GITHUB_REPO)
 	scripts/gh-env-secrets.sh
 

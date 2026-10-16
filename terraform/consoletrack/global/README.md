@@ -42,11 +42,14 @@ and logs. Set all four with:
 make gh-secrets
 ```
 
-It reads the `github_env_role_arns` output (environment name → role ARN), runs `gh secret set` for
-each environment with the ARN on stdin, and never prints an ARN. It needs `GITHUB_REPO`, an
-initialized root (`make tf-init ROOT=consoletrack/global`), the four environments already created in
-the repo, and `gh` logged in as someone allowed to set environment secrets. Re-run it after any
-change to `NAME_SUFFIX`, since the role names include the suffix. Don't copy ARNs by hand.
+It runs `scripts/gh-env-secrets.sh`, which reads the `github_env_role_arns` output (environment
+name → role ARN) and pipes each ARN into `gh secret set` on stdin, so no ARN or account ID is
+printed. Run it on your own machine, as yourself: it refuses to run when `gh` is logged in as the
+agent's account. It needs `GITHUB_REPO`, an initialized and applied root (`make tf-init
+ROOT=consoletrack/global`), and `gh` logged in with permission to set environment secrets. An
+environment that doesn't exist yet in the repo is skipped and reported (exit 1), so create the four
+environments first. Re-run it after any change to `NAME_SUFFIX`, since the role names include the
+suffix. Don't copy ARNs by hand.
 
 | Environment | Role | Trusted `sub` |
 |---|---|---|

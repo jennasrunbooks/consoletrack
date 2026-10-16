@@ -1,37 +1,50 @@
 #!/usr/bin/env bash
-# Store each GitHub OIDC role ARN as its environment's AWS_ROLE_ARN secret, from the
-# github_env_role_arns output of terraform/consoletrack/global. Run it through `make gh-secrets`
-# after the first apply of that root, and again whenever NAME_SUFFIX changes (the role names
-# include it). Safe to re-run: it overwrites the four secrets with the current values.
+# Sets the AWS_ROLE_ARN secret on each GitHub environment from Terraform outputs.
 #
-# Needs GITHUB_REPO (owner/repo), an initialized global root (`make tf-init
-# ROOT=consoletrack/global`), and `gh` logged in with permission to set environment secrets.
-# The ARNs contain the account ID, so they go to `gh` on stdin and are never printed.
+# Run on your own machine, as yourself, after applying terraform/<account>/global:
+#   scripts/gh-env-secrets.sh [account]      # default account: consoletrack
+#
+# Reads the `github_env_role_arns` output (a map of environment name -> role ARN),
+# pipes each ARN into `gh secret set` over stdin, and never prints an ARN or account ID.
+# Safe to rerun: it overwrites each secret with the current value.
 set -euo pipefail
 
-ROOT_DIR=terraform/consoletrack/global
-ENVIRONMENTS=(consoletrack-plan consoletrack-apply consoletrack-revert consoletrack-deploy)
+account="${1:-consoletrack}"
+root="terraform/${account}/global"
+repo="${GITHUB_REPO:?set GITHUB_REPO (owner/repo) in .env or your shell}"
 
-die() {
-	echo "gh-env-secrets: $*" >&2
-	exit 1
-}
-
-[[ -n "${GITHUB_REPO:-}" ]] || die "GITHUB_REPO is not set (owner/repo, in .env or your shell)."
-for tool in terraform gh jq; do
-	type -P "$tool" >/dev/null || die "$tool is required."
+for tool in gh jq terraform; do
+  command -v "$tool" >/dev/null || { echo "gh-env-secrets: needs $tool" >&2; exit 1; }
 done
-gh auth status >/dev/null 2>&1 || die "gh is not logged in; run \`gh auth login\`."
 
-arns=$(terraform -chdir="$ROOT_DIR" output -json github_env_role_arns 2>/dev/null) ||
-	die "no github_env_role_arns output; run \`make tf-init ROOT=consoletrack/global\` and apply the root first."
-[[ "$(jq 'length' <<<"$arns")" -gt 0 ]] ||
-	die "github_env_role_arns is empty: set ENABLE_GITHUB_OIDC=true and apply terraform/consoletrack/global."
+# Refuse to run as the coding agent's machine user (e.g. a leaked GH_TOKEN).
+login=$(gh api user --jq .login)
+if [[ "$login" == *-agent ]]; then
+  echo "gh-env-secrets: gh is authenticated as ${login}; unset GH_TOKEN and run this as yourself." >&2
+  exit 1
+fi
 
-for env in "${ENVIRONMENTS[@]}"; do
-	arn=$(jq -r --arg e "$env" '.[$e] // empty' <<<"$arns")
-	[[ -n "$arn" ]] || die "github_env_role_arns has no entry for $env."
-	gh secret set AWS_ROLE_ARN --env "$env" --repo "$GITHUB_REPO" <<<"$arn" >/dev/null ||
-		die "could not set AWS_ROLE_ARN in environment $env; does the environment exist in $GITHUB_REPO?"
-	echo "Set AWS_ROLE_ARN in environment $env."
-done
+if ! arns=$(terraform -chdir="$root" output -json github_env_role_arns 2>/dev/null); then
+  echo "gh-env-secrets: no github_env_role_arns output in ${root}; apply it first (with ENABLE_GITHUB_OIDC=true)." >&2
+  exit 1
+fi
+
+if [[ $(jq 'length' <<<"$arns") -eq 0 ]]; then
+  echo "gh-env-secrets: github_env_role_arns is empty; is ENABLE_GITHUB_OIDC=true?" >&2
+  exit 1
+fi
+
+existing=$(gh api "repos/${repo}/environments" --jq '.environments[].name')
+missing=0
+
+while read -r env; do
+  if ! grep -qx -- "$env" <<<"$existing"; then
+    echo "skip  ${env}: environment doesn't exist in ${repo}; create it first" >&2
+    missing=1
+    continue
+  fi
+  jq -r --arg e "$env" '.[$e]' <<<"$arns" | gh secret set AWS_ROLE_ARN --env "$env" --repo "$repo"
+  echo "set   AWS_ROLE_ARN on ${env}"
+done < <(jq -r 'keys[]' <<<"$arns")
+
+exit "$missing"
