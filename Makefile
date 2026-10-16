@@ -71,6 +71,8 @@ RUFF ?= uvx ruff@0.16.10
 PYTEST ?= uvx pytest@9.1.1
 OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
+# The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
+BACKEND_RUN ?= cd backend && uv run --locked
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
@@ -80,7 +82,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local tf-env tf-validate \
-	test-hooks lint-hooks lint-openapi lint-terraform \
+	test-hooks lint-hooks lint-backend lint-openapi lint-terraform db-sql \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
 	domain domain-zone domain-cert domain-destroy \
@@ -93,18 +95,23 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-openapi ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-openapi ## Lint and format checks (run before every commit)
 
-test: test-hooks ## Unit tests (run before every commit)
+test: test-hooks test-backend test-contract ## Unit and contract tests (run before every commit)
 
 fmt: ## Format Python and Terraform in place
-	$(RUFF) format agent-hooks
+	$(RUFF) format agent-hooks backend
+	$(RUFF) check --fix-only --select I backend
 	@if command -v $(TERRAFORM) >/dev/null; then $(TERRAFORM) fmt -recursive terraform/; \
 		else echo "terraform not installed; skipped terraform fmt" >&2; fi
 
 lint-hooks: ## ruff check + format check for agent-hooks/
 	$(RUFF) check agent-hooks
 	$(RUFF) format --check agent-hooks
+
+lint-backend: ## ruff check + format check for backend/ (config in backend/pyproject.toml)
+	$(RUFF) check backend
+	$(RUFF) format --check backend
 
 lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 	$(OPENAPI_VALIDATOR) openapi.yaml
@@ -126,14 +133,18 @@ tf-validate: ## terraform init -backend=false + validate for every root (no AWS 
 test-hooks: ## Tests for agent-hooks/
 	$(PYTEST) agent-hooks/tests -q
 
-test-backend: ## Backend unit tests (stub)
-	$(call todo,#4)
+test-backend: ## Backend unit tests, with app/services/ coverage >= 90%
+	$(BACKEND_RUN) pytest tests/unit -q -m "not integration" \
+		--cov=app/services --cov-report=term-missing --cov-fail-under=90
 
-test-contract: ## FastAPI schema matches openapi.yaml (stub)
-	$(call todo,#4)
+test-contract: ## FastAPI schema matches openapi.yaml
+	$(BACKEND_RUN) pytest tests/contract -q
 
-test-integration: ## Backend integration tests, needs Docker (stub)
-	$(call todo,#4)
+test-integration: ## Backend integration tests on Postgres: Testcontainers (Docker) or CT_TEST_DATABASE_URL
+	$(BACKEND_RUN) pytest tests/integration -q -m integration
+
+db-sql: ## Print the full schema migration as SQL, offline (no database needed)
+	$(BACKEND_RUN) alembic upgrade head --sql
 
 test-frontend: ## Frontend lint and Vitest (stub)
 	$(call todo,the frontend + change log workstream; no issue yet)
