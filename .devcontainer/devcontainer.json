@@ -32,7 +32,9 @@
   "remoteEnv": {
     "GH_TOKEN": "${localEnv:GH_TOKEN}",
     "GIT_AUTHOR_NAME": "${localEnv:GIT_AUTHOR_NAME}",
-    "GIT_AUTHOR_EMAIL": "${localEnv:GIT_AUTHOR_EMAIL}"
+    "GIT_AUTHOR_EMAIL": "${localEnv:GIT_AUTHOR_EMAIL}",
+    "GIT_COMMITTER_NAME": "${localEnv:GIT_AUTHOR_NAME}",
+    "GIT_COMMITTER_EMAIL": "${localEnv:GIT_AUTHOR_EMAIL}"
   },
   "customizations": {
     "vscode": {
@@ -48,7 +50,7 @@
       ]
     }
   },
-  "postCreateCommand": "git config --global user.name \"$GIT_AUTHOR_NAME\" && git config --global user.email \"$GIT_AUTHOR_EMAIL\" && gh auth setup-git",
+  "postCreateCommand": "test -n \"$GIT_AUTHOR_NAME\" && test -n \"$GH_TOKEN\" || { echo 'dev-agent env missing: start with dev-agent' >&2; exit 1; }; git config --global user.name \"$GIT_AUTHOR_NAME\" && git config --global user.email \"$GIT_AUTHOR_EMAIL\" && gh auth setup-git",
   "remoteUser": "vscode",
   "forwardPorts": [3000, 5173, 8000]
 }
