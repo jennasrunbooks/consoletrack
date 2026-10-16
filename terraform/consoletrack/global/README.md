@@ -26,7 +26,7 @@ This is the one root a human applies locally; it creates the roles CI uses for e
    plan with the resource list in the PR that last changed this root.
 4. `make tf-apply ROOT=consoletrack/global` with an admin session. Terraform shows the plan and asks
    for `yes`; the target refuses to run in CI or without a terminal.
-5. Store the role ARNs as GitHub environment secrets (below).
+5. `make gh-secrets`: stores each role ARN as its GitHub environment's `AWS_ROLE_ARN` (below).
 6. If `DOMAIN` is set with `DNS_PARENT=external`, add the NS records (below).
 
 `make domain-zone` applies only the zone (`-target`) and prints the NS records, for setting up a
@@ -34,17 +34,19 @@ domain before the rest of the root.
 
 ## GitHub environment secrets
 
-Each GitHub environment holds its role's ARN as the secret `AWS_ROLE_ARN`. The names include the
-suffix, so set them after every first apply. The ARN isn't a credential (OIDC stores no keys), but
-keeping it secret keeps the account ID out of the public repo and logs.
+Each GitHub environment holds its role's ARN as the secret `AWS_ROLE_ARN`. The ARN isn't a
+credential (OIDC stores no keys), but keeping it secret keeps the account ID out of the public repo
+and logs. Set all four with:
 
 ```sh
-cd terraform/consoletrack/global
-for env in plan apply revert deploy; do
-  terraform output -json github_role_arns | jq -r ".${env}" |
-    gh secret set AWS_ROLE_ARN --env "consoletrack-${env}" --repo "$GITHUB_REPO"
-done
+make gh-secrets
 ```
+
+It reads the `github_env_role_arns` output (environment name → role ARN), runs `gh secret set` for
+each environment with the ARN on stdin, and never prints an ARN. It needs `GITHUB_REPO`, an
+initialized root (`make tf-init ROOT=consoletrack/global`), the four environments already created in
+the repo, and `gh` logged in as someone allowed to set environment secrets. Re-run it after any
+change to `NAME_SUFFIX`, since the role names include the suffix. Don't copy ARNs by hand.
 
 | Environment | Role | Trusted `sub` |
 |---|---|---|

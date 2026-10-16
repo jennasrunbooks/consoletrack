@@ -8,11 +8,11 @@ output "boundary_arn" {
   value       = module.boundary.arn
 }
 
-# Sensitive because the ARNs contain the account ID. Read them with
-# `terraform output -json github_role_arns` and store each as its environment's AWS_ROLE_ARN.
-output "github_role_arns" {
-  description = "GitHub OIDC role ARN per environment suffix (plan, apply, revert, deploy). Empty when enable_github_oidc is false."
-  value       = { for k, role in module.github_role : k => role.arn }
+# Sensitive because the ARNs contain the account ID. `make gh-secrets` reads this map and stores
+# each ARN as its environment's AWS_ROLE_ARN secret.
+output "github_env_role_arns" {
+  description = "GitHub environment name (consoletrack-plan, -apply, -revert, -deploy) to its OIDC role ARN. {} when enable_github_oidc is false."
+  value       = { for k, role in module.github_role : "consoletrack-${k}" => role.arn }
   sensitive   = true
 }
 

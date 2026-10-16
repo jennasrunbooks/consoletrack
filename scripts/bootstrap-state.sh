@@ -5,7 +5,9 @@
 #
 # Reads AWS_PROFILE, AWS_REGION, and NAME_SUFFIX from the environment (the Makefile exports
 # them from .env). If NAME_SUFFIX is empty it generates one and prints it; it never writes .env.
-# Never prints the account ID: the caller ARN is shown with it masked.
+# Never prints the account ID: the caller ARN is shown with it masked, and every AWS CLI call
+# goes through aws(), which masks the CLI's own error output (AccessDenied messages include
+# the caller's ARN).
 #
 # Set BOOTSTRAP_ASSUME_YES=true to skip the confirmation prompt.
 set -euo pipefail
@@ -19,10 +21,21 @@ mask_account() {
 	sed -E 's/[0-9]{12}/***/g'
 }
 
+# The AWS CLI with its stderr masked. stdout is passed through unchanged for callers that
+# capture it; a 12-digit value there is only ever captured, never printed.
+aws_errfile=$(mktemp)
+trap 'rm -f "$aws_errfile"' EXIT
+aws() {
+	local rc=0
+	command aws "$@" 2>"$aws_errfile" || rc=$?
+	mask_account <"$aws_errfile" >&2
+	return "$rc"
+}
+
 for v in AWS_PROFILE AWS_REGION; do
 	[[ -n "${!v:-}" ]] || die "$v is not set (set it in .env or your shell)."
 done
-command -v aws >/dev/null || die "the AWS CLI v2 is required."
+type -P aws >/dev/null || die "the AWS CLI v2 is required."
 
 caller_arn=$(aws sts get-caller-identity --query Arn --output text) ||
 	die "could not get the caller identity; is AWS_PROFILE=$AWS_PROFILE logged in?"

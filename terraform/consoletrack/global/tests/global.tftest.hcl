@@ -113,6 +113,13 @@ run "github_roles" {
   }
 
   assert {
+    condition = toset(keys(output.github_env_role_arns)) == toset([
+      "consoletrack-plan", "consoletrack-apply", "consoletrack-revert", "consoletrack-deploy",
+    ])
+    error_message = "github_env_role_arns must map each GitHub environment name to its role."
+  }
+
+  assert {
     condition     = output.state_bucket == "ct-tfstate-a1b2c3"
     error_message = "State bucket must be ct-tfstate-<suffix>."
   }
@@ -139,6 +146,11 @@ run "oidc_off_creates_no_github_roles" {
   assert {
     condition     = length(module.github_role) == 0 && length(data.aws_iam_policy_document.github_trust) == 0
     error_message = "enable_github_oidc = false must create no OIDC provider or GitHub roles."
+  }
+
+  assert {
+    condition     = output.github_env_role_arns == {}
+    error_message = "github_env_role_arns must be {} when enable_github_oidc is false."
   }
 
   assert {
