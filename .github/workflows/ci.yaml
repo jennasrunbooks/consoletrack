@@ -34,6 +34,16 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
+      - uses: azure/setup-helm@b9fef2282004eb122213d22b07f8721c080077fd # v4.2.0
+        with:
+          version: "v4.3.1"
+      - uses: helmfile/helmfile-action@v2.4.8
+        with:
+          helm-version: "v4.3.1"
+          helmfile-version: "v1.8.2"
+          helm-plugins: |
+            https://github.com/databus23/helm-diff@v3.15.15
+          helmfile-auto-init: "true"
       - run: make lint
 
   test:
