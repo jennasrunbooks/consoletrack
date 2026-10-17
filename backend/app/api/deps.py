@@ -1,10 +1,9 @@
 """Request dependencies: the unit of work, the clock, auth, and the webhook bearer token.
 
-**Auth placeholder.** The real admin/viewer login (`POST /api/v1/auth/login`) ships with the
-auth work. Until then sessions live in an in-memory `SessionStore` that nothing in production
-fills, so every request without a session gets 401: reads and writes fail closed. The
-dependency interface (`current_user`, `require_user`, `require_admin`) is what the login work
-keeps; only the store behind it changes.
+**Auth.** `require_session` (the `Viewer` alias) guards every read and `require_admin` (`Admin`)
+every write; `tests/unit/test_route_auth.py` fails if an `/api/v1` route has neither. The
+session cookie is signed and read by `app.services.auth.SessionSigner`; a missing, tampered,
+or expired cookie is 401, and a viewer on a write is 403.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from __future__ import annotations
 import hmac
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from typing import Annotated, Protocol
+from typing import Annotated
 
 from fastapi import Depends, Request, Security
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
@@ -20,6 +19,7 @@ from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBea
 from app.db.repositories import UnitOfWork
 from app.enums import Role
 from app.schemas import User
+from app.services.auth import Authenticator, LoginRateLimiter, SessionSigner
 from app.settings import Settings
 
 SESSION_COOKIE = "ct_session"
@@ -36,23 +36,6 @@ class Unauthorized(Exception):
 
 class Forbidden(Exception):
     pass
-
-
-class SessionStore(Protocol):
-    def get(self, token: str) -> User | None: ...
-
-
-class InMemorySessionStore:
-    """Placeholder until login exists; tests put sessions here."""
-
-    def __init__(self) -> None:
-        self._sessions: dict[str, User] = {}
-
-    def get(self, token: str) -> User | None:
-        return self._sessions.get(token)
-
-    def put(self, token: str, user: User) -> None:
-        self._sessions[token] = user
 
 
 def get_settings(request: Request) -> Settings:
@@ -74,16 +57,36 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def get_sessions(request: Request) -> SessionSigner:
+    return request.app.state.sessions
+
+
+def get_authenticator(request: Request) -> Authenticator:
+    return request.app.state.authenticator
+
+
+def get_login_limiter(request: Request) -> LoginRateLimiter:
+    return request.app.state.login_limiter
+
+
+def client_ip(request: Request) -> str:
+    # The direct peer. Behind the Gateway or an ALB this is the proxy unless uvicorn runs with
+    # --proxy-headers and --forwarded-allow-ips set to the proxy, which rewrites it from
+    # X-Forwarded-For.
+    return request.client.host if request.client else "unknown"
+
+
 def current_user(
-    request: Request, token: Annotated[str | None, Security(session_cookie)]
+    sessions: Annotated[SessionSigner, Depends(get_sessions)],
+    now: Annotated[datetime, Depends(get_now)],
+    token: Annotated[str | None, Security(session_cookie)],
 ) -> User | None:
     if not token:
         return None
-    store: SessionStore = request.app.state.sessions
-    return store.get(token)
+    return sessions.read(token, now)
 
 
-def require_user(user: Annotated[User | None, Depends(current_user)]) -> User:
+def require_session(user: Annotated[User | None, Depends(current_user)]) -> User:
     if user is None:
         raise Unauthorized("log in first")
     return user
@@ -112,5 +115,5 @@ def require_webhook_token(
 
 Uow = Annotated[UnitOfWork, Depends(get_uow)]
 Now = Annotated[datetime, Depends(get_now)]
-Viewer = Annotated[User, Depends(require_user)]
+Viewer = Annotated[User, Depends(require_session)]
 Admin = Annotated[User, Depends(require_admin)]

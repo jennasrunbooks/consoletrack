@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, text
 
-from app.api.deps import SESSION_COOKIE, InMemorySessionStore
+from app.api.deps import SESSION_COOKIE
 from app.db.models import Base
 from app.enums import Role
 from app.main import create_app
@@ -28,7 +29,6 @@ from tests.integration.guard import check_disposable
 
 BACKEND = Path(__file__).resolve().parents[2]
 WEBHOOK_TOKEN = "integration-webhook-token"
-ADMIN_TOKEN = "integration-admin"
 
 
 def alembic_config(database_url: str) -> Config:
@@ -70,17 +70,13 @@ def clean_db(engine: Engine) -> Engine:
 
 @pytest.fixture
 def app(clean_db: Engine, database_url: str):
-    sessions = InMemorySessionStore()
-    sessions.put(ADMIN_TOKEN, User(username="admin", role=Role.admin))
-    return create_app(
-        Settings(database_url=database_url, alert_webhook_token=WEBHOOK_TOKEN),
-        sessions=sessions,
-    )
+    return create_app(Settings(database_url=database_url, alert_webhook_token=WEBHOOK_TOKEN))
 
 
 @pytest.fixture
 def client(app) -> Iterator[TestClient]:
     # The context manager runs the app's lifespan, which disposes its engine.
     with TestClient(app) as client:
-        client.cookies.set(SESSION_COOKIE, ADMIN_TOKEN)
+        admin = User(username="admin", role=Role.admin)
+        client.cookies.set(SESSION_COOKIE, app.state.sessions.issue(admin, datetime.now(UTC)))
         yield client

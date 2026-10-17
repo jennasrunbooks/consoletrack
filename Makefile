@@ -100,7 +100,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
-	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql \
+	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql hash-password \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
 	domain domain-zone domain-cert domain-destroy \
@@ -183,8 +183,11 @@ test-integration: ## Backend integration tests on Postgres: Testcontainers (Dock
 db-sql: ## Print the full schema migration as SQL, offline (no database needed)
 	$(BACKEND_RUN) alembic upgrade head --sql
 
+hash-password: ## Prompt for a password and print its argon2id hash for .env ($ doubled for make)
+	@$(BACKEND_RUN) python -m app.hash_password
+
 test-frontend: ## Frontend lint and Vitest (stub)
-	$(call todo,the frontend + change log workstream; no issue yet)
+	$(call todo,#13)
 
 test-k8s: ## k8s-mcp against kind with real RBAC (stub)
 	$(call todo,#10)

@@ -25,3 +25,18 @@ class NotFound(Exception):
         self.subject = subject
         self.subject_id = subject_id
         super().__init__(f"{subject} {subject_id} not found")
+
+
+class InvalidCredentials(Exception):
+    """Unknown username or wrong password; deliberately one error for both (HTTP 401)."""
+
+    def __init__(self) -> None:
+        super().__init__("invalid username or password")
+
+
+class TooManyLoginAttempts(Exception):
+    """Too many failed logins for this username or client IP (HTTP 429)."""
+
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__(f"too many failed logins; try again in {retry_after} seconds")
