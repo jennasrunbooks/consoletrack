@@ -75,9 +75,13 @@ PYTEST ?= uvx pytest@9.1.1
 OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
 TFLINT ?= tflint
+HELMFILE ?= helmfile
 SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
 # The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
 BACKEND_RUN ?= cd backend && uv run --locked
+
+# Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
+HELMFILE_STATE := helm/helmfile.yaml.gotmpl
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
@@ -100,9 +104,10 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
-	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql hash-password \
+	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers lint-shell \
+	helm-lint db-sql hash-password \
 	test-backend test-frontend test-contract test-integration test-k8s \
-	preflight bootstrap up down down-all verify-clean deploy open \
+	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
 	local demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
@@ -113,7 +118,7 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-openapi lint-shell ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-openapi lint-shell lint-terraform-providers helm-lint ## Lint and format checks (run before every commit)
 
 test: test-hooks test-backend test-contract ## Unit and contract tests (run before every commit)
 
@@ -136,6 +141,24 @@ lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 
 lint-terraform: ## terraform fmt check (CI job terraform-fmt)
 	$(TERRAFORM) fmt -check -recursive terraform/
+
+lint-terraform-providers: ## Fail if any Terraform root uses the helm or kubernetes provider (Helmfile owns every chart)
+	@hits=$$(grep -rnE 'provider[[:space:]]+"(helm|kubernetes)"|hashicorp/(helm|kubernetes)\b' terraform \
+		--include='*.tf' --include='.terraform.lock.hcl' --exclude-dir=.terraform); \
+	if [ -n "$$hits" ]; then \
+		echo "$$hits" >&2; \
+		echo "make $@: Terraform manages AWS only and never installs anything inside Kubernetes;" \
+			"put the release in $(HELMFILE_STATE) instead (AGENTS.md → Conventions → Helm)" >&2; \
+		exit 1; \
+	fi; \
+	echo "make $@: no helm or kubernetes provider in terraform/"
+
+helm-lint: ## helmfile lint every release in helm/helmfile.yaml.gotmpl (skipped until it exists)
+	@if [ ! -f $(HELMFILE_STATE) ]; then \
+		echo "make $@: $(HELMFILE_STATE) doesn't exist yet, skipped"; exit 0; fi; \
+	if ! command -v $(HELMFILE) >/dev/null; then \
+		echo "make $@: $(HELMFILE) is not installed (see README → Prerequisites)" >&2; exit 1; fi; \
+	$(HELMFILE) --file $(HELMFILE_STATE) lint
 
 lint-shell: ## shellcheck every script under scripts/ (pinned, through uvx)
 	$(SHELLCHECK) $$(find scripts -name '*.sh' -type f | sort)
@@ -243,8 +266,11 @@ tf-output: env-check-tf ## terraform output ROOT=<account>/<scope> [OUTPUT=<name
 up: env-check-up ## Create the platform, add-ons, and app; print the dashboard URL (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-deploy: env-check-aws ## helm upgrade the consoletrack chart (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+addons: env-check-aws ## helmfile -l tier=addons apply: Gateway API CRDs and third-party charts (stub)
+	$(call todo,the Helm + deploy workstream; no issue yet)
+
+deploy: env-check-aws ## helmfile -l tier=app apply: the consoletrack and demo-app releases (stub)
+	$(call todo,the Helm + deploy workstream; no issue yet)
 
 open: env-check-aws ## Port-forward the dashboard and open it (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)

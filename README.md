@@ -118,7 +118,7 @@ make up                        # Terraform (global, us-east-1, demo-app), then H
 make open                      # port-forwards the dashboard and prints the URL and admin password
 ```
 
-`make up` takes about 20–25 minutes and is safe to rerun. Terraform builds only AWS resources; Helmfile installs everything inside the cluster.
+`make up` takes about 20–25 minutes and is safe to rerun. Terraform is AWS-only; Helmfile owns every chart: it installs everything inside the cluster from [helm/helmfile.yaml.gotmpl](helm/), the add-ons with `make addons` (`helmfile -l tier=addons apply`) and the app with `make deploy` (`helmfile -l tier=app apply`).
 
 ### Optional: GitHub Actions on your fork
 
@@ -243,7 +243,7 @@ Conventions for humans and coding agents: [AGENTS.md](AGENTS.md). The devcontain
 
 ```bash
 make help                      # every target
-make lint                      # ruff, OpenAPI validation, terraform fmt, helmfile lint
+make lint                      # ruff, OpenAPI validation, shellcheck, helmfile lint, no Terraform helm/kubernetes provider
 make test                      # unit and contract tests, no network or API key needed
 make tf-validate               # terraform init -backend=false + validate for every root
 ```
