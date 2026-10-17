@@ -564,7 +564,7 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 | --- | --- |
 | AWS account | Admin access, ideally a sandbox account; a CLI profile configured |
 | Anthropic API key | With a monthly spend limit set; a full demo uses a handful of triage runs |
-| Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 3 with the helm-diff plugin, Helmfile, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
+| Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 4 with the helm-diff plugin, Helmfile, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
 | Budget | About $0.19/hour while up; the README states this before any command |
 
 **Steps (README "Quick start" mirrors this exactly).**

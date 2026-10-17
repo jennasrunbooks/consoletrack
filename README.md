@@ -104,7 +104,7 @@ The session cookie is always `Secure`, with no setting to turn that off. Chrome 
 ### Prerequisites
 
 - An AWS account you can use as a sandbox, with admin access and an AWS CLI profile
-- Terraform ≥ 1.11, AWS CLI v2, kubectl, Helm 3 with the helm-diff plugin, Helmfile, jq, `make`. Or open [.devcontainer/](.devcontainer/), which has them pinned.
+- Terraform ≥ 1.11, AWS CLI v2, kubectl, Helm 4 with the helm-diff plugin, Helmfile, jq, `make`. Or open [.devcontainer/](.devcontainer/), which has them pinned.
 - An Anthropic API key with a monthly spend limit
 - Optional: a domain you control (`DOMAIN`, `DNS_PARENT`). Required only for `EXPOSURE=alb`, because the load balancer serves HTTPS only.
 

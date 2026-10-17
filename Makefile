@@ -267,10 +267,10 @@ up: env-check-up ## Create the platform, add-ons, and app; print the dashboard U
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
 addons: env-check-aws ## helmfile -l tier=addons apply: Gateway API CRDs and third-party charts (stub)
-	$(call todo,the Helm + deploy workstream; no issue yet)
+	$(call todo,#12)
 
 deploy: env-check-aws ## helmfile -l tier=app apply: the consoletrack and demo-app releases (stub)
-	$(call todo,the Helm + deploy workstream; no issue yet)
+	$(call todo,#12)
 
 open: env-check-aws ## Port-forward the dashboard and open it (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)

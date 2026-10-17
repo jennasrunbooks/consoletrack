@@ -23,7 +23,7 @@ The triage agent only reads.
 | Frontend | React + Vite + TypeScript | `frontend/` |
 | Database | Postgres (CloudNativePG in cluster, Compose/Testcontainers locally) | — |
 | Infra | Terraform ≥ 1.11, terraform-aws-modules, EKS (AWS only) | `terraform/` |
-| Cluster releases | Helmfile + Helm 3 (with helm-diff); every chart, ours and third-party | `helm/` |
+| Cluster releases | Helmfile + Helm 4 (with helm-diff); every chart, ours and third-party | `helm/` |
 | CI/CD | GitHub Actions with OIDC to AWS | `.github/workflows/` (human-edited only, see below) |
 
 Images are built for **arm64** (Graviton nodes). amd64 is only for local Compose.

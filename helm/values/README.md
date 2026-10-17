@@ -5,4 +5,4 @@ kube-prometheus-stack, cloudnative-pg, the AWS Load Balancer Controller (`EXPOSU
 and ExternalDNS (`DOMAIN` only). Helmfile installs them with `make addons`; Terraform installs
 nothing inside Kubernetes.
 
-Filled by the EKS + deploy pipeline workstream (no issue filed yet).
+Filled by [#12](https://github.com/jennasrunbooks/consoletrack/issues/12) (Helm charts, Helmfile, and `make up`/`down`/`deploy`).

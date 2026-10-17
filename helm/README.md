@@ -20,5 +20,4 @@ helm/
 - Third-party chart versions are pinned in `helmfile.yaml.gotmpl` and bumped by hand: Dependabot
   only updates the local charts' `Chart.yaml` dependencies.
 
-`helmfile.yaml.gotmpl` and the charts are filled by the EKS + deploy pipeline workstream (no
-issue filed yet).
+`helmfile.yaml.gotmpl` and the charts are filled by [#12](https://github.com/jennasrunbooks/consoletrack/issues/12) (Helm charts, Helmfile, and `make up`/`down`/`deploy`).

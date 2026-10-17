@@ -8,4 +8,4 @@ Helmfile environments are deployment targets, not apps. Releases are grouped wit
 - `values.generated.yaml`: written from `.env` by the Makefile and read by
   `helm/helmfile.yaml.gotmpl` as environment values. Gitignored; never commit it.
 
-Filled by the EKS + deploy pipeline workstream (no issue filed yet).
+Filled by [#12](https://github.com/jennasrunbooks/consoletrack/issues/12) (Helm charts, Helmfile, and `make up`/`down`/`deploy`).
