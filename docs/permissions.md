@@ -3,7 +3,20 @@
 Who can do what in ConsoleTrack. This page starts with the development-time agent (Claude Code
 working on this repo). The runtime identities (the triage agent's MCP servers, the backend's
 apply ServiceAccount, the CI plan/apply/revert roles) are added with the Terraform and Helm
-issues that create them; the spec's "Identity and access" section is the plan.
+issues that create them; the spec's "Identity and access" section is the plan. The AWS roles and their policies are listed
+in `terraform/consoletrack/global/README.md` (CI roles, boundary) and
+`terraform/consoletrack/us-east-1/README.md` (cluster, nodes, Pod Identity).
+
+## Accepted gaps
+
+Deliberate trade-offs, each documented where it is set, so a reviewer can tell them apart from
+mistakes:
+
+| Gap | Where | Why it's accepted | How to close it |
+| --- | --- | --- | --- |
+| `cloudtrail:LookupEvents` on `*` (aws-mcp) | `terraform/consoletrack/us-east-1/pod-identity.tf` | The action has no resource-level permissions | Not possible in IAM; it's a read |
+| `ec2:DescribeSecurityGroups` on `*` (aws-mcp) | same | Same: EC2 describe calls are account-wide | Not possible in IAM; it's a read |
+| EKS API public endpoint open to `0.0.0.0/0` | `terraform/consoletrack/us-east-1/eks.tf` | GitHub-hosted runners deploy through it, and their address ranges don't fit EKS's 40-CIDR limit. Every request still needs IAM authentication and an access entry; nodes use the private endpoint | Narrow `EKS_PUBLIC_ACCESS_CIDRS` (one variable), or turn public access off with a pull-based deploy (spec, Production hardening step 4) |
 
 ## Development-time agent
 

@@ -89,8 +89,9 @@ All roles live under `/ct/`, allow at most 1-hour sessions, and carry the bounda
   EKS, S3, SQS, EventBridge, CloudTrail, CloudWatch Logs, Route 53, ACM, Budgets, STS, and Elastic
   Load Balancing (for the Load Balancer Controller), plus IAM reads and IAM writes under `/ct/` and
   `/demo-app/`. Three narrow additions make the node role's AWS-managed policies work: ECR image
-  pulls, `eks-auth:AssumeRoleForPodIdentity` (the Pod Identity agent), and `ssm:GetParameter` on
-  AWS's public `/aws/service/*` parameters (the node group's AMI lookup, also needed by plan and
+  pulls (the `AmazonEC2ContainerRegistryPullOnly` set), `eks-auth:AssumeRoleForPodIdentity` on
+  `cluster/ct-eks-<region>-*` only (the Pod Identity agent), and `ssm:GetParameter` on AWS's
+  public `/aws/service/*` parameters (the node group's AMI lookup, also needed by plan and
   apply). No KMS (EKS uses its default envelope encryption) and no Auto Scaling. Denies changes to itself and to any OIDC
   provider, IAM writes outside the project paths, creating a role without this boundary, removing
   the boundary from a role, and `iam:CreateUser`/`iam:CreateAccessKey`.

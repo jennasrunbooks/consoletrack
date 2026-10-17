@@ -163,6 +163,16 @@ run "boundary_size" {
     ])
     error_message = "The boundary must not allow KMS or Auto Scaling."
   }
+
+  # The Pod Identity agent's exchange is limited to this project's clusters, never "*".
+  assert {
+    condition = alltrue([
+      for s in jsondecode(data.aws_iam_policy_document.boundary.json).Statement :
+      s.Resource == "arn:aws:eks:us-east-1:ACCOUNTID:cluster/ct-eks-use1-*"
+      if contains(flatten([try(s.Action, [])]), "eks-auth:AssumeRoleForPodIdentity")
+    ]) && strcontains(data.aws_iam_policy_document.boundary.json, "eks-auth:AssumeRoleForPodIdentity")
+    error_message = "eks-auth:AssumeRoleForPodIdentity must be scoped to cluster/ct-eks-use1-*."
+  }
 }
 
 run "demo_developer_trusts_operator" {

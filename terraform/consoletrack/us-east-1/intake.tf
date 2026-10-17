@@ -14,7 +14,9 @@ locals {
   # and drops:
   #   pipeline sessions: ct-gh-* roles under a gh-<run id> session name (the roles' trust
   #   policies require that name, so a person can't hide behind it);
-  #   AWS services acting on your behalf (userIdentity.invokedBy is set);
+  #   AWS services acting on your behalf: userIdentity.invokedBy set to a service such as
+  #   ec2.amazonaws.com. "AWS Internal" is kept: the console makes some S3 calls that way, and
+  #   those are exactly the changes to catch;
   #   ConsoleTrack's own platform roles: the EKS cluster and node roles (ct-eks-*), CNI, EBS
   #   CSI, Load Balancer Controller, and ExternalDNS. ct-canary is deliberately not listed:
   #   its tag write must arrive to prove the intake works.

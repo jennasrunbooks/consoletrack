@@ -141,8 +141,8 @@ data "aws_iam_policy_document" "boundary" {
   # A boundary is a ceiling, not a grant: it names whole services so that each role's own
   # policy picks the actions and resources. Only services ConsoleTrack uses are listed.
   # elasticloadbalancing is for the Load Balancer Controller (EXPOSURE=alb); its own policy is
-  # tag-scoped. The two narrower entries are what the node role's AWS-managed policies need to
-  # work at all: ECR image pulls and the Pod Identity agent's credential exchange.
+  # tag-scoped. The ECR actions are image pulls for the node role, the same set as AWS's
+  # AmazonEC2ContainerRegistryPullOnly; GetAuthorizationToken only accepts "*".
   statement {
     sid = "ProjectServices"
     actions = [
@@ -161,10 +161,16 @@ data "aws_iam_policy_document" "boundary" {
       "ecr:GetAuthorizationToken",
       "ecr:BatchGetImage",
       "ecr:GetDownloadUrlForLayer",
-      "ecr:BatchCheckLayerAvailability",
-      "eks-auth:AssumeRoleForPodIdentity",
     ]
     resources = ["*"]
+  }
+
+  # The Pod Identity agent runs with the node role and exchanges it for each pod's role; only
+  # on this project's clusters.
+  statement {
+    sid       = "PodIdentityAgent"
+    actions   = ["eks-auth:AssumeRoleForPodIdentity"]
+    resources = ["${local.eks_arn}:cluster/${local.name_prefix}-eks-${local.region_code}-*"]
   }
 
   # AWS's public parameters only (the EKS node group looks up its AMI release version).

@@ -83,10 +83,12 @@ def test_required_cases_are_present():
         "cli-put-role-policy.json",
         "laptop-terraform-modify-sg-rules.json",
         "canary-create-tags.json",
+        "console-s3-aws-internal.json",
     }
     assert {n for n, _ in EXCLUDED} >= {
         "pipeline-gh-session.json",
         "invoked-by-service.json",
+        "invoked-by-ec2-service.json",
         "ebs-csi-create-volume.json",
     }
 
