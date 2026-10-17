@@ -78,6 +78,9 @@ TFLINT ?= tflint
 SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
 # The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
 BACKEND_RUN ?= cd backend && uv run --locked
+# The frontend's locked node_modules (frontend/package-lock.json), installed on demand below.
+FRONTEND_RUN ?= cd frontend && npm run --silent
+FRONTEND_DEPS := frontend/node_modules/.package-lock.json
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
@@ -100,8 +103,8 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
-	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql hash-password \
-	test-backend test-frontend test-contract test-integration test-k8s \
+	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell lint-frontend db-sql \
+	hash-password test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
 	domain domain-zone domain-cert domain-destroy \
 	local demo demo-replay demo-drift demo-identity revert eval audit-rbac
@@ -113,9 +116,9 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-openapi lint-shell ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-openapi lint-shell lint-frontend ## Lint and format checks (run before every commit)
 
-test: test-hooks test-backend test-contract ## Unit and contract tests (run before every commit)
+test: test-hooks test-backend test-contract test-frontend ## Unit and contract tests (run before every commit)
 
 fmt: ## Format Python and Terraform in place
 	$(RUFF) format agent-hooks backend
@@ -186,8 +189,17 @@ db-sql: ## Print the full schema migration as SQL, offline (no database needed)
 hash-password: ## Prompt for a password and print its argon2id hash for .env ($ doubled for make)
 	@$(BACKEND_RUN) python -m app.hash_password
 
-test-frontend: ## Frontend lint and Vitest (stub)
-	$(call todo,#13)
+# npm ci (scripts off) whenever the lockfile is newer than the installed tree.
+$(FRONTEND_DEPS): frontend/package-lock.json
+	cd frontend && npm ci --ignore-scripts --no-audit --no-fund
+
+lint-frontend: $(FRONTEND_DEPS) ## ESLint, tsc, and src/api/schema.d.ts up to date with openapi.yaml
+	$(FRONTEND_RUN) lint
+	$(FRONTEND_RUN) typecheck
+	$(FRONTEND_RUN) check:api
+
+test-frontend: lint-frontend ## Frontend lint + typecheck, then Vitest (MSW, no network)
+	$(FRONTEND_RUN) test
 
 test-k8s: ## k8s-mcp against kind with real RBAC (stub)
 	$(call todo,#10)
