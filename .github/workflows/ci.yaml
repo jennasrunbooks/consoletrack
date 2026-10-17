@@ -43,7 +43,6 @@ jobs:
           helmfile-version: "v1.8.2"
           helm-plugins: |
             https://github.com/databus23/helm-diff@v3.15.15
-          helmfile-auto-init: "true"
       - run: make lint
 
   test:
