@@ -90,16 +90,28 @@ run "github_roles" {
   # IAM limits an inline role policy to 10,240 characters, whitespace excluded.
   assert {
     condition = alltrue([
-      for k, json in local.github_role_policies :
+      for k, json in local.github_inline_policies :
       length(replace(json, "/\\s/", "")) < 10240
     ])
     error_message = "A GitHub role's inline policy is over IAM's 10,240-character limit."
   }
 
-  # Managed policy limit is 6,144 characters, whitespace excluded.
+  # The apply role's permissions are managed policies under /ct/, each under IAM's
+  # 6,144-character managed policy limit (whitespace excluded).
   assert {
-    condition     = length(replace(data.aws_iam_policy_document.boundary.json, "/\\s/", "")) < 6144
-    error_message = "The boundary is over IAM's 6,144-character managed policy limit."
+    condition = alltrue([
+      for k, json in local.gh_apply_policies :
+      length(replace(json, "/\\s/", "")) < 6144
+    ])
+    error_message = "An apply role managed policy is over IAM's 6,144-character limit; split it."
+  }
+
+  assert {
+    condition = (
+      toset(keys(module.gh_apply_policy)) == toset(["read", "iam", "infra"])
+      && !contains(keys(local.github_inline_policies), "apply")
+    )
+    error_message = "The apply role must use the read, iam, and infra managed policies and no inline policy."
   }
 
   assert {
@@ -131,6 +143,28 @@ run "github_roles" {
   }
 }
 
+# The boundary is a managed policy: 6,144 characters, whitespace excluded. Every addition to it
+# must keep this green.
+run "boundary_size" {
+  command = plan
+
+  assert {
+    condition     = length(replace(data.aws_iam_policy_document.boundary.json, "/\\s/", "")) < 6144
+    error_message = "The boundary is over IAM's 6,144-character managed policy limit."
+  }
+
+  # No KMS and no Auto Scaling in the ceiling (#8).
+  assert {
+    condition = alltrue([
+      for s in jsondecode(data.aws_iam_policy_document.boundary.json).Statement : alltrue([
+        for a in flatten([try(s.Action, [])]) :
+        !startswith(a, "kms:") && !startswith(a, "autoscaling:")
+      ]) if s.Effect == "Allow"
+    ])
+    error_message = "The boundary must not allow KMS or Auto Scaling."
+  }
+}
+
 run "demo_developer_trusts_operator" {
   command = plan
 
@@ -150,7 +184,7 @@ run "oidc_off_creates_no_github_roles" {
   }
 
   assert {
-    condition     = length(module.github_role) == 0 && length(data.aws_iam_policy_document.github_trust) == 0
+    condition     = length(module.github_role) == 0 && length(module.gh_apply_policy) == 0 && length(data.aws_iam_policy_document.github_trust) == 0
     error_message = "enable_github_oidc = false must create no OIDC provider or GitHub roles."
   }
 

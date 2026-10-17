@@ -1,0 +1,39 @@
+{
+  "version": "0",
+  "id": "5e6f7a8b-1111-4222-8333-abcdefabcdef",
+  "detail-type": "AWS API Call via CloudTrail",
+  "source": "aws.iam",
+  "account": "123456789012",
+  "time": "2026-10-17T12:00:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "eventVersion": "1.10",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDAEXAMPLE",
+      "arn": "arn:aws:iam::123456789012:user/alex",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAEXAMPLE",
+      "userName": "alex"
+    },
+    "eventTime": "2026-10-17T12:00:00Z",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "PutRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "203.0.113.10",
+    "userAgent": "aws-cli/2.31.0 md/awscrt#0.27.2 ua/2.1 os/macos#25.0.0 md/arch#arm64 lang/python#3.13.7 md/pyimpl#CPython m/E,b cfg/retry-mode#standard md/installer#source md/prompt#off md/command#iam.put-role-policy",
+    "requestParameters": {
+      "roleName": "demo-app-role-use1-a1b2c3",
+      "policyName": "demo-app-s3-read"
+    },
+    "responseElements": null,
+    "requestID": "0a1b2c3d-1111-4222-8333-abcdefabcdef",
+    "eventID": "9f8e7d6c-1111-4222-8333-fedcbafedcba",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+}

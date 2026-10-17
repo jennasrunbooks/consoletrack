@@ -1,0 +1,24 @@
+{
+  "detail-type": ["AWS API Call via CloudTrail"],
+  "source": ["aws.iam", "aws.ec2", "aws.s3", "aws.kms", "aws.eks"],
+  "detail": {
+    "readOnly": [false],
+    "userIdentity": {
+      "arn": [
+        {
+          "anything-but": {
+            "wildcard": [
+              "*:assumed-role/ct-gh-*/gh-*",
+              "*:assumed-role/ct-eks-*/*",
+              "*:assumed-role/ct-vpc-cni-*/*",
+              "*:assumed-role/ct-ebs-csi-*/*",
+              "*:assumed-role/ct-lbc-*/*",
+              "*:assumed-role/ct-external-dns-*/*"
+            ]
+          }
+        }
+      ],
+      "invokedBy": [{ "exists": false }]
+    }
+  }
+}

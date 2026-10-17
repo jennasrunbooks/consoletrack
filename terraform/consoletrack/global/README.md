@@ -8,6 +8,7 @@ Account-wide, long-lived root in the ConsoleTrack hub account. It survives `make
 | Demo developer role | always | `ct-demo-developer-<suffix>` under `/ct/` |
 | GitHub OIDC provider | `ENABLE_GITHUB_OIDC=true` | `token.actions.githubusercontent.com` |
 | CI roles | `ENABLE_GITHUB_OIDC=true` | `ct-gh-{plan,apply,revert,deploy}-<suffix>` under `/ct/` |
+| Apply role managed policies | `ENABLE_GITHUB_OIDC=true` | `ct-gh-apply-{read,iam,infra}-<suffix>` under `/ct/` |
 | Route 53 public zone (+ NS delegation with `DNS_PARENT=route53`) | `DOMAIN` set | `DOMAIN` |
 | Monthly cost budget, alerts at 50/80/100% actual and 100% forecasted | `ENABLE_BUDGET=true` | `ct-budget-<suffix>` |
 
@@ -85,12 +86,17 @@ session names, so the simulated console changes are always seen.
 All roles live under `/ct/`, allow at most 1-hour sessions, and carry the boundary.
 
 - **Boundary** (`ct-boundary-<suffix>`): the ceiling for every project role. Allows only EC2/VPC,
-  EKS, S3, SQS, EventBridge, CloudTrail, CloudWatch Logs, Route 53, ACM, Budgets, and STS, plus IAM
-  reads and IAM writes under `/ct/` and `/demo-app/`. Denies changes to itself and to any OIDC
+  EKS, S3, SQS, EventBridge, CloudTrail, CloudWatch Logs, Route 53, ACM, Budgets, STS, and Elastic
+  Load Balancing (for the Load Balancer Controller), plus IAM reads and IAM writes under `/ct/` and
+  `/demo-app/`. Three narrow additions make the node role's AWS-managed policies work: ECR image
+  pulls, `eks-auth:AssumeRoleForPodIdentity` (the Pod Identity agent), and `ssm:GetParameter` on
+  AWS's public `/aws/service/*` parameters (the node group's AMI lookup, also needed by plan and
+  apply). No KMS (EKS uses its default envelope encryption) and no Auto Scaling. Denies changes to itself and to any OIDC
   provider, IAM writes outside the project paths, creating a role without this boundary, removing
   the boundary from a role, and `iam:CreateUser`/`iam:CreateAccessKey`.
 - **Plan**: refresh-only reads on project resources, read the state bucket, write only `*.tflock`.
-- **Apply**: create, change, and delete EC2 resources tagged `project=consoletrack` and EKS, S3, SQS,
+- **Apply** (three managed policies under `/ct/`: `read`, `iam`, `infra`, each under IAM's
+  6,144-character limit): create, change, and delete EC2 resources tagged `project=consoletrack` and EKS, S3, SQS,
   EventBridge, CloudTrail, Logs, and Budgets resources named `ct-*`/`demo-app-*`; IAM under the
   project paths only with the boundary attached; Route 53 records only under `DOMAIN`. It can't
   touch the state bucket's settings, the boundary, or the OIDC provider, and can't delete zones.
@@ -142,4 +148,6 @@ make lint-terraform tflint tf-validate tf-test
 ```
 
 `make tf-test` runs `tests/global.tftest.hcl`: it overrides every data source and module that would
-call AWS or GitHub, and checks the trust policies, the policy size limits, and the feature switches.
+call AWS or GitHub, and checks the trust policies, the policy size limits (the boundary and each
+apply policy under 6,144 characters, inline policies under 10,240), that the boundary allows no KMS
+or Auto Scaling, and the feature switches.
