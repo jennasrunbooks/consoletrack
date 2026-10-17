@@ -3,6 +3,11 @@
 variable "aws_region" {
   description = "Region for the provider. Keep us-east-1: IAM's CloudTrail events reach EventBridge only there."
   type        = string
+
+  validation {
+    condition     = contains(keys(local.region_codes), var.aws_region)
+    error_message = "aws_region has no short code for regional resource names; add it to local.region_codes in providers.tf."
+  }
 }
 
 variable "name_suffix" {

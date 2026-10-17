@@ -96,14 +96,16 @@ All roles live under `/ct/`, allow at most 1-hour sessions, and carry the bounda
   touch the state bucket's settings, the boundary, or the OIDC provider, and can't delete zones.
 - **Revert**: only what `terraform/demo-app/us-east-1` manages (`demo-app-*` IAM under `/demo-app/`,
   `demo-app-*` buckets, the security group tagged `Name=demo-app-*`, the demo app's Pod Identity
-  association on `ct-eks-<suffix>`), and only that root's state object and lock.
-- **Deploy**: `eks:DescribeCluster` on `ct-eks-<suffix>`. Kubernetes access comes from an EKS access
+  association on `ct-eks-use1-<suffix>`), and only that root's state object and lock.
+- **Deploy**: `eks:DescribeCluster` on `ct-eks-use1-<suffix>`. Kubernetes access comes from an EKS access
   entry in `terraform/consoletrack/us-east-1`.
 - **Demo developer**: assumable only by `OPERATOR_ARN` (default: the role or user that runs
   Terraform here). Edits the demo app's IAM policy and the demo security group's rules, nothing else.
 
-Contracts with the other roots: the EKS cluster is named `ct-eks-<suffix>`, the demo security group
-carries the tag `Name=demo-app-sg-<suffix>` (EC2 has no condition key for group names), and every
+Contracts with the other roots: regional resources are named `ct-<component>-<region>-<suffix>`, with
+the region code from `local.region_codes` in `providers.tf` (`use1` for us-east-1). So the EKS
+cluster is `ct-eks-use1-<suffix>`, the demo security group carries the tag
+`Name=demo-app-sg-use1-<suffix>` (EC2 has no condition key for group names), and every
 role those roots create sets `permissions_boundary` to this root's `boundary_arn` output.
 
 Because the boundary denies changes to itself and to the OIDC provider, CI's apply role can't change

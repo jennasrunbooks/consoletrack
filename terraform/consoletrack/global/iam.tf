@@ -123,7 +123,7 @@ locals {
   project_budget_arns = ["arn:${local.partition}:budgets::${local.account_id}:budget/ct-*"]
 
   # The demo security group is found by its Name tag; terraform/demo-app/us-east-1 must set
-  # Name = demo-app-sg-<suffix>, because EC2 has no condition key for the group name.
+  # Name = demo-app-sg-use1-<suffix>, because EC2 has no condition key for the group name.
   demo_sg_condition = {
     test     = "StringLike"
     variable = "aws:ResourceTag/Name"

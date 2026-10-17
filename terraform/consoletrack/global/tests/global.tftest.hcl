@@ -119,6 +119,12 @@ run "github_roles" {
     error_message = "github_env_role_arns must map each GitHub environment name to its role."
   }
 
+  # Regional resources carry the region code; global ones (roles, bucket, budget) don't.
+  assert {
+    condition     = local.cluster_name == "ct-eks-use1-a1b2c3"
+    error_message = "The cluster name must be ct-eks-<region_code>-<suffix>."
+  }
+
   assert {
     condition     = output.state_bucket == "ct-tfstate-a1b2c3"
     error_message = "State bucket must be ct-tfstate-<suffix>."
@@ -167,6 +173,16 @@ run "github_repo_required_with_oidc" {
   }
 
   expect_failures = [var.github_repo]
+}
+
+run "unknown_region_rejected" {
+  command = plan
+
+  variables {
+    aws_region = "mars-north-1"
+  }
+
+  expect_failures = [var.aws_region]
 }
 
 run "budget_email_required" {

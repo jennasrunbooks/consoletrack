@@ -98,8 +98,10 @@ and the `main` ruleset. Don't try to work around a block — report it.
 ## Conventions
 
 **Naming (AWS)**
-- ConsoleTrack-owned resources: `ct-<component>[-<suffix>]`, IAM path `/ct/`, and every role gets the
-  `ct` permissions boundary.
+- ConsoleTrack-owned resources: `ct-<component>-<suffix>` for global ones (IAM, the state bucket,
+  the budget) and `ct-<component>-<region>-<suffix>` for regional ones, where `<region>` is the
+  short code from `local.region_codes` (`use1` for us-east-1), e.g. `ct-eks-use1-a1b2c3`. IAM path
+  `/ct/`, and every role gets the `ct` permissions boundary.
 - Demo app resources: `demo-app-<component>`, IAM path `/demo-app/`.
 - Every resource is tagged `project = consoletrack` (set via provider `default_tags`).
 - The repo, Helm chart, namespace, and images stay `consoletrack` (`ghcr.io/jennasrunbooks/consoletrack-*`).
