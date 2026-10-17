@@ -37,7 +37,7 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: "v4.3.1"
-      - uses: helmfile/helmfile-action@254b2aa617cbd24ff185fff31c4fa955515bc8ed # v1.8.2
+      - uses: helmfile/helmfile-action@614b4cd063ada10b87f668f6ffd35485bce0cac5# v2.4.8
         with:
           helm-version: "v4.3.1"
           helmfile-version: "v1.8.2"
