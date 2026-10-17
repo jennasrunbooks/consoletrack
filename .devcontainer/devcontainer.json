@@ -13,8 +13,8 @@
       "tflint": "latest"
 },
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
-      "version": "latest",
-      "helm": "latest",
+      "kubectl": "latest",
+      "helm": "4.3.1",
       "minikube": "none"
 }
   },
@@ -50,7 +50,7 @@
       ]
     }
   },
-  "postCreateCommand": "test -n \"$GIT_AUTHOR_NAME\" && test -n \"$GH_TOKEN\" || { echo 'dev-agent env missing: start with dev-agent' >&2; exit 1; }; git config --global user.name \"$GIT_AUTHOR_NAME\" && git config --global user.email \"$GIT_AUTHOR_EMAIL\" && gh auth setup-git",
+  "postCreateCommand": "test -n \"$GIT_AUTHOR_NAME\" && test -n \"$GH_TOKEN\" || { echo 'dev-agent env missing: start with dev-agent' >&2; exit 1; }; git config --global user.name \"$GIT_AUTHOR_NAME\" && git config --global user.email \"$GIT_AUTHOR_EMAIL\" && gh auth setup-git && helm plugin install https://github.com/databus23/helm-diff --version v3.15.15",
   "remoteUser": "vscode",
   "forwardPorts": [3000, 5173, 8000]
 }
