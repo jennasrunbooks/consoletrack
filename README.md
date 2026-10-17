@@ -170,7 +170,7 @@ Claude usage is per triage run; the default model is Haiku-class. Details and so
 |---|---|---|
 | `AWS_PROFILE` | | AWS CLI profile for your sandbox account |
 | `AWS_REGION` | `us-east-1` | Keep it: IAM's CloudTrail events reach EventBridge only in us-east-1 |
-| `NAME_SUFFIX` | generated | Suffix on every resource name (`ct-<component>-<suffix>`), from `make bootstrap` |
+| `NAME_SUFFIX` | generated | Suffix on every resource name: `ct-<component>-<suffix>` for global resources, `ct-<component>-<region>-<suffix>` for regional ones (`ct-eks-use1-<suffix>`), from `make bootstrap` |
 | `GITHUB_REPO` | | `owner/repo` the GitHub OIDC roles trust (your fork) |
 | `ENABLE_GITHUB_OIDC` | `false` | Create the GitHub OIDC provider and CI roles |
 | `GITHUB_WEBHOOK_SECRET` | | Optional; only with `EXPOSURE=alb`. The backend polls Revert runs anyway |

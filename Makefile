@@ -23,6 +23,9 @@ export
 # and reviewers without AWS access or an API key can always run them.
 # AWS access only: teardown and scenarios, so `make down` works even without an API key.
 ENV_AWS := AWS_PROFILE AWS_REGION
+# Terraform plan/init: the backend bucket name and region. Credentials come from AWS_PROFILE
+# locally or from the environment in CI (GitHub OIDC), so AWS_PROFILE isn't required here.
+ENV_TF := AWS_REGION NAME_SUFFIX
 # Running the triage agent locally (kind, Compose, demo-replay, evals).
 ENV_LOCAL := ANTHROPIC_API_KEY
 # Standing up the platform: AWS, the API key it stores in the cluster, and settings that the
@@ -59,9 +62,9 @@ check_env = @missing="$(strip $(foreach v,$(1),$(if $(filter-out op://%,$(strip 
 # are deliberately absent: they go to Kubernetes Secrets, never into Terraform state. Only
 # non-empty values are exported, so Terraform falls back to the variable's default otherwise.
 # ALLOWED_CIDRS and WATCHED_IAM_PATHS stay comma-separated strings; the roots split them.
-TF_INPUTS := AWS_REGION NAME_SUFFIX GITHUB_REPO ENABLE_GITHUB_OIDC K8S_VERSION USE_SPOT \
-	NODE_INSTANCE_TYPE EXPOSURE ALLOWED_CIDRS DOMAIN DNS_PARENT ENABLE_BUDGET BUDGET_LIMIT_USD \
-	BUDGET_EMAIL WATCHED_IAM_PATHS
+TF_INPUTS := AWS_REGION NAME_SUFFIX GITHUB_REPO ENABLE_GITHUB_OIDC OPERATOR_ARN K8S_VERSION \
+	USE_SPOT NODE_INSTANCE_TYPE EXPOSURE ALLOWED_CIDRS DOMAIN DNS_PARENT ENABLE_BUDGET \
+	BUDGET_LIMIT_USD BUDGET_EMAIL WATCHED_IAM_PATHS
 tf_var = TF_VAR_$(shell echo '$(1)' | tr '[:upper:]' '[:lower:]')
 $(foreach v,$(TF_INPUTS),$(if $(strip $($v)),$(eval export $(call tf_var,$v) = $$($v))))
 
@@ -71,18 +74,33 @@ RUFF ?= uvx ruff@0.16.10
 PYTEST ?= uvx pytest@9.1.1
 OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
+TFLINT ?= tflint
+SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
 # The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
 BACKEND_RUN ?= cd backend && uv run --locked
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
 
+# ROOT=<account>/<scope> for the tf-* targets, e.g. ROOT=consoletrack/global.
+ROOT ?=
+TF_DIR = terraform/$(ROOT)
+# The backend's bucket and region come from .env; each root's backend.tf sets its own key.
+TF_BACKEND_ARGS = -backend-config=bucket=ct-tfstate-$(NAME_SUFFIX) -backend-config=region=$(AWS_REGION)
+check_root = @case " $(TF_ROOTS) " in *" terraform/$(ROOT) "*) ;; \
+	*) echo "make $@: set ROOT to one of: $(patsubst terraform/%,%,$(TF_ROOTS))" >&2; exit 1 ;; esac
+# Applies are for a human at a terminal: refuse in CI and without a TTY. Terraform then shows
+# the plan and asks for "yes" itself; -auto-approve is never passed.
+check_human = @if [ -n "$$CI" ] || [ ! -t 0 ]; then \
+	echo "make $@: applies only from an interactive terminal, by a human (never in CI)" >&2; exit 1; fi
+
 # Stub for a target a later issue fills in: says where it belongs and fails.
 todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
-.PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local tf-env tf-validate \
-	test-hooks lint-hooks lint-backend lint-openapi lint-terraform db-sql hash-password \
+.PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
+	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
+	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql hash-password \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
 	domain domain-zone domain-cert domain-destroy \
@@ -95,7 +113,7 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-openapi ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-openapi lint-shell ## Lint and format checks (run before every commit)
 
 test: test-hooks test-backend test-contract ## Unit and contract tests (run before every commit)
 
@@ -119,6 +137,16 @@ lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 lint-terraform: ## terraform fmt check (CI job terraform-fmt)
 	$(TERRAFORM) fmt -check -recursive terraform/
 
+lint-shell: ## shellcheck every script under scripts/ (pinned, through uvx)
+	$(SHELLCHECK) $$(find scripts -name '*.sh' -type f | sort)
+
+tflint: ## tflint every root with .tflint.hcl (bundled terraform ruleset, no plugin download)
+	@for r in $(TF_ROOTS); do \
+		if ls $$r/*.tf >/dev/null 2>&1; then \
+			echo "$$r:"; $(TFLINT) --chdir=$$r --config=$(CURDIR)/.tflint.hcl || exit 1; \
+		fi; \
+	done
+
 tf-validate: ## terraform init -backend=false + validate for every root (no AWS calls, no state)
 	@for r in $(TF_ROOTS); do \
 		if ls $$r/*.tf >/dev/null 2>&1; then \
@@ -127,6 +155,15 @@ tf-validate: ## terraform init -backend=false + validate for every root (no AWS 
 			$(TERRAFORM) -chdir=$$r validate || exit 1; \
 		else \
 			echo "$$r: no .tf files yet, skipped"; \
+		fi; \
+	done
+
+tf-test: ## terraform test for every root with tests/ (offline: AWS calls are overridden)
+	@for r in $(TF_ROOTS); do \
+		if [ -d $$r/tests ]; then \
+			echo "$$r:"; \
+			$(TERRAFORM) -chdir=$$r init -backend=false -input=false >/dev/null || exit 1; \
+			$(TERRAFORM) -chdir=$$r test || exit 1; \
 		fi; \
 	done
 
@@ -171,6 +208,9 @@ env-check-aws: ## Required for AWS-only targets (deploy, down, scenarios, revert
 env-check-local: ## Required for local, demo-replay, eval: the API key only
 	$(call check_env,$(ENV_LOCAL))
 
+env-check-tf: ## Required for tf-init, tf-plan, tf-apply: AWS_REGION and NAME_SUFFIX
+	$(call check_env,$(ENV_TF))
+
 tf-env: ## Show which .env names map to which TF_VAR_* and whether each is set (no values)
 	@$(foreach v,$(TF_INPUTS),printf "  %-26s <- %-20s %s\n" "$(call tf_var,$v)" "$v" \
 		"$(if $(strip $($v)),set,unset (Terraform default))";)
@@ -180,8 +220,25 @@ tf-env: ## Show which .env names map to which TF_VAR_* and whether each is set (
 preflight: env-check-up ## Check tools, AWS identity, quotas, K8s version, API key, CAA (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-bootstrap: env-check-aws ## Create the Terraform state bucket and NAME_SUFFIX (stub)
-	$(call todo,#3)
+bootstrap: env-check-aws ## Create the Terraform state bucket (and print a NAME_SUFFIX if unset)
+	scripts/bootstrap-state.sh
+
+tf-init: env-check-tf ## terraform init ROOT=<account>/<scope> with the S3 backend from .env
+	$(check_root)
+	$(TERRAFORM) -chdir=$(TF_DIR) init -input=false $(TF_BACKEND_ARGS)
+
+tf-plan: env-check-tf ## terraform plan ROOT=… with TF_VAR_* from .env (writes $(TF_DIR)/tfplan)
+	$(check_root)
+	$(TERRAFORM) -chdir=$(TF_DIR) plan -input=false -out=tfplan
+
+tf-apply: env-check-tf ## terraform apply ROOT=… after Terraform's own yes prompt (humans only)
+	$(check_root)
+	$(check_human)
+	$(TERRAFORM) -chdir=$(TF_DIR) apply
+
+tf-output: env-check-tf ## terraform output ROOT=<account>/<scope> [OUTPUT=<name>] (read-only; sensitive values stay hidden)
+	$(check_root)
+	$(TERRAFORM) -chdir=$(TF_DIR) output $(OUTPUT)
 
 up: env-check-up ## Create the platform, add-ons, and app; print the dashboard URL (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
@@ -206,8 +263,17 @@ verify-clean: env-check-aws ## Fail if project-tagged billable resources remain 
 domain: env-check-aws ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
 
-domain-zone: env-check-aws ## Create the Route 53 zone and print the NS records (stub)
-	$(call todo,#3)
+gh-secrets: ## Set each GitHub environment's AWS_ROLE_ARN from the global root's outputs (humans only)
+	$(call check_env,GITHUB_REPO)
+	scripts/gh-env-secrets.sh
+
+domain-zone: env-check-aws env-check-tf ## Apply only the Route 53 zone and print the NS records (humans only)
+	@if [ -z "$(strip $(DOMAIN))" ]; then echo "make $@: DOMAIN is empty; set it in .env" >&2; exit 1; fi
+	$(check_human)
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global
+	$(TERRAFORM) -chdir=terraform/consoletrack/global apply \
+		-target=module.zone -target=module.parent_delegation
+	@$(TERRAFORM) -chdir=terraform/consoletrack/global output -raw domain_ns_instructions; echo
 
 domain-cert: env-check-aws ## Wait for delegation, then issue the ACM certificate (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
