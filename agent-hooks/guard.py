@@ -8,8 +8,9 @@ raw command string; this one tokenizes the command so that chained, wrapped and
 nested forms are checked too, and it covers the other rules a tool call can break:
 
 - commits/pushes on ``main``, pushes that target ``main``, force pushes, branch deletes
-- Terraform state/infra writes, mutating ``kubectl`` and ``helm``, AWS writes and
-  credential setup, ``eksctl``
+- Terraform state/infra writes, mutating ``kubectl``, ``helm`` and ``helmfile``, AWS
+  writes and credential setup, ``eksctl``
+- edits to ``*.tf`` files that add the Terraform ``helm`` or ``kubernetes`` provider
 - reading or writing ``.env`` / ``.env.*`` (``.env.example`` is fine)
 - edits under ``.github/workflows/``
 - creating ``CLAUDE.md`` / ``CLAUDE.local.md``, which would stop Claude Code loading AGENTS.md
@@ -121,6 +122,8 @@ def check_file_tool(tool: str, tool_input: dict, cwd: str, project: str) -> None
             raise Blocked(RULE_ENV, f"{tool} of '{path}' is not allowed (.env.example is fine).")
         if tool in WRITE_TOOLS:
             check_write_target(path, cwd, project)
+    if tool in WRITE_TOOLS:
+        check_terraform_providers(tool, tool_input)
     glob = tool_input.get("glob")
     if tool == "Grep" and glob and is_env_file(glob):
         raise Blocked(RULE_ENV, f"Grep over '{glob}' is not allowed.")
@@ -580,6 +583,75 @@ def check_helm(args: list[str]) -> None:
         )
 
 
+# ----------------------------------------------------------------- helmfile rules
+
+# fmt: off
+HELMFILE_VALUE_OPTS = {
+    "-f", "--file", "-e", "--environment", "-l", "--selector", "-n", "--namespace",
+    "--kube-context", "--kubeconfig", "-b", "--helm-binary", "-k", "--kustomize-binary",
+    "-c", "--chart", "--state-values-set", "--state-values-set-string", "--state-values-file",
+    "--log-level", "--args",
+}
+# Allowlist, not denylist: `apply`, `sync`, `destroy`, `delete`, `init` (installs plugins),
+# `test`, the deprecated `charts` (= sync), and anything new or unknown are blocked. `diff` only
+# reads, and fails anyway without a kubeconfig; `deps`, `repos`, `fetch` write local files only.
+HELMFILE_READ_VERBS = {
+    "lint", "template", "build", "list", "deps", "version", "write-values", "diff", "status",
+    "repos", "fetch", "show-dag", "print-env", "cache", "completion", "help",
+}
+# fmt: on
+
+
+def check_helmfile(args: list[str]) -> None:
+    verb, rest = first_positional(args, HELMFILE_VALUE_OPTS)
+    if verb and verb not in HELMFILE_READ_VERBS:
+        raise Blocked(
+            RULE_INFRA,
+            f"'helmfile {verb}' changes the cluster or installs plugins. Use helmfile "
+            "lint/template/diff; releases ship through CI (`helmfile -l tier=app apply`) "
+            "or a human's `make addons`/`make deploy`.",
+        )
+    # Arguments handed through to helm: after `--`, or in `--args "…"`.
+    passthrough = rest[rest.index("--") + 1 :] if "--" in rest else []
+    for j, tok in enumerate(args):
+        if tok == "--args" and j + 1 < len(args):
+            passthrough += tokenize(args[j + 1])
+        elif tok.startswith("--args="):
+            passthrough += tokenize(tok.split("=", 1)[1])
+    hit = next((t for t in passthrough if t in HELM_WRITE_VERBS), None)
+    if hit:
+        raise Blocked(RULE_INFRA, f"'helmfile {verb}' passes '{hit}' through to helm.")
+
+
+# --------------------------------------------------------- terraform providers
+
+# Terraform is AWS-only: Helmfile owns every chart, so these providers never come back.
+_K8S_PROVIDER = re.compile(r'provider\s+"(helm|kubernetes)"|hashicorp/(helm|kubernetes)\b')
+
+
+def check_terraform_providers(tool: str, tool_input: dict) -> None:
+    path = tool_input.get("file_path") or ""
+    if not path.endswith(".tf"):
+        return
+    # (old, new) text pairs; a Write has no old text, so anything in its content counts as added.
+    if tool == "MultiEdit":
+        edits = tool_input.get("edits") or []
+        pairs = [(e.get("old_string", ""), e.get("new_string", "")) for e in edits]
+    else:
+        new = tool_input.get("new_string") or tool_input.get("content", "")
+        pairs = [(tool_input.get("old_string", ""), new)]
+    for old, new in pairs:
+        added = {m.group(0) for m in _K8S_PROVIDER.finditer(new or "")}
+        added -= {m.group(0) for m in _K8S_PROVIDER.finditer(old or "")}
+        if added:
+            raise Blocked(
+                RULE_INFRA,
+                f"'{path}' would add '{sorted(added)[0]}'. Terraform manages AWS only and never "
+                "installs anything inside Kubernetes; every chart is a release in "
+                "helm/helmfile.yaml.gotmpl (AGENTS.md → Conventions → Helm).",
+            )
+
+
 # ---------------------------------------------------------------------- aws rules
 
 # fmt: off
@@ -769,6 +841,8 @@ def check_argv(raw: list[str], ctx: Context, heredocs: list[str], depth: int) ->
         check_kubectl(args)
     elif name == "helm":
         check_helm(args)
+    elif name == "helmfile":
+        check_helmfile(args)
     elif name == "aws":
         check_aws(args)
     elif name == "eksctl":

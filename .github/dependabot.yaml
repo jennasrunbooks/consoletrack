@@ -86,10 +86,13 @@ updates:
     commit-message:
       prefix: "chore(docker)"
 
-  # Helm chart dependencies (Chart.yaml), e.g. kube-prometheus-stack, CloudNativePG
+  # Helm: dependencies declared in our own charts' Chart.yaml only. Dependabot's Helm support
+  # doesn't read Helmfile, so the third-party chart versions pinned in helm/helmfile.yaml.gotmpl
+  # (kube-prometheus-stack, cloudnative-pg, the Load Balancer Controller, ExternalDNS) are bumped
+  # by hand in a PR.
   - package-ecosystem: helm
     directories:
-      - /helm/*
+      - /helm/charts/*
     schedule:
       interval: weekly
       day: monday
