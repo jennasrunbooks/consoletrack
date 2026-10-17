@@ -34,7 +34,7 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
-      - uses: azure/setup-helm@b9fef2282004eb122213d22b07f8721c080077fd # v4.2.0
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: "v4.3.1"
       - uses: helmfile/helmfile-action@254b2aa617cbd24ff185fff31c4fa955515bc8ed # v1.8.2
