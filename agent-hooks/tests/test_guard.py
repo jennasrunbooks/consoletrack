@@ -101,9 +101,22 @@ ALLOWED = [
     "terraform version",
     "tflint --chdir terraform/consoletrack/us-east-1",
     # helm and kubectl reads
-    "helm lint helm/consoletrack",
-    "helm template ct helm/consoletrack -n consoletrack",
+    "helm lint helm/charts/consoletrack",
+    "helm template ct helm/charts/consoletrack -n consoletrack",
     "helm -n consoletrack list",
+    # helmfile reads (Terraform is AWS-only; Helmfile owns every chart)
+    "helmfile lint",
+    "helmfile template",
+    "helmfile diff",
+    "helmfile deps",
+    "helmfile build",
+    "helmfile list",
+    "helmfile version",
+    "helmfile write-values",
+    "helmfile -e local -l tier=app template",
+    "helmfile --file helm/helmfile.yaml.gotmpl lint",
+    "helmfile -f=helm/helmfile.yaml.gotmpl -e eks diff --detailed-exitcode",
+    "helmfile --state-values-file helm/environments/eks.yaml lint",
     "kubectl get pods -A",
     "kubectl -n consoletrack get pods",
     "kubectl --context kind-ct -n demo describe deploy/demo-app",
@@ -217,11 +230,31 @@ BLOCKED = [
     ("kubectl --namespace=demo apply -f x.yaml", "Rule 1"),
     ("kubectl get deploy x -o yaml | kubectl apply -f -", "Rule 1"),
     # mutating helm
-    ("helm install ct helm/consoletrack", "Rule 1"),
-    ("helm upgrade --install ct helm/consoletrack", "Rule 1"),
+    ("helm install ct helm/charts/consoletrack", "Rule 1"),
+    ("helm upgrade --install ct helm/charts/consoletrack", "Rule 1"),
     ("helm -n consoletrack uninstall ct", "Rule 1"),
     ("helm rollback ct 1 -n consoletrack", "Rule 1"),
-    ("helm --kube-context kind-ct -n demo upgrade demo helm/demo-app", "Rule 1"),
+    ("helm --kube-context kind-ct -n demo upgrade demo helm/charts/demo-app", "Rule 1"),
+    # mutating helmfile, including global flags before the verb and helm passthrough
+    ("helmfile apply", "Rule 1"),
+    ("helmfile sync", "Rule 1"),
+    ("helmfile destroy", "Rule 1"),
+    ("helmfile delete", "Rule 1"),
+    ("helmfile init", "Rule 1"),
+    ("helmfile test", "Rule 1"),
+    ("helmfile charts", "Rule 1"),
+    ("helmfile -l tier=addons apply", "Rule 1"),
+    ("helmfile -e eks -l tier=app sync", "Rule 1"),
+    ("helmfile --file helm/helmfile.yaml.gotmpl destroy", "Rule 1"),
+    ("helmfile -f helm/helmfile.yaml.gotmpl --kube-context kind-ct -n demo apply", "Rule 1"),
+    ("helmfile --environment=local --selector=tier=app sync", "Rule 1"),
+    ("helmfile --unknown-flag value lint", "Rule 1"),
+    ("helmfile template -- upgrade --install ct", "Rule 1"),
+    ("helmfile diff --args 'rollback ct 1'", "Rule 1"),
+    ("helmfile diff --args='uninstall ct'", "Rule 1"),
+    ("make lint && helmfile -l tier=app apply", "Rule 1"),
+    ("bash -c 'cd helm && helmfile sync'", "Rule 1"),
+    ("timeout 600 helmfile apply", "Rule 1"),
     # aws writes and credential setup
     ("aws configure", "Rule 2"),
     ("aws configure list", "Rule 2"),
@@ -297,7 +330,7 @@ BLOCKED = [
     ("AWS_PROFILE=x AWS_REGION=y aws s3 rm s3://b/k", "Rule 1"),
     ("command terraform apply", "Rule 1"),
     ("time terraform apply", "Rule 1"),
-    ("nohup helm upgrade ct helm/consoletrack", "Rule 1"),
+    ("nohup helm upgrade ct helm/charts/consoletrack", "Rule 1"),
     ("timeout 30 kubectl delete pod x", "Rule 1"),
     ("uv run terraform apply", "Rule 1"),
     ("uv run --with boto3 aws ec2 run-instances", "Rule 1"),
@@ -425,6 +458,46 @@ def test_instruction_files_readable(repo):
     assert blocked(tool("Read", repo, file_path="CLAUDE.md")) is None
 
 
+TF_PROVIDER_SNIPPETS = [
+    'provider "helm" {\n  kubernetes {}\n}\n',
+    'provider "kubernetes" {}\n',
+    'terraform {\n  required_providers {\n    helm = { source = "hashicorp/helm" }\n  }\n}\n',
+    'kubernetes = {\n  source  = "hashicorp/kubernetes"\n  version = "~> 2.0"\n}\n',
+]
+
+
+@pytest.mark.parametrize("snippet", TF_PROVIDER_SNIPPETS)
+def test_terraform_k8s_providers_blocked(snippet, repo):
+    path = "terraform/consoletrack/us-east-1/addons.tf"
+    write = blocked(tool("Write", repo, file_path=path, content=snippet))
+    assert write is not None and "helmfile.yaml.gotmpl" in write
+    edit = tool("Edit", repo, file_path=path, old_string="# x\n", new_string=snippet)
+    assert blocked(edit) is not None
+    multi = tool(
+        "MultiEdit", repo, file_path=path, edits=[{"old_string": "a", "new_string": snippet}]
+    )
+    assert blocked(multi) is not None
+
+
+def test_terraform_k8s_provider_edit_that_keeps_existing_text_allowed(repo):
+    # Only additions are blocked, so editing around an existing mention doesn't trip it.
+    old = 'provider "kubernetes" {}\n'
+    edit = tool("Edit", repo, file_path="x.tf", old_string=old, new_string=old + "# note\n")
+    assert blocked(edit) is None
+
+
+@pytest.mark.parametrize(
+    ("path", "content"),
+    [
+        ("terraform/consoletrack/us-east-1/eks.tf", 'provider "aws" {\n  region = var.region\n}\n'),
+        ("helm/helmfile.yaml.gotmpl", "repositories:\n  - name: kubernetes\n"),
+        ("docs/notes.md", 'Never add provider "helm" to Terraform.\n'),
+    ],
+)
+def test_terraform_provider_check_allows_others(path, content, repo):
+    assert blocked(tool("Write", repo, file_path=path, content=content)) is None
+
+
 def test_other_tools_ignored(repo):
     assert blocked(tool("WebFetch", repo, url="https://example.com/.env")) is None
 
@@ -438,6 +511,12 @@ def test_hook_exit_codes(repo):
     assert "AGENTS.md" in denied.stderr
     allowed = run_hook(GUARD, bash("make test", repo))
     assert allowed.returncode == 0 and allowed.stderr == ""
+
+
+def test_hook_blocks_helmfile_apply_with_selector(repo):
+    denied = run_hook(GUARD, bash("helmfile -l tier=addons apply", repo))
+    assert denied.returncode == 2
+    assert "'helmfile apply' changes the cluster" in denied.stderr
 
 
 def test_hook_ignores_unparseable_input():

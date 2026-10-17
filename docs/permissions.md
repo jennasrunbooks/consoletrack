@@ -1,6 +1,7 @@
 # Permissions
 
-Who can do what in ConsoleTrack. This page starts with the development-time agent (Claude Code
+Who can do what in ConsoleTrack. Terraform is AWS-only; Helmfile owns every chart, so the
+cluster-side write commands to guard against are `kubectl`, `helm`, and `helmfile`. This page starts with the development-time agent (Claude Code
 working on this repo). The runtime identities (the triage agent's MCP servers, the backend's
 apply ServiceAccount, the CI plan/apply/revert roles) are added with the Terraform and Helm
 issues that create them; the spec's "Identity and access" section is the plan.
@@ -17,9 +18,9 @@ bypassed.
 | GitHub token | Fine-grained PAT, owned by a human (see the spec's "Development-time access") | Contents and PRs only. No Workflows permission, so pushes that touch `.github/workflows/` are rejected; no Administration, Secrets, or Environments, so no ruleset, secret, or environment changes. | Pushing feature branches and opening PRs, which is the job. |
 | `main` ruleset | GitHub repo settings | Direct pushes and merges to `main`: everything needs a PR with your approval and passing CI. A commit made on local `main` can't land. | What's in the PR; that's what review is for. |
 | Environments | GitHub environments `consoletrack-apply`, `consoletrack-revert` (with the Terraform and revert workflows) | `terraform apply` and Revert runs wait for a named reviewer, and only those environments' OIDC roles can write to AWS. | Plans, which are read-only. |
-| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
-| `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env` and the common `.env.<name>` variants (listed one by one, because deny globs can't exclude `.env.example`, which the agent maintains), editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
-| PreToolUse guard | `agent-hooks/guard.py` | Tokenizes each command and file path and blocks everything in `AGENTS.md → Hard rules` that a tool call can break, including chained, wrapped, and nested forms. See [agent-extension-pack.md](agent-extension-pack.md#hooks). | See "What the guard can't see" below. |
+| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `make helm-lint`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
+| `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env` and the common `.env.<name>` variants (listed one by one, because deny globs can't exclude `.env.example`, which the agent maintains), editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `helmfile apply/sync/destroy/delete/init`, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
+| PreToolUse guard | `agent-hooks/guard.py` | Tokenizes each command and file path and blocks everything in `AGENTS.md → Hard rules` that a tool call can break, including chained, wrapped, and nested forms. For `helmfile` it allows only known reads (`lint`, `template`, `diff`, `deps`, `build`, `list`, …) after any global flags, and blocks helm write verbs passed through `--` or `--args`. It also rejects a `*.tf` edit that adds the Terraform `helm` or `kubernetes` provider, which `make lint` (`lint-terraform-providers`) checks again for humans and shell writes. See [agent-extension-pack.md](agent-extension-pack.md#hooks). | See "What the guard can't see" below. |
 | PostToolUse lint | `agent-hooks/lint_edited.py` | Lint errors in edited Python, frontend, and Terraform files, reported back in the same turn. | It's a quality check, not a security control. |
 | Human review | PR review, `CODEOWNERS` | Anything the layers above miss, including code that would do something harmful once a human runs it. | — |
 
@@ -42,6 +43,10 @@ What we observed in fresh sessions on Claude Code 2.1.300:
   `.env.*.local`, `.env.production`, `.env.bak`, …) by name. The guard still blocks every
   `.env.*` name except `.env.example`, so an unusual name like `.env.mine` is stopped by the
   guard alone.
+
+- **Helmfile.** The deny rules cover `helmfile <verb>*` and `helmfile * <verb>*` for `apply`,
+  `sync`, `destroy`, `delete`, and `init`; the guard answers first, as for Terraform, and also
+  catches `test`, `charts`, unknown verbs, and helm passthrough.
 
 - **Allow rules keep `*` at the end only.** Claude Code warns at startup about a wildcard in the
   middle of a command (`uvx ruff@* check *`, `terraform -chdir=* validate`). Those commands
@@ -81,5 +86,13 @@ the spec's reviewer setup), and a human reviews every PR, including any script t
   line, so `Bash(make test-*)` would also let `make test-hooks down` run without a prompt. The
   guard can't see what a `make` target does, so this matters.
 - **No `make` target that touches AWS or a cluster is ever added to `permissions.allow`**: not
-  `up`, `down`, `deploy`, `revert`, `demo-*`, `domain*`, `bootstrap`, `audit-rbac`, or
+  `up`, `down`, `addons`, `deploy`, `revert`, `demo-*`, `domain*`, `bootstrap`, `audit-rbac`, or
   `test-k8s` (kind). They always prompt, and the agent's own PRs follow this rule too.
+
+## CI deploy role
+
+`deploy.yaml`'s OIDC role is mapped to a namespaced Role in `consoletrack` and `demo`, and the
+workflow only ever runs `helmfile -l tier=app apply` (the `consoletrack` and `demo-app`
+releases). The `tier=addons` releases (Gateway API CRDs, kube-prometheus-stack, cloudnative-pg,
+the Load Balancer Controller, ExternalDNS) need cluster-wide rights, so only a human applies
+them, with `make addons`. Terraform never installs anything inside Kubernetes.
