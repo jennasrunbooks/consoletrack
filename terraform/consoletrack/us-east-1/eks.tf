@@ -122,13 +122,43 @@ module "eks" {
 
       subnet_ids = module.vpc.private_subnets
 
-      # Worker node policy and ECR read-only only. CNI and EBS have their own Pod Identity
-      # roles, and pods can't reach IMDS (hop limit 1), so they never use these credentials.
-      iam_role_name                 = "${local.name_prefix}-eks-node-${local.name_tail}"
-      iam_role_use_name_prefix      = false
-      iam_role_path                 = "/ct/"
-      iam_role_permissions_boundary = local.boundary_arn
-      iam_role_attach_cni_policy    = false
+      # The node role is created below, not by the module, which always attaches ECR ReadOnly.
+      create_iam_role = false
+      iam_role_arn    = module.node_role.arn
     }
   }
+}
+
+locals {
+  node_role_policies = {
+    AmazonEKSWorkerNodePolicy          = "arn:${local.partition}:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+    AmazonEC2ContainerRegistryPullOnly = "arn:${local.partition}:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
+  }
+}
+
+# Node role: AmazonEKSWorkerNodePolicy and ECR PullOnly only, so the attached policies say what
+# the boundary already enforces. CNI and EBS have their own Pod Identity roles, and pods can't
+# reach IMDS (hop limit 1), so they never use these credentials.
+module "node_role" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role"
+  version = "6.8.2"
+
+  name                 = "${local.name_prefix}-eks-node-${local.name_tail}"
+  use_name_prefix      = false
+  path                 = "/ct/"
+  description          = "ConsoleTrack EKS node group (${local.cluster_name})"
+  permissions_boundary = local.boundary_arn
+
+  trust_policy_permissions = {
+    ec2 = {
+      sid     = "Ec2Nodes"
+      actions = ["sts:AssumeRole"]
+      principals = [{
+        type        = "Service"
+        identifiers = ["ec2.amazonaws.com"]
+      }]
+    }
+  }
+
+  policies = local.node_role_policies
 }
