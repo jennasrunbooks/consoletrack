@@ -1,6 +1,6 @@
 # ConsoleTrack: Product Spec
 
-Last updated Oct 16, 2026
+Last updated Oct 17, 2026
 
 ## Summary
 
@@ -58,7 +58,7 @@ Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every graded cr
 | 2 (Nov 16) | Auto-remediation for the cluster OOM scenario | Shows the graduated autonomy path |
 | Later (after Nov 16) | Eval harness: `make eval` runs each scenario N times and reports attribution accuracy, time to triage, and cost per triage | Turns a demo of the agent into a measured agent |
 | Later | Network-path incidents (security groups, ALB target health, DNS, IP exhaustion) | Next domain, built on the same change intake |
-| Later | Production hardening path (managed NAT, Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD); watching more regions through EventBridge forwarding; Argo CD out-of-sync events as a change source; multi-account via an organization trail; headless Claude Code runner; commit tracing; security criterion artifacts | Beyond the course |
+| Later | Production hardening path (a NAT gateway per AZ, fck-nat as a cheaper NAT instance under `/ct/`, Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD); watching more regions through EventBridge forwarding; Argo CD out-of-sync events as a change source; multi-account via an organization trail; headless Claude Code runner; commit tracing; security criterion artifacts | Beyond the course |
 
 Phase 1 describes drift from CloudTrail request parameters plus the Terraform address of the resource. The exact attribute diff from `terraform plan` arrives in Phase 2.
 
@@ -119,18 +119,18 @@ The triage worker sees Kubernetes only through `k8s-mcp` and AWS only through `a
 | Demo app | Small Python service using Pod Identity to read from S3 | Gives the identity scenario a real AWS dependency |
 | Postgres | CloudNativePG (EKS), Postgres 16 container (local) | Incidents, changes, evidence, analyses, remediations |
 | Observability | kube-prometheus-stack | Alert rules, Alertmanager webhook to backend |
-| Infrastructure | Terraform modules, Helm | `terraform/consoletrack/global` (IAM and GitHub OIDC, Route 53 zone, optional budget), `terraform/consoletrack/us-east-1` (private VPC with NAT instance, EKS, Pod Identity roles, intake), and `terraform/demo-app/us-east-1` (demo IAM, S3, security group); settings from `.env` |
+| Infrastructure | Terraform modules, Helm | `terraform/consoletrack/global` (IAM and GitHub OIDC, Route 53 zone, optional budget), `terraform/consoletrack/us-east-1` (private VPC with a NAT gateway, EKS, Pod Identity roles, intake), and `terraform/demo-app/us-east-1` (demo IAM, S3, security group); settings from `.env` |
 | CI/CD | GitHub Actions with AWS OIDC | Test, build, deploy, plan on PRs, apply on merge, gated revert of the demo-app root |
 
 ## AWS design and cost
 
-The cluster runs only when needed, with private nodes and nothing public by default: about $0.16 an hour while up (about $0.19 with the optional ALB), roughly $10 for 60 demo and test hours, versus about $115 a month if left on. The EKS control plane is the biggest line, so the main lever is still `terraform destroy` when idle.
+The cluster runs only when needed, with private nodes and nothing public by default: about $0.20 an hour while up (about $0.23 with the optional ALB), roughly $12 for 60 demo and test hours, versus about $145 a month if left on. The EKS control plane is the biggest line, so the main lever is still `terraform destroy` when idle.
 
 **Terraform layout.** Code is organized by AWS account first, then by scope (global or a region), one root per folder, with one file per concern (`eks.tf`, `vpc.tf`, `iam.tf`, and so on) inside each root. Each top-level directory under terraform/ is named for the AWS account it targets. For the course, everything runs in one account, the ConsoleTrack hub, with one shared demo setup.
 
 - `terraform/consoletrack/` holds everything in the ConsoleTrack hub account:
   - `global/` (account-wide and long-lived, pennies a month): GitHub OIDC provider and the plan, apply, deploy, and revert roles (only when `enable_github_oidc = true`; reviewers leave it off), the permissions boundary, the demo "developer" role, the Route 53 zone when `DOMAIN` is set, and an optional AWS Budgets alert at $25. The alert is controlled by `enable_budget`: on by default for reviewers with standalone accounts, and off for the author, whose billing, budgets, and Cost Explorer live only in the AWS Organizations management account. Files: `iam.tf`, `route53.tf`, `budgets.tf`.
-  - `us-east-1/` (regional platform, created and destroyed freely, about 15 to 20 minutes each way): `vpc.tf` (private subnets, S3 gateway endpoint), `nat.tf` (fck-nat instance), `eks.tf` (cluster, Spot node group, add-ons, access entries), `pod-identity.tf`, `intake.tf` (CloudTrail trail and log bucket, EventBridge rule, SQS queue), `acm.tf`. Terraform manages AWS resources only, including EKS managed add-ons such as `vpc-cni`, `coredns`, `aws-ebs-csi-driver`, and `eks-pod-identity-agent`; it installs nothing inside Kubernetes. Every chart in the cluster, third-party and ConsoleTrack's own, is managed by Helmfile from `helm/helmfile.yaml.gotmpl`. Pod Identity roles live here, next to the cluster they bind to, even though IAM is global.
+  - `us-east-1/` (regional platform, created and destroyed freely, about 15 to 20 minutes each way): `vpc.tf` (private subnets, one managed NAT gateway, S3 gateway endpoint), `eks.tf` (cluster, Spot node group, add-ons, access entries), `pod-identity.tf`, `intake.tf` (CloudTrail trail and log bucket, EventBridge rule, SQS queue), `acm.tf`. Terraform manages AWS resources only, including EKS managed add-ons such as `vpc-cni`, `coredns`, `aws-ebs-csi-driver`, and `eks-pod-identity-agent`; it installs nothing inside Kubernetes. Every chart in the cluster, third-party and ConsoleTrack's own, is managed by Helmfile from `helm/helmfile.yaml.gotmpl`. Pod Identity roles live here, next to the cluster they bind to, even though IAM is global.
 - `terraform/demo-app/us-east-1/` (applies in under a minute): the AWS side of the demo app, matching `helm/charts/demo-app` for its Kubernetes side. That is its IAM role and policy, S3 bucket, security group, and Pod Identity association: the resources the demo scenarios drift on purpose and the revert workflow re-applies. The directory is named for the `demo-app` spoke account it belongs in; to save time it deploys into the ConsoleTrack account for the course, so moving it later changes the provider's target account, not the layout. Keeping it in its own state is what lets the revert role touch nothing else.
 
 Configuration comes from one place: `.env`. The Makefile turns it into `TF_VAR_*` variables, the backend settings (state bucket name with its random suffix), and a generated values file that `helm/helmfile.yaml.gotmpl` reads as its environment values, so there are no tfvars or per-environment folders to keep in sync. The S3 state bucket itself is created once by `scripts/bootstrap-state.sh` (AWS CLI: versioned, encrypted, public access blocked), so no Terraform root has to manage its own backend.
@@ -149,10 +149,10 @@ The S3 state bucket is created once by `scripts/bootstrap-state.sh` (AWS CLI: ve
 
 | Choice | Instead of | Why |
 | --- | --- | --- |
-| Nodes in private subnets, egress through one fck-nat instance (t4g.nano) in a public subnet | Public nodes, or a managed NAT gateway | Nodes get no public IPs. fck-nat costs about $3 a month with no per-GB charge, against $0.045/hr plus $0.045/GB for a managed NAT gateway. One AZ is fine for a demo; production would use a managed NAT gateway per AZ |
+| Nodes in private subnets, egress through one managed NAT gateway in a public subnet | Public nodes, or a NAT instance (fck-nat) | Nodes get no public IPs. A NAT gateway costs about $0.045/hr plus $0.045/GB, against about $0.009/hr for fck-nat, but AWS operates it, it needs no instance role, and every IAM resource stays under `/ct/`. The difference is a few dollars over the course. One AZ is fine for a demo; production would use one per AZ |
 | S3 gateway endpoint | S3 traffic through NAT | Free; covers the state bucket, CloudTrail logs, and the demo bucket |
-| No interface endpoints | ECR, STS, SQS interface endpoints | About $7.30 a month each per AZ, and nodes still need internet egress for the Claude and GitHub APIs, so the NAT instance is cheaper |
-| Graviton everywhere: t4g.medium Spot nodes, t4g.nano NAT, arm64 images | x86 | Spot is about half of on-demand and Graviton is cheaper per vCPU; arm64 also matches an Apple Silicon Mac |
+| No interface endpoints | ECR, STS, SQS interface endpoints | About $7.30 a month each per AZ, and nodes still need internet egress for the Claude and GitHub APIs, so the NAT gateway is cheaper |
+| Graviton everywhere: t4g.medium Spot nodes, arm64 images | x86 | Spot is about half of on-demand and Graviton is cheaper per vCPU; arm64 also matches an Apple Silicon Mac |
 | Latest standard-support Kubernetes version, upgrade policy STANDARD | Default policy | Avoids the $0.60/hr extended-support rate; 1.34 leaves standard support on Dec 2, 2026 |
 | No load balancer by default: the chart ships Gateway API resources, and `make open` reaches the dashboard through `kubectl port-forward` | An always-on ALB | Saves about $0.035/hr and leaves nothing exposed. `EXPOSURE=alb` provisions one ALB through the Load Balancer Controller's Gateway API support, limited to `ALLOWED_CIDRS`, for demo day or reviewers who want a URL |
 | Postgres in-cluster via CloudNativePG, gp3 volume | RDS | Destroyed with the cluster; a seed script restores demo data |
@@ -165,9 +165,9 @@ The S3 state bucket is created once by `scripts/bootstrap-state.sh` (AWS CLI: ve
 | --- | --- |
 | EKS control plane, standard support | 0.100 |
 | 2× t4g.medium Spot (about $0.016 to $0.021 each) | 0.040 |
-| fck-nat on t4g.nano plus its public IPv4 | 0.009 |
+| Managed NAT gateway plus its public IPv4 (data processed: $0.045/GB extra) | 0.050 |
 | EBS gp3, about 60 GB total | 0.007 |
-| **Total, default (no load balancer)** | **about 0.16** |
+| **Total, default (no load balancer)** | **about 0.20** |
 | Optional ALB with two public IPv4 addresses | +0.035 |
 
 Outside the cluster: Claude API usage is metered per triage, so set a monthly spend limit on the API key and default the triage agent to a Haiku-class model, with a Sonnet-class model as a per-incident option.
@@ -176,7 +176,7 @@ ConsoleTrack is hosted in us-east-1 because of where AWS delivers change events,
 
 Prices: [EKS pricing](https://aws.amazon.com/eks/pricing/), [public IPv4 charge](https://aws.amazon.com/blogs/aws/new-aws-public-ipv4-address-charge-public-ip-insights), [ALB pricing summary](https://cloudburn.io/blog/aws-elastic-load-balancing-pricing), [t4g.medium Spot](https://calculator.holori.com/aws/ec2/t4g.medium/us-east-1), [EKS 1.34 support dates](https://www.cloudmagazin.com/en/2026/09/22/kubernetes-support-ends-amazon-charges-six-times-the-price/).
 
-Network and ingress references: [fck-nat cost comparison](https://pypi.org/project/cdk-fck-nat), [interface endpoint cost](https://dev.to/enforza/how-to-reduce-aws-nat-gateway-costs-7-ways-ranked-by-savings-ll4), [Load Balancer Controller Gateway API GA](https://www.infoq.com/news/2026/03/aws-gateway-api-ga), [Gateway API implementations](https://gateway-api.sigs.k8s.io/docs/implementations/).
+Network and ingress references: [NAT gateway pricing](https://aws.amazon.com/vpc/pricing/), [interface endpoint cost](https://dev.to/enforza/how-to-reduce-aws-nat-gateway-costs-7-ways-ranked-by-savings-ll4), [Load Balancer Controller Gateway API GA](https://www.infoq.com/news/2026/03/aws-gateway-api-ga), [Gateway API implementations](https://gateway-api.sigs.k8s.io/docs/implementations/).
 
 **Custom domain (optional, for any deployment).** Anyone deploying ConsoleTrack can serve the dashboard over HTTPS at a hostname they own by setting `DOMAIN` (for example `consoletrack.example.com`) together with `EXPOSURE=alb`. The author's deployment uses `consoletrack.jennasrunbooks.com`. Leaving `DOMAIN` empty keeps `make open`. `EXPOSURE=alb` requires `DOMAIN`, because an ALB without a certificate serves plain HTTP: the browser would drop the `Secure` session cookie, so login would fail, and the admin password would travel unencrypted. `make env-check-up` enforces this. Nothing in the code, chart, or Terraform hardcodes a domain.
 
@@ -197,8 +197,7 @@ All AWS resources come from community-maintained terraform-aws-modules, pinned t
 
 | Need | Module | Custom settings this project relies on |
 | --- | --- | --- |
-| VPC | `terraform-aws-modules/vpc/aws` | 2 AZs; private subnets for nodes; public subnets only for the NAT instance and the optional ALB; `enable_nat_gateway = false`; S3 gateway endpoint; ELB subnet tags |
-| NAT instance | `RaJiska/fck-nat/aws` | t4g.nano (Graviton), single AZ, routes for both private route tables, HA mode off for the demo |
+| VPC | `terraform-aws-modules/vpc/aws` | 2 AZs; private subnets for nodes; public subnets only for the NAT gateway and the optional ALB; `enable_nat_gateway = true` and `single_nat_gateway = true`; S3 gateway endpoint; ELB subnet tags |
 | EKS cluster and node group | `terraform-aws-modules/eks/aws` (v21, AWS provider 6) | API authentication mode with access entries; `enable_irsa = false`; Spot t4g.medium managed node group in private subnets; add-ons vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver, and eks-pod-identity-agent (installed before nodes); public and private endpoint access; upgrade policy STANDARD |
 | Pod Identity roles | `terraform-aws-modules/eks-pod-identity/aws` | Built-in policy switches for the Load Balancer Controller, EBS CSI, and VPC CNI; custom policies for `aws-mcp`, the worker's SQS access, and the demo app's S3 read; one association per `namespace:serviceaccount` |
 | GitHub OIDC | `terraform-aws-modules/iam/aws`, OIDC provider and role submodules | Plan role for pull requests, apply role for `main` behind the `consoletrack-apply` environment, app deploy role, revert role |
@@ -210,9 +209,9 @@ All AWS resources come from community-maintained terraform-aws-modules, pinned t
 
 Terraform manages AWS only and never installs anything inside Kubernetes. Helmfile owns every release: `make addons` applies the third-party ones, and `make deploy` or CI applies only the `consoletrack` and `demo-app` releases (`helmfile -l tier=app apply`), so app releases don't need a Terraform run. Module versions are pinned in `versions.tf` and updated by Dependabot PRs. Chart versions are pinned in `helm/helmfile.yaml.gotmpl`; Dependabot's Helm support covers the local charts' `Chart.yaml` dependencies, not Helmfile, so third-party chart bumps are manual PRs. Helmfile environments are deployment targets, not apps: `eks` (the default) and `local` (kind, which leaves out the Load Balancer Controller and ExternalDNS). Releases are grouped by labels instead: `tier=addons` for the third-party charts and the Gateway API CRDs, `tier=app` for `consoletrack` and `demo-app`.
 
-Pod Identity replaces IRSA throughout. Each role trusts `pods.eks.amazonaws.com` and is bound to one namespace and service account by an EKS association, so roles don't depend on a cluster's OIDC issuer and survive cluster rebuilds unchanged. Pods need the eks-pod-identity-agent add-on and a recent AWS SDK (boto3 qualifies); the agent calls the EKS Auth API, which private nodes reach through the NAT instance. Because associations live in EKS, the EventBridge rule also watches EKS association changes, which is what the Phase 2 identity scenario breaks. One item to confirm at build time: that the chosen VPC CNI add-on version accepts a Pod Identity association. If it doesn't, the CNI stays on the node role as the single documented exception.
+Pod Identity replaces IRSA throughout. Each role trusts `pods.eks.amazonaws.com` and is bound to one namespace and service account by an EKS association, so roles don't depend on a cluster's OIDC issuer and survive cluster rebuilds unchanged. Pods need the eks-pod-identity-agent add-on and a recent AWS SDK (boto3 qualifies); the agent calls the EKS Auth API, which private nodes reach through the NAT gateway. Because associations live in EKS, the EventBridge rule also watches EKS association changes, which is what the Phase 2 identity scenario breaks. One item to confirm at build time: that the chosen VPC CNI add-on version accepts a Pod Identity association. If it doesn't, the CNI stays on the node role as the single documented exception.
 
-Module references: [EKS module v20 upgrade notes on access entries](https://github.com/terraform-aws-modules/terraform-aws-eks/blob/master/docs/UPGRADE-20.0.md), [v21 upgrade walkthrough](https://dev.to/setevoy/terraform-aws-eks-terraform-module-update-from-version-20x-to-version-21x-52im), [eks-pod-identity module](https://registry.terraform.io/modules/terraform-aws-modules/eks-pod-identity/aws/latest), [fck-nat](https://github.com/AndrewGuenther/fck-nat).
+Module references: [EKS module v20 upgrade notes on access entries](https://github.com/terraform-aws-modules/terraform-aws-eks/blob/master/docs/UPGRADE-20.0.md), [v21 upgrade walkthrough](https://dev.to/setevoy/terraform-aws-eks-terraform-module-update-from-version-20x-to-version-21x-52im), [eks-pod-identity module](https://registry.terraform.io/modules/terraform-aws-modules/eks-pod-identity/aws/latest).
 
 ## Production hardening path
 
@@ -220,7 +219,7 @@ The demo trades a few production properties for cost. These upgrades change only
 
 | Step | Change | What it buys | Cost impact |
 | --- | --- | --- | --- |
-| 1. Managed NAT gateways | Replace the fck-nat instance with a managed NAT gateway in each AZ | AWS-operated, highly available egress with no instance to patch; the standard choice for productionized workloads | About $0.045/hr per AZ plus $0.045/GB processed |
+| 1. Managed NAT gateways | Add a managed NAT gateway in each AZ (Phase 1 runs one) | AWS-operated, highly available egress with no instance to patch; the standard choice for productionized workloads | About $0.045/hr per extra AZ plus $0.045/GB processed |
 | 2. Claude through Amazon Bedrock over PrivateLink | The worker calls Claude through Bedrock using a `bedrock-runtime` interface endpoint, with `bedrock:InvokeModel` on specific model or inference-profile ARNs granted through Pod Identity | Model traffic never leaves the AWS network, there is no API key to store or rotate, and every call is IAM-authorized and logged in CloudTrail | Interface endpoint per AZ plus Bedrock usage pricing |
 | 3. Images through an ECR pull-through cache | ECR caches the GHCR images; nodes pull through ECR interface endpoints and the S3 gateway endpoint | No image pulls over the internet; ECR image scanning | ECR storage plus endpoints |
 | 4. Private API endpoint with Argo CD | Turn off public access to the EKS API; Argo CD in the cluster pulls the Helm chart from Git instead of CI pushing with `helmfile apply` | Removes the main remaining exposure; deploys become declarative, auditable, and self-healing | Self-managed Argo CD runs on the existing nodes; EKS also offers a managed Argo CD capability billed per application-hour ([EKS capabilities pricing](https://komodor.com/learn/amazon-eks-pricing-quick-guide-and-6-ways-to-cut-eks-costs/)) |
@@ -534,7 +533,7 @@ mcp-server/aws/          # aws-mcp (FastMCP, boto3), Dockerfile, IAM policy note
 terraform/
   consoletrack/           # the ConsoleTrack hub account
     global/               # iam.tf (GitHub OIDC, CI roles, boundary, demo developer role), route53.tf, budgets.tf (optional)
-    us-east-1/            # vpc.tf, nat.tf, eks.tf, pod-identity.tf, intake.tf, acm.tf
+    us-east-1/            # vpc.tf, eks.tf, pod-identity.tf, intake.tf, acm.tf
   demo-app/               # named for its future spoke account; deployed into consoletrack for now
     us-east-1/            # demo app IAM, S3, security group, Pod Identity association: the drift target
 helm/
@@ -565,7 +564,7 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 | AWS account | Admin access, ideally a sandbox account; a CLI profile configured |
 | Anthropic API key | With a monthly spend limit set; a full demo uses a handful of triage runs |
 | Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 3 with the helm-diff plugin, Helmfile, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
-| Budget | About $0.19/hour while up; the README states this before any command |
+| Budget | About $0.20/hour while up ($0.23 with the ALB); the README states this before any command |
 
 **Steps (README "Quick start" mirrors this exactly).**
 
@@ -663,7 +662,7 @@ The change intake and `aws-mcp` start on day 3 because they are the riskiest new
 | CloudTrail delivery delay makes the live demo slow or flaky | High | If the optional demo video is made, speed up the CloudTrail wait in editing with an on-screen note of the real elapsed time; the worker retries lookups; `make demo-*` waits for the change record before moving on |
 | Revert workflow or apply role ends up broader than intended | Medium | Permissions boundary, ARNs scoped by prefix and IAM path (`ct-` for ConsoleTrack, `demo-app-` for the watched workload), demo-app root kept tiny; `make audit-iam` runs IAM Access Analyzer policy validation on every role |
 | Agent links the wrong change to an incident | Medium | Link confidence stored and shown; IAM simulation must confirm the denial before a link is marked high confidence |
-| The single NAT instance fails or is replaced mid-demo | Low | fck-nat runs in an Auto Scaling group of one and recovers on its own; `make up` checks egress to the Claude and GitHub APIs before the demo starts |
+| The single NAT gateway's AZ fails mid-demo | Low | AWS operates the gateway, so there is no instance to fail; a full AZ outage is an accepted risk for a single-AZ demo; `make up` checks egress to the Claude and GitHub APIs before the demo starts |
 | Spot reclaim during the review window or a recording | Medium | Node group allows t4g.medium and t4g.large; switch to on-demand for demo day |
 | Memory pressure from the Prometheus stack on 8 GiB total | Medium | Short retention, exporters trimmed, resource requests set; add a third node if pods go Pending |
 | `terraform destroy` hangs on load balancer or ENI cleanup | Medium | `make down` runs `helmfile destroy` (Gateway included) before Terraform |
