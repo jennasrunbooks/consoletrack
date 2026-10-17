@@ -99,7 +99,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
-	tf-validate tf-test tflint tf-init tf-plan tf-apply gh-secrets \
+	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-shell db-sql \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean deploy open \
@@ -232,6 +232,10 @@ tf-apply: env-check-tf ## terraform apply ROOT=… after Terraform's own yes pro
 	$(check_root)
 	$(check_human)
 	$(TERRAFORM) -chdir=$(TF_DIR) apply
+
+tf-output: env-check-tf ## terraform output ROOT=<account>/<scope> [OUTPUT=<name>] (read-only; sensitive values stay hidden)
+	$(check_root)
+	$(TERRAFORM) -chdir=$(TF_DIR) output $(OUTPUT)
 
 up: env-check-up ## Create the platform, add-ons, and app; print the dashboard URL (stub)
 	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
