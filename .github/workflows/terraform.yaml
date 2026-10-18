@@ -57,6 +57,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  GITHUB_OWNER_ID: ${{ github.repository_owner_id }}
+  GITHUB_REPO_ID: ${{ github.repository_id }}
   TF_IN_AUTOMATION: "true"
   AWS_REGION: ${{ vars.AWS_REGION }}
   NAME_SUFFIX: ${{ vars.NAME_SUFFIX }}
