@@ -131,6 +131,74 @@ run "github_roles" {
   }
 }
 
+# The trusted sub, per form. github_roles above covers the classic form with no IDs set.
+run "oidc_sub_id_form" {
+  command = plan
+
+  variables {
+    github_owner_id = "1234567"
+    github_repo_id  = "987654321"
+  }
+
+  assert {
+    condition = alltrue([
+      for k, doc in data.aws_iam_policy_document.github_trust : alltrue([
+        for s in jsondecode(doc.json).Statement :
+        s.Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:example-org@1234567/consoletrack@987654321:environment:consoletrack-${k}"
+      ])
+    ]) && length(data.aws_iam_policy_document.github_trust) == 4
+    error_message = "With both IDs set, every CI role must trust repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:consoletrack-<env>."
+  }
+}
+
+run "oidc_sub_classic_form" {
+  command = plan
+
+  variables {
+    github_owner_id = ""
+    github_repo_id  = ""
+  }
+
+  assert {
+    condition = alltrue([
+      for k, doc in data.aws_iam_policy_document.github_trust : alltrue([
+        for s in jsondecode(doc.json).Statement :
+        s.Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:example-org/consoletrack:environment:consoletrack-${k}"
+      ])
+    ]) && length(data.aws_iam_policy_document.github_trust) == 4
+    error_message = "With no IDs set, every CI role must trust repo:<owner>/<repo>:environment:consoletrack-<env>."
+  }
+}
+
+run "oidc_sub_one_id_falls_back" {
+  command = plan
+
+  variables {
+    github_owner_id = "1234567"
+    github_repo_id  = ""
+  }
+
+  assert {
+    condition = alltrue([
+      for k, doc in data.aws_iam_policy_document.github_trust : alltrue([
+        for s in jsondecode(doc.json).Statement :
+        s.Condition.StringEquals["token.actions.githubusercontent.com:sub"] == "repo:example-org/consoletrack:environment:consoletrack-${k}"
+      ])
+    ]) && length(data.aws_iam_policy_document.github_trust) == 4
+    error_message = "With only one ID set, the roles must fall back to the classic sub."
+  }
+}
+
+run "oidc_ids_must_be_numeric" {
+  command = plan
+
+  variables {
+    github_owner_id = "example-org"
+  }
+
+  expect_failures = [var.github_owner_id]
+}
+
 run "demo_developer_trusts_operator" {
   command = plan
 
