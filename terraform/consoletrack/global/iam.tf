@@ -129,6 +129,8 @@ locals {
     "${local.logs_arn}:log-group:ct-*",
   ]
   project_budget_arns = ["arn:${local.partition}:budgets::${local.account_id}:budget/ct-*"]
+  # AWS-owned public parameters such as /aws/service/eks/optimized-ami/...; no account ID.
+  ssm_public_parameter_arn = "arn:${local.partition}:ssm:${var.aws_region}::parameter/aws/service/*"
 
   # The demo security group is found by its Name tag; terraform/demo-app/us-east-1 must set
   # Name = demo-app-sg-use1-<suffix>, because EC2 has no condition key for the group name.
@@ -146,6 +148,9 @@ locals {
 data "aws_iam_policy_document" "boundary" {
   # A boundary is a ceiling, not a grant: it names whole services so that each role's own
   # policy picks the actions and resources. Only services ConsoleTrack uses are listed.
+  # elasticloadbalancing is for the Load Balancer Controller (EXPOSURE=alb); its own policy is
+  # tag-scoped. The ECR actions are image pulls for the node role, the same set as AWS's
+  # AmazonEC2ContainerRegistryPullOnly; GetAuthorizationToken only accepts "*".
   statement {
     sid = "ProjectServices"
     actions = [
@@ -160,8 +165,27 @@ data "aws_iam_policy_document" "boundary" {
       "acm:*",
       "budgets:*",
       "sts:*",
+      "elasticloadbalancing:*",
+      "ecr:GetAuthorizationToken",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
     ]
     resources = ["*"]
+  }
+
+  # The Pod Identity agent runs with the node role and exchanges it for each pod's role; only
+  # on this project's clusters.
+  statement {
+    sid       = "PodIdentityAgent"
+    actions   = ["eks-auth:AssumeRoleForPodIdentity"]
+    resources = ["${local.eks_arn}:cluster/${local.name_prefix}-eks-${local.region_code}-*"]
+  }
+
+  # AWS's public parameters only (the EKS node group looks up its AMI release version).
+  statement {
+    sid       = "SsmPublicParameters"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = [local.ssm_public_parameter_arn]
   }
 
   # IAM reads are not path-scoped here: aws-mcp's IAM simulation and Terraform's refresh of
@@ -178,16 +202,22 @@ data "aws_iam_policy_document" "boundary" {
     resources = local.project_iam_arns
   }
 
-  # EKS creates its service-linked roles on first use; their names and policies are AWS's.
+  # EKS creates its service-linked roles on first use, and so does the Load Balancer
+  # Controller; their names and policies are AWS's.
   statement {
-    sid       = "EksServiceLinkedRoles"
+    sid       = "ServiceLinkedRoles"
     actions   = ["iam:CreateServiceLinkedRole"]
     resources = ["*"]
 
     condition {
       test     = "StringEquals"
       variable = "iam:AWSServiceName"
-      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com"]
+      values = [
+        "eks.amazonaws.com",
+        "eks-nodegroup.amazonaws.com",
+        "spot.amazonaws.com",
+        "elasticloadbalancing.amazonaws.com",
+      ]
     }
   }
 
@@ -325,10 +355,12 @@ data "aws_iam_policy_document" "project_read" {
     resources = local.project_eks_arns
   }
 
-  # Bucket configuration only; object reads stay limited to the state bucket above.
+  # Bucket configuration only; object reads stay limited to the state bucket above. ListBucket is
+  # for HeadBucket, the first call of every aws_s3_bucket refresh (it shows key names, not data).
   statement {
     sid = "S3BucketRead"
     actions = [
+      "s3:ListBucket",
       "s3:GetBucket*",
       "s3:GetAccelerateConfiguration",
       "s3:GetEncryptionConfiguration",
@@ -352,6 +384,13 @@ data "aws_iam_policy_document" "project_read" {
     sid       = "EventsRead"
     actions   = ["events:Describe*", "events:ListTargetsByRule", "events:ListTagsForResource"]
     resources = local.project_events_arns
+  }
+
+  # The intake's rule lives on the default bus, which the EventBridge module looks up by name.
+  statement {
+    sid       = "EventsDefaultBusRead"
+    actions   = ["events:DescribeEventBus"]
+    resources = ["arn:${local.partition}:events:${var.aws_region}:${local.account_id}:event-bus/default"]
   }
 
   statement {
@@ -407,6 +446,13 @@ data "aws_iam_policy_document" "project_read" {
     resources = local.project_budget_arns
   }
 
+  # The EKS node group reads its AMI release version from a public parameter during plan.
+  statement {
+    sid       = "SsmPublicParameters"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = [local.ssm_public_parameter_arn]
+  }
+
   statement {
     sid       = "IamRead"
     actions   = local.iam_read_actions
@@ -441,9 +487,11 @@ data "aws_iam_policy_document" "gh_plan" {
 # create, change, and delete resources named ct-*/demo-app-* or tagged project=consoletrack,
 # and IAM only under /ct/ and /demo-app/ with the boundary attached. The boundary itself and
 # the OIDC provider are out of its reach (the boundary denies them), so a human applies those.
-data "aws_iam_policy_document" "gh_apply" {
-  source_policy_documents = [data.aws_iam_policy_document.project_read.json]
-
+#
+# Its permissions are three managed policies under /ct/ (read, iam, infra) instead of one
+# inline policy: together they're over IAM's 10,240-character inline limit, and each managed
+# policy must stay under 6,144 (tests/global.tftest.hcl checks both).
+data "aws_iam_policy_document" "gh_apply_iam" {
   statement {
     sid       = "StateWrite"
     actions   = ["s3:PutObject"]
@@ -503,6 +551,9 @@ data "aws_iam_policy_document" "gh_apply" {
     }
   }
 
+}
+
+data "aws_iam_policy_document" "gh_apply_infra" {
   # EC2 resources are matched by tag: provider default_tags put project=consoletrack on every
   # resource at creation, so creates must carry it and later changes must find it.
   statement {
@@ -837,12 +888,32 @@ data "aws_iam_policy_document" "gh_deploy" {
 }
 
 locals {
-  github_role_policies = {
+  github_roles = toset(["plan", "apply", "revert", "deploy"])
+
+  # Inline policies; the apply role has managed policies instead (below).
+  github_inline_policies = {
     plan   = data.aws_iam_policy_document.gh_plan.json
-    apply  = data.aws_iam_policy_document.gh_apply.json
     revert = data.aws_iam_policy_document.gh_revert.json
     deploy = data.aws_iam_policy_document.gh_deploy.json
   }
+
+  gh_apply_policies = {
+    read  = data.aws_iam_policy_document.project_read.json
+    iam   = data.aws_iam_policy_document.gh_apply_iam.json
+    infra = data.aws_iam_policy_document.gh_apply_infra.json
+  }
+}
+
+module "gh_apply_policy" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-policy"
+  version = "6.8.2"
+
+  for_each = var.enable_github_oidc ? local.gh_apply_policies : {}
+
+  name        = "${local.name_prefix}-gh-apply-${each.key}-${var.name_suffix}"
+  path        = "/ct/"
+  description = "ConsoleTrack GitHub Actions apply role: ${each.key}"
+  policy      = each.value
 }
 
 # Trust: this repo's one GitHub environment per role, StringEquals on sub (no wildcards) and on
@@ -850,7 +921,7 @@ locals {
 # enable_github_oidc statement, whose aud check is ForAllValues:StringEquals: that also passes
 # when the key is missing. Referencing the provider ARN orders each role after the provider.
 data "aws_iam_policy_document" "github_trust" {
-  for_each = var.enable_github_oidc ? local.github_role_policies : {}
+  for_each = var.enable_github_oidc ? local.github_roles : toset([])
 
   statement {
     sid     = "GithubOidc"
@@ -887,7 +958,7 @@ module "github_role" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role"
   version = "6.8.2"
 
-  for_each = var.enable_github_oidc ? local.github_role_policies : {}
+  for_each = var.enable_github_oidc ? local.github_roles : toset([])
 
   name                 = "${local.name_prefix}-gh-${each.key}-${var.name_suffix}"
   use_name_prefix      = false
@@ -898,8 +969,9 @@ module "github_role" {
 
   source_trust_policy_documents = [data.aws_iam_policy_document.github_trust[each.key].json]
 
-  create_inline_policy           = true
-  source_inline_policy_documents = [each.value]
+  create_inline_policy           = contains(keys(local.github_inline_policies), each.key)
+  source_inline_policy_documents = compact([lookup(local.github_inline_policies, each.key, "")])
+  policies                       = each.key == "apply" ? { for k, p in module.gh_apply_policy : k => p.arn } : {}
 }
 
 ################################################################################

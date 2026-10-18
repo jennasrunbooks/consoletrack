@@ -61,10 +61,11 @@ check_env = @missing="$(strip $(foreach v,$(1),$(if $(filter-out op://%,$(strip 
 # .env names passed to Terraform as TF_VAR_<lowercase name>. Secrets such as ANTHROPIC_API_KEY
 # are deliberately absent: they go to Kubernetes Secrets, never into Terraform state. Only
 # non-empty values are exported, so Terraform falls back to the variable's default otherwise.
-# ALLOWED_CIDRS and WATCHED_IAM_PATHS stay comma-separated strings; the roots split them.
+# ALLOWED_CIDRS, EKS_PUBLIC_ACCESS_CIDRS, and WATCHED_IAM_PATHS stay comma-separated strings;
+# the roots split them.
 TF_INPUTS := AWS_REGION NAME_SUFFIX GITHUB_REPO GITHUB_OWNER_ID GITHUB_REPO_ID ENABLE_GITHUB_OIDC \
-	OPERATOR_ARN K8S_VERSION USE_SPOT NODE_INSTANCE_TYPE EXPOSURE ALLOWED_CIDRS DOMAIN DNS_PARENT \
-	ENABLE_BUDGET BUDGET_LIMIT_USD BUDGET_EMAIL WATCHED_IAM_PATHS
+	OPERATOR_ARN K8S_VERSION USE_SPOT NODE_INSTANCE_TYPE VPC_CIDR EKS_PUBLIC_ACCESS_CIDRS EXPOSURE \
+	ALLOWED_CIDRS DOMAIN DNS_PARENT ENABLE_BUDGET BUDGET_LIMIT_USD BUDGET_EMAIL WATCHED_IAM_PATHS
 tf_var = TF_VAR_$(shell echo '$(1)' | tr '[:upper:]' '[:lower:]')
 $(foreach v,$(TF_INPUTS),$(if $(strip $($v)),$(eval export $(call tf_var,$v) = $$($v))))
 
@@ -104,8 +105,8 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
-	test-hooks lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers lint-shell \
-	helm-lint db-sql hash-password \
+	test-hooks test-terraform lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers \
+	lint-shell helm-lint db-sql hash-password \
 	test-backend test-frontend test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
@@ -120,7 +121,7 @@ help: ## List targets
 
 lint: lint-hooks lint-backend lint-openapi lint-shell lint-terraform-providers helm-lint ## Lint and format checks (run before every commit)
 
-test: test-hooks test-backend test-contract ## Unit and contract tests (run before every commit)
+test: test-hooks test-backend test-contract test-terraform ## Unit and contract tests (run before every commit)
 
 fmt: ## Format Python and Terraform in place
 	$(RUFF) format agent-hooks backend
@@ -192,6 +193,9 @@ tf-test: ## terraform test for every root with tests/ (offline: AWS calls are ov
 
 test-hooks: ## Tests for agent-hooks/
 	$(PYTEST) agent-hooks/tests -q
+
+test-terraform: ## Python tests under terraform/*/*/tests/ (event pattern; no AWS, no Terraform)
+	$(PYTEST) $$(find terraform -path '*/.terraform' -prune -o -name 'test_*.py' -print | sort) -q
 
 test-backend: ## Backend unit tests, with app/services/ coverage >= 90%
 	$(BACKEND_RUN) pytest tests/unit -q -m "not integration" \

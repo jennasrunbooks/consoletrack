@@ -149,15 +149,15 @@ make down-all                  # optional: also the global root and the state bu
 
 ## Cost
 
-About **$0.16 per hour** while the cluster is up, about $0.19 with the optional load balancer. Run `make down` when you're done; `global` (IAM roles, DNS zone) costs pennies a month and can stay.
+About **$0.20 per hour** while the cluster is up, about $0.24 with the optional load balancer. Run `make down` when you're done; `global` (IAM roles, DNS zone) costs pennies a month and can stay.
 
 | Item | $/hour |
 |---|---|
 | EKS control plane, standard support | 0.100 |
 | 2× t4g.medium Spot nodes | 0.040 |
-| fck-nat on t4g.nano, plus its public IPv4 | 0.009 |
+| One managed NAT gateway, plus its public IPv4 (and $0.045/GB processed) | 0.050 |
 | EBS gp3, about 60 GB | 0.007 |
-| **Total, default** | **about 0.16** |
+| **Total, default** | **about 0.20** |
 | Optional ALB (`EXPOSURE=alb`) | +0.035 |
 
 Claude usage is per triage run; the default model is Haiku-class. Details and sources: [product-spec.md → AWS design and cost](product-spec.md#aws-design-and-cost).
@@ -177,6 +177,8 @@ Claude usage is per triage run; the default model is Haiku-class. Details and so
 | `K8S_VERSION` | `1.36` | EKS version, in standard support until Aug 2, 2027 |
 | `USE_SPOT` | `true` | Spot nodes; set `false` if you hit capacity errors |
 | `NODE_INSTANCE_TYPE` | `t4g.medium` | Graviton (arm64) nodes |
+| `VPC_CIDR` | `10.0.0.0/16` | VPC range; change it only if it overlaps a network you connect to |
+| `EKS_PUBLIC_ACCESS_CIDRS` | `0.0.0.0/0` | Who can reach the EKS API's public endpoint (IAM still required); keep it open while CI deploys from GitHub-hosted runners |
 | `EXPOSURE` | `port-forward` | `port-forward` (nothing public) or `alb` (needs `DOMAIN`) |
 | `ALLOWED_CIDRS` | your IP | Who can reach the ALB |
 | `DOMAIN` | | HTTPS hostname, e.g. `consoletrack.example.com` |
@@ -305,7 +307,7 @@ consoletrack/
 
 - **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; gated Revert; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; two cloud scenarios (security group opened, demo role permission removed) and three cluster faults; the dashboard; EKS via Terraform and Helmfile; CI/CD; the agent extension pack.
 - **Phase 2 (Nov 16):** Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); Slack and analytics; auto-remediation for the cluster OOM scenario after it graduates.
-- **Later:** managed NAT, Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
+- **Later:** a NAT gateway per AZ, or fck-nat as a raw NAT instance under `/ct/` to cut the NAT cost; Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
 
 ## Course rubric mapping
 
