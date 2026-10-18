@@ -355,10 +355,12 @@ data "aws_iam_policy_document" "project_read" {
     resources = local.project_eks_arns
   }
 
-  # Bucket configuration only; object reads stay limited to the state bucket above.
+  # Bucket configuration only; object reads stay limited to the state bucket above. ListBucket is
+  # for HeadBucket, the first call of every aws_s3_bucket refresh (it shows key names, not data).
   statement {
     sid = "S3BucketRead"
     actions = [
+      "s3:ListBucket",
       "s3:GetBucket*",
       "s3:GetAccelerateConfiguration",
       "s3:GetEncryptionConfiguration",
@@ -382,6 +384,13 @@ data "aws_iam_policy_document" "project_read" {
     sid       = "EventsRead"
     actions   = ["events:Describe*", "events:ListTargetsByRule", "events:ListTagsForResource"]
     resources = local.project_events_arns
+  }
+
+  # The intake's rule lives on the default bus, which the EventBridge module looks up by name.
+  statement {
+    sid       = "EventsDefaultBusRead"
+    actions   = ["events:DescribeEventBus"]
+    resources = ["arn:${local.partition}:events:${var.aws_region}:${local.account_id}:event-bus/default"]
   }
 
   statement {

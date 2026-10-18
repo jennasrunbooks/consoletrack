@@ -324,3 +324,124 @@ run "external_domain" {
     error_message = "dns_parent = external must not touch the parent zone."
   }
 }
+
+# Every AWS read that a plan of terraform/consoletrack/us-east-1 makes, from the data sources it
+# and its modules read with this repo's inputs, plus the refresh of each resource type it creates.
+# The plan role, the apply role's read policy, and the boundary must all allow each one.
+# Not covered: Condition blocks (ACM reads are tag-conditioned, which matches default_tags).
+run "plan_role_reads_us_east_1" {
+  command = plan
+
+  variables {
+    expected_reads = [
+      # Data sources
+      { action = "ec2:DescribeAvailabilityZones", resource = "*" },                                              # root: aws_availability_zones
+      { action = "ec2:DescribeVpcEndpointServices", resource = "*" },                                            # vpc_endpoints: aws_vpc_endpoint_service
+      { action = "eks:DescribeAddonVersions", resource = "*" },                                                  # eks: aws_eks_addon_version
+      { action = "iam:GetRole", resource = "arn:aws:iam::ACCOUNTID:role/ct/ct-gh-plan-a1b2c3" },                 # eks/root: aws_iam_session_context
+      { action = "events:DescribeEventBus", resource = "arn:aws:events:us-east-1:ACCOUNTID:event-bus/default" }, # changes_rule: aws_cloudwatch_event_bus
+      { action = "ssm:GetParameter", resource = "arn:aws:ssm:us-east-1::parameter/aws/service/eks/optimized-ami/1.36/amazon-linux-2023/arm64/standard/recommended/release_version" },
+      { action = "route53:ListHostedZones", resource = "*" }, # root: aws_route53_zone (DOMAIN)
+      { action = "route53:GetHostedZone", resource = "arn:aws:route53:::hostedzone/Z0EXAMPLE" },
+      { action = "route53:ListTagsForResource", resource = "arn:aws:route53:::hostedzone/Z0EXAMPLE" },
+      # Refresh: VPC, NAT, endpoint, security groups, launch template
+      { action = "ec2:DescribeVpcs", resource = "*" },
+      { action = "ec2:DescribeVpcAttribute", resource = "*" },
+      { action = "ec2:DescribeSubnets", resource = "*" },
+      { action = "ec2:DescribeRouteTables", resource = "*" },
+      { action = "ec2:DescribeNatGateways", resource = "*" },
+      { action = "ec2:DescribeAddresses", resource = "*" },
+      { action = "ec2:DescribeVpcEndpoints", resource = "*" },
+      { action = "ec2:DescribeSecurityGroups", resource = "*" },
+      { action = "ec2:DescribeSecurityGroupRules", resource = "*" },
+      { action = "ec2:DescribeLaunchTemplateVersions", resource = "*" },
+      # Refresh: EKS
+      { action = "eks:DescribeCluster", resource = "arn:aws:eks:us-east-1:ACCOUNTID:cluster/ct-eks-use1-a1b2c3" },
+      { action = "eks:ListTagsForResource", resource = "arn:aws:eks:us-east-1:ACCOUNTID:cluster/ct-eks-use1-a1b2c3" },
+      { action = "eks:DescribeNodegroup", resource = "arn:aws:eks:us-east-1:ACCOUNTID:nodegroup/ct-eks-use1-a1b2c3/ct-nodes-use1-a1b2c3/uuid" },
+      { action = "eks:DescribeAddon", resource = "arn:aws:eks:us-east-1:ACCOUNTID:addon/ct-eks-use1-a1b2c3/vpc-cni/uuid" },
+      { action = "eks:DescribeAccessEntry", resource = "arn:aws:eks:us-east-1:ACCOUNTID:access-entry/ct-eks-use1-a1b2c3/role/ACCOUNTID/Admin/uuid" },
+      { action = "eks:ListAssociatedAccessPolicies", resource = "arn:aws:eks:us-east-1:ACCOUNTID:access-entry/ct-eks-use1-a1b2c3/role/ACCOUNTID/Admin/uuid" },
+      { action = "eks:DescribePodIdentityAssociation", resource = "arn:aws:eks:us-east-1:ACCOUNTID:podidentityassociation/ct-eks-use1-a1b2c3/a-example" },
+      # Refresh: IAM roles and policies (project and AWS-managed)
+      { action = "iam:GetRole", resource = "arn:aws:iam::ACCOUNTID:role/ct/ct-eks-node-use1-a1b2c3" },
+      { action = "iam:ListAttachedRolePolicies", resource = "arn:aws:iam::ACCOUNTID:role/ct/ct-eks-node-use1-a1b2c3" },
+      { action = "iam:ListRolePolicies", resource = "arn:aws:iam::ACCOUNTID:role/ct/ct-aws-mcp-use1-a1b2c3" },
+      { action = "iam:GetPolicy", resource = "arn:aws:iam::ACCOUNTID:policy/ct/ct-aws-mcp-use1-a1b2c3" },
+      { action = "iam:GetPolicyVersion", resource = "arn:aws:iam::ACCOUNTID:policy/ct/ct-aws-mcp-use1-a1b2c3" },
+      { action = "iam:GetPolicy", resource = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy" },
+      # Refresh: intake
+      { action = "sqs:GetQueueAttributes", resource = "arn:aws:sqs:us-east-1:ACCOUNTID:ct-changes-use1-a1b2c3" },
+      { action = "sqs:ListQueueTags", resource = "arn:aws:sqs:us-east-1:ACCOUNTID:ct-changes-dlq-use1-a1b2c3" },
+      { action = "events:DescribeRule", resource = "arn:aws:events:us-east-1:ACCOUNTID:rule/ct-changes-use1-a1b2c3" },
+      { action = "events:ListTargetsByRule", resource = "arn:aws:events:us-east-1:ACCOUNTID:rule/ct-changes-use1-a1b2c3" },
+      { action = "events:ListTagsForResource", resource = "arn:aws:events:us-east-1:ACCOUNTID:rule/ct-changes-use1-a1b2c3" },
+      { action = "cloudtrail:DescribeTrails", resource = "*" },
+      { action = "cloudtrail:GetTrail", resource = "arn:aws:cloudtrail:us-east-1:ACCOUNTID:trail/ct-trail-use1-a1b2c3" },
+      { action = "cloudtrail:GetTrailStatus", resource = "arn:aws:cloudtrail:us-east-1:ACCOUNTID:trail/ct-trail-use1-a1b2c3" },
+      { action = "cloudtrail:GetEventSelectors", resource = "arn:aws:cloudtrail:us-east-1:ACCOUNTID:trail/ct-trail-use1-a1b2c3" },
+      { action = "cloudtrail:ListTags", resource = "arn:aws:cloudtrail:us-east-1:ACCOUNTID:trail/ct-trail-use1-a1b2c3" },
+      { action = "s3:ListBucket", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" }, # HeadBucket
+      { action = "s3:GetBucketPolicy", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      { action = "s3:GetBucketAcl", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      { action = "s3:GetBucketVersioning", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      { action = "s3:GetBucketOwnershipControls", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      { action = "s3:GetBucketPublicAccessBlock", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      { action = "s3:GetEncryptionConfiguration", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      { action = "s3:GetLifecycleConfiguration", resource = "arn:aws:s3:::ct-trail-logs-use1-a1b2c3" },
+      # Refresh: ACM and its validation record (DOMAIN)
+      { action = "acm:DescribeCertificate", resource = "arn:aws:acm:us-east-1:ACCOUNTID:certificate/example" },
+      { action = "acm:ListTagsForCertificate", resource = "arn:aws:acm:us-east-1:ACCOUNTID:certificate/example" },
+      { action = "route53:ListResourceRecordSets", resource = "arn:aws:route53:::hostedzone/Z0EXAMPLE" },
+      { action = "route53:GetChange", resource = "arn:aws:route53:::change/C0EXAMPLE" },
+    ]
+  }
+
+  assert {
+    condition = length([
+      for r in var.expected_reads : r
+      if !anytrue([
+        for s in jsondecode(data.aws_iam_policy_document.gh_plan.json).Statement :
+        s.Effect == "Allow"
+        && anytrue([for a in flatten([s.Action]) : can(regex("^${replace(a, "*", ".*")}$", r.action))])
+        && anytrue([for res in flatten([try(s.Resource, [])]) : can(regex("^${replace(replace(res, ".", "\\."), "*", ".*")}$", r.resource))])
+      ])
+    ]) == 0
+    error_message = "The plan role can't make these reads: ${join("; ", [
+      for r in var.expected_reads : "${r.action} on ${r.resource}"
+      if !anytrue([
+        for s in jsondecode(data.aws_iam_policy_document.gh_plan.json).Statement :
+        s.Effect == "Allow"
+        && anytrue([for a in flatten([s.Action]) : can(regex("^${replace(a, "*", ".*")}$", r.action))])
+        && anytrue([for res in flatten([try(s.Resource, [])]) : can(regex("^${replace(replace(res, ".", "\\."), "*", ".*")}$", r.resource))])
+      ])
+    ])}"
+  }
+
+  # The apply role refreshes the same data sources and resources through its read policy.
+  assert {
+    condition     = local.gh_apply_policies.read == data.aws_iam_policy_document.project_read.json && data.aws_iam_policy_document.gh_plan.json == data.aws_iam_policy_document.project_read.json
+    error_message = "The plan role and the apply role's read policy must both be project_read."
+  }
+
+  assert {
+    condition = length([
+      for r in var.expected_reads : r
+      if !anytrue([
+        for s in jsondecode(data.aws_iam_policy_document.boundary.json).Statement :
+        s.Effect == "Allow"
+        && anytrue([for a in flatten([s.Action]) : can(regex("^${replace(a, "*", ".*")}$", r.action))])
+        && anytrue([for res in flatten([try(s.Resource, [])]) : can(regex("^${replace(replace(res, ".", "\\."), "*", ".*")}$", r.resource))])
+      ])
+    ]) == 0
+    error_message = "The boundary blocks these reads: ${join("; ", [
+      for r in var.expected_reads : "${r.action} on ${r.resource}"
+      if !anytrue([
+        for s in jsondecode(data.aws_iam_policy_document.boundary.json).Statement :
+        s.Effect == "Allow"
+        && anytrue([for a in flatten([s.Action]) : can(regex("^${replace(a, "*", ".*")}$", r.action))])
+        && anytrue([for res in flatten([try(s.Resource, [])]) : can(regex("^${replace(replace(res, ".", "\\."), "*", ".*")}$", r.resource))])
+      ])
+    ])}"
+  }
+}
