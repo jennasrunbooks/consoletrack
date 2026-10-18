@@ -42,6 +42,32 @@ variable "github_repo" {
   }
 }
 
+# GitHub OIDC tokens can name the repo by numeric ID: repo:<owner>@<owner_id>/<repo>@<repo_id>:...
+# A deleted or renamed repo can't reuse those IDs. Set both to trust that form; with either empty
+# the roles trust the classic repo:<owner>/<repo>:... form. Not secret:
+#   gh api repos/<owner>/<repo> --jq '.owner.id, .id'
+variable "github_owner_id" {
+  description = "Numeric GitHub ID of GITHUB_REPO's owner. With github_repo_id set too, the CI roles trust the ID-based sub."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.github_owner_id))
+    error_message = "github_owner_id must be GitHub's numeric owner ID (gh api repos/<owner>/<repo> --jq .owner.id), or empty."
+  }
+}
+
+variable "github_repo_id" {
+  description = "Numeric GitHub ID of GITHUB_REPO. With github_owner_id set too, the CI roles trust the ID-based sub."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.github_repo_id))
+    error_message = "github_repo_id must be GitHub's numeric repository ID (gh api repos/<owner>/<repo> --jq .id), or empty."
+  }
+}
+
 variable "operator_arn" {
   description = "IAM role or user ARN allowed to assume the demo developer role. Empty = the identity running Terraform (an assumed-role session is resolved to its role). Set it before CI applies this root, or the trust would switch to the CI role."
   type        = string
