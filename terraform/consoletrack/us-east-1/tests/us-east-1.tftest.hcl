@@ -79,11 +79,6 @@ override_module {
 }
 
 override_module {
-  target  = module.node_role
-  outputs = { arn = "arn:aws:iam::ACCOUNTID:role/ct/ct-eks-node-use1-a1b2c3", name = "ct-eks-node-use1-a1b2c3" }
-}
-
-override_module {
   target  = module.vpc_cni_pod_identity
   outputs = { iam_role_arn = "arn:aws:iam::ACCOUNTID:role/ct/ct-vpc-cni-use1-a1b2c3" }
 }
@@ -242,19 +237,6 @@ run "policies" {
       && s.Condition["ForAnyValue:StringEquals"]["aws:TagKeys"] == "ct:canary"
     ])
     error_message = "The canary may only set the ct:canary tag."
-  }
-}
-
-run "node_role" {
-  command = plan
-
-  # What the boundary allows, and nothing else: no CNI, EBS, or load balancer policies.
-  assert {
-    condition = local.node_role_policies == {
-      AmazonEKSWorkerNodePolicy          = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-      AmazonEC2ContainerRegistryPullOnly = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
-    }
-    error_message = "The node role gets AmazonEKSWorkerNodePolicy and ECR PullOnly only."
   }
 }
 

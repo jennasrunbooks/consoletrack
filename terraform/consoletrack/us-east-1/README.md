@@ -20,7 +20,7 @@ State key: `consoletrack/us-east-1/terraform.tfstate`. Names: `ct-<component>-us
 | `eks.tf` | EKS cluster (API auth mode, upgrade policy STANDARD, no IRSA, no KMS key, no control-plane logs) | always | `ct-eks-use1-<suffix>` |
 | `eks.tf` | Managed add-ons: `eks-pod-identity-agent` and `vpc-cni` (before nodes), `kube-proxy`, `coredns`, `aws-ebs-csi-driver` | always | |
 | `eks.tf` | Managed node group: `NODE_INSTANCE_TYPE` (arm64 AL2023), Spot when `USE_SPOT`, 2 nodes (1–3), private subnets | always | `ct-nodes-use1-<suffix>` |
-| `eks.tf` | Cluster and node IAM roles under `/ct/` with the boundary (node role created outside the EKS module, so it can attach ECR PullOnly) | always | `ct-eks-{cluster,node}-use1-<suffix>` |
+| `eks.tf` | Cluster and node IAM roles under `/ct/` with the boundary | always | `ct-eks-{cluster,node}-use1-<suffix>` |
 | `eks.tf` | Access entries: the operator (cluster admin); CI's deploy role → Kubernetes group `consoletrack-deployers` | deploy entry with `ENABLE_GITHUB_OIDC=true` | |
 | `pod-identity.tf` | Pod Identity roles + associations (below) | | `ct-<component>-use1-<suffix>` |
 | `intake.tf` | CloudTrail trail: single region, write management events, global service events, log file validation | always | `ct-trail-use1-<suffix>` |
@@ -38,8 +38,7 @@ validation record).
 
 Every role is under `/ct/`, carries the `ct-boundary-<suffix>` boundary, trusts only
 `pods.eks.amazonaws.com`, and is bound to one `namespace:serviceaccount`. The node role has only
-`AmazonEKSWorkerNodePolicy` and `AmazonEC2ContainerRegistryPullOnly`, the same pulls the boundary
-allows; pods can't reach IMDS (hop limit 1).
+`AmazonEKSWorkerNodePolicy` and ECR read-only; pods can't reach IMDS (hop limit 1).
 
 | Role | Service account | Permissions |
 |---|---|---|
