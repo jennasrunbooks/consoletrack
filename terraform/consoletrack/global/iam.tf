@@ -9,7 +9,15 @@ locals {
   boundary_name = "${local.name_prefix}-boundary-${var.name_suffix}"
   boundary_arn  = "${local.iam_arn}:policy/ct/${local.boundary_name}"
 
-  github_oidc_host         = "token.actions.githubusercontent.com"
+  github_oidc_host = "token.actions.githubusercontent.com"
+
+  # The repo part of the trusted sub: ID-based when both IDs are set, classic otherwise.
+  github_repo_parts = split("/", var.github_repo)
+  github_sub_repo = (
+    var.github_owner_id != "" && var.github_repo_id != "" && length(local.github_repo_parts) == 2
+    ? "${local.github_repo_parts[0]}@${var.github_owner_id}/${local.github_repo_parts[1]}@${var.github_repo_id}"
+    : var.github_repo
+  )
   github_oidc_provider_arn = "${local.iam_arn}:oidc-provider/${local.github_oidc_host}"
 
   # The only IAM paths project roles may create or change (product-spec.md → Name).
@@ -856,7 +864,7 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.github_oidc_host}:sub"
-      values   = ["repo:${var.github_repo}:environment:consoletrack-${each.key}"]
+      values   = ["repo:${local.github_sub_repo}:environment:consoletrack-${each.key}"]
     }
 
     condition {

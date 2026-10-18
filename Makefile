@@ -62,9 +62,9 @@ check_env = @missing="$(strip $(foreach v,$(1),$(if $(filter-out op://%,$(strip 
 # are deliberately absent: they go to Kubernetes Secrets, never into Terraform state. Only
 # non-empty values are exported, so Terraform falls back to the variable's default otherwise.
 # ALLOWED_CIDRS and WATCHED_IAM_PATHS stay comma-separated strings; the roots split them.
-TF_INPUTS := AWS_REGION NAME_SUFFIX GITHUB_REPO ENABLE_GITHUB_OIDC OPERATOR_ARN K8S_VERSION \
-	USE_SPOT NODE_INSTANCE_TYPE EXPOSURE ALLOWED_CIDRS DOMAIN DNS_PARENT ENABLE_BUDGET \
-	BUDGET_LIMIT_USD BUDGET_EMAIL WATCHED_IAM_PATHS
+TF_INPUTS := AWS_REGION NAME_SUFFIX GITHUB_REPO GITHUB_OWNER_ID GITHUB_REPO_ID ENABLE_GITHUB_OIDC \
+	OPERATOR_ARN K8S_VERSION USE_SPOT NODE_INSTANCE_TYPE EXPOSURE ALLOWED_CIDRS DOMAIN DNS_PARENT \
+	ENABLE_BUDGET BUDGET_LIMIT_USD BUDGET_EMAIL WATCHED_IAM_PATHS
 tf_var = TF_VAR_$(shell echo '$(1)' | tr '[:upper:]' '[:lower:]')
 $(foreach v,$(TF_INPUTS),$(if $(strip $($v)),$(eval export $(call tf_var,$v) = $$($v))))
 

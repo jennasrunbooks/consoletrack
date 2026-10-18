@@ -60,6 +60,8 @@ suffix. Don't copy ARNs by hand.
 | `consoletrack-revert` | `ct-gh-revert-<suffix>` | `repo:<GITHUB_REPO>:environment:consoletrack-revert` |
 | `consoletrack-deploy` | `ct-gh-deploy-<suffix>` | `repo:<GITHUB_REPO>:environment:consoletrack-deploy` |
 
+The trusted `sub` has two forms: with `GITHUB_OWNER_ID` and `GITHUB_REPO_ID` both set it is `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:consoletrack-<env>` (a deleted or renamed repo can't reuse the IDs), otherwise the classic `repo:<owner>/<repo>:environment:consoletrack-<env>`; get the IDs with `gh api repos/<owner>/<repo> --jq '.owner.id, .id'`.
+
 Give `consoletrack-apply` and `consoletrack-revert` required reviewers; that approval is what gates
 every apply and revert.
 
