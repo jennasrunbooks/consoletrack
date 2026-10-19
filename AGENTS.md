@@ -13,6 +13,26 @@ incidents (e.g. `AccessDenied`) back to the change that likely caused them. Revi
 (gated GitHub workflow re-applies Terraform), **Codify** (Phase 2 PR), or **Accept** with a note.
 The triage agent only reads.
 
+## Where to read more
+
+This file is the entry point. Read the doc for the area you're working in before starting an issue.
+
+| Doc | Read it when |
+|---|---|
+| [product-spec.md](product-spec.md) | Always: the section your issue names. What to build and why |
+| [docs/agent-team.md](docs/agent-team.md) | Before your first issue: roles, how an issue becomes a merged PR, the rules for parallel agents |
+| [docs/architecture.md](docs/architecture.md) | Backend work: layers, state machines, database |
+| [docs/permissions.md](docs/permissions.md) | Anything touching IAM, RBAC, tokens, or guardrails; includes the accepted gaps |
+| [docs/agent-extension-pack.md](docs/agent-extension-pack.md) | Changing hooks, skills, the subagent, or MCP wiring |
+| [docs/observability.md](docs/observability.md) | Adding a span, metric, log field, or alert; the privacy allowlist |
+| [docs/remediation-graduation.md](docs/remediation-graduation.md) | Changing the policy gate or adding a remediation kind |
+| [openapi.yaml](openapi.yaml) | Any API change: update it first |
+| [terraform/consoletrack/global/README.md](terraform/consoletrack/global/README.md), [terraform/consoletrack/us-east-1/README.md](terraform/consoletrack/us-east-1/README.md) | Terraform work: bootstrap order, roles, naming, the intake pattern |
+| [helm/README.md](helm/README.md) | Helmfile releases, environments, values |
+| [backend/README.md](backend/README.md) | Running and testing the backend |
+| [docs/proposed-workflows/](docs/proposed-workflows/) | You need a workflow change (you can't edit `.github/workflows/`) |
+
+
 ## Stack
 
 | Area | Stack | Location |
