@@ -94,8 +94,24 @@ def _load(text: str) -> list[dict]:
     return [doc for doc in yaml.safe_load_all(text) if doc]
 
 
-def helm_template(release: str, namespace: str, chart: str, values: dict) -> list[dict]:
-    """`helm template` one of our charts with these values (needs helm, not helmfile)."""
+class DuplicateKeyLoader(yaml.SafeLoader):
+    """SafeLoader that fails on a key repeated in one mapping, which PyYAML would silently
+    collapse to the last value."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        seen: set = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate key {key!r}", key_node.start_mark
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _render(release: str, namespace: str, chart: str, values: dict) -> str:
+    """Rendered YAML of one of our charts with these values, from plain `helm template`."""
     helm = shutil.which("helm")
     if not helm:
         pytest.fail(
@@ -104,7 +120,7 @@ def helm_template(release: str, namespace: str, chart: str, values: dict) -> lis
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump(values, f)
     try:
-        out = subprocess.run(
+        return subprocess.run(
             [
                 helm,
                 "template",
@@ -121,10 +137,22 @@ def helm_template(release: str, namespace: str, chart: str, values: dict) -> lis
         ).stdout
     finally:
         os.unlink(f.name)
-    docs = _load(out)
+
+
+def helm_template(release: str, namespace: str, chart: str, values: dict) -> list[dict]:
+    """`helm template` one of our charts with these values (needs helm, not helmfile)."""
+    docs = _load(_render(release, namespace, chart, values))
     for doc in docs:
         doc.setdefault("metadata", {}).setdefault("namespace", namespace)
     return docs
+
+
+def helm_template_text(config: str) -> list[tuple[str, str, str]]:
+    """(chart, namespace, rendered YAML) for each of our releases, with plain `helm template`."""
+    return [
+        (chart, namespace, _render(release, namespace, chart, values))
+        for release, namespace, chart, values in _FALLBACK[config]
+    ]
 
 
 def _helm_template(config: str) -> list[dict]:

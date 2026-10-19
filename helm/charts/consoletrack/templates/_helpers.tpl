@@ -8,7 +8,9 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 
 {{/* Labels for one component: (dict "ctx" $ "name" "backend"). */}}
 {{- define "consoletrack.componentLabels" -}}
-{{ include "consoletrack.selectorLabels" . }}
+{{- /* selectorLabels minus instance, which consoletrack.labels already sets: a key twice in one
+mapping is invalid YAML that strict parsers reject. */}}
+app.kubernetes.io/name: {{ .name }}
 {{ include "consoletrack.labels" .ctx }}
 {{- end }}
 

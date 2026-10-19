@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "k8s-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--locked", "--directory", "mcp-server/k8s", "python", "-m", "k8s_mcp"],
+      "env": {
+        "K8S_MCP_TRANSPORT": "stdio",
+        "K8S_CONTEXT": "${K8S_MCP_CONTEXT:-kind-consoletrack}",
+        "K8S_ALLOWED_NAMESPACES": "${K8S_ALLOWED_NAMESPACES:-demo}",
+        "PROMETHEUS_URL": "${K8S_MCP_PROMETHEUS_URL:-}"
+      }
+    }
+  }
+}

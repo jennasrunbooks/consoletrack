@@ -18,6 +18,9 @@ mistakes:
 | `cloudtrail:LookupEvents` on `*` (aws-mcp) | `terraform/consoletrack/us-east-1/pod-identity.tf` | The action has no resource-level permissions | Not possible in IAM; it's a read |
 | `ec2:DescribeSecurityGroups` on `*` (aws-mcp) | same | Same: EC2 describe calls are account-wide | Not possible in IAM; it's a read |
 | EKS API public endpoint open to `0.0.0.0/0` | `terraform/consoletrack/us-east-1/eks.tf` | GitHub-hosted runners deploy through it, and their address ranges don't fit EKS's 40-CIDR limit. Every request still needs IAM authentication and an access entry; nodes use the private endpoint | Narrow `EKS_PUBLIC_ACCESS_CIDRS` (one variable), or turn public access off with a pull-based deploy (spec, Production hardening step 4) |
+| `query_prometheus` isn't namespace-scoped (k8s-mcp) | `mcp-server/k8s/k8s_mcp/tools.py` | Prometheus has no per-namespace access control. k8s-mcp requires at least one `namespace` matcher and refuses any that isn't `namespace="<allowlisted>"`, but a query that also has an unscoped selector (`up{namespace="demo"} or up`) still sees every namespace's metrics. Metrics hold numbers and labels, not Secret data | Put a label-enforcing proxy (prom-label-proxy) in front of Prometheus for k8s-mcp |
+| k8s-mcp's `/mcp` endpoint has no authentication | `mcp-server/k8s/` | Every tool is a read inside the allowlisted namespaces, with RBAC behind it. The chart has no NetworkPolicy yet, so any pod in the cluster can reach the Service | A chart NetworkPolicy admitting only the worker pods to k8s-mcp (and aws-mcp); a shared bearer token or mTLS later |
+| `.mcp.json` runs k8s-mcp with your own kubeconfig | repo root `.mcp.json` | Local kind only (`K8S_CONTEXT`, default `kind-consoletrack`); the in-server checks (namespace allowlist, no Secrets/ConfigMaps, env values redacted) still apply, but RBAC is whatever your context allows | Point `KUBECONFIG` at a kubeconfig for the `k8s-mcp` ServiceAccount's token (see `mcp-server/k8s/README.md` → Local use) |
 
 The node role has AmazonEC2ContainerRegistryReadOnly attached (the module’s default); the permissions boundary limits it to GetAuthorizationToken, BatchGetImage, and GetDownloadUrlForLayer.
 
@@ -115,9 +118,31 @@ ClusterRole or ClusterRoleBinding (`helm/tests/test_rendered.py` checks the rend
 | ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
 | Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create, including Helm's release records (ConfigMaps, `HELM_DRIVER=configmap`); read pods, logs, events; port-forward for the smoke test | Secrets, anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
 
-Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, and the
-canary reach AWS through Pod Identity's own projected token, and the frontend and demo app call
-nothing. `make audit-rbac` prints the effective permissions per ServiceAccount.
+Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, the
+canary, and the demo app (its S3 read) reach AWS through Pod Identity's own projected token, and
+the frontend and the demo app's traffic generator (`demo:demo-app-loadgen`, no Pod Identity
+association; it only calls the `demo-app` Service) call nothing. `make audit-rbac` prints the
+effective permissions per ServiceAccount.
+
+### k8s-mcp: checks inside the server
+
+The triage agent sees the cluster only through `k8s-mcp`. In front of the RBAC above, the
+server itself (`mcp-server/k8s/k8s_mcp/tools.py`) holds each of these on its own if the prompt
+is subverted:
+
+- namespaces outside `K8S_ALLOWED_NAMESPACES` are refused before any API call, and the server
+  won't start with an empty list;
+- `kind=Secret`/`ConfigMap` is refused by name, and the Kubernetes reader has no method that
+  could read either;
+- `get_workload` returns env var names only, and no annotations (`last-applied-configuration`
+  would carry values); container-written termination messages are left out of `get_pods`;
+- logs and events come back in an `untrusted_data` field, redacted (tokens, keys, connection
+  string passwords, private keys), lines capped at 200 and 2,000 characters each;
+- unexpected errors are masked; only the scope refusals' messages reach the model.
+
+`make test-k8s` renders the chart's `rbac-k8s-mcp.yaml` and `serviceaccounts.yaml`, applies them
+to a throwaway kind cluster, and checks every allow and deny in the `k8s-mcp` row with
+`kubectl auth can-i`, so the test proves the RBAC that ships.
 
 ## CI deploy role
 

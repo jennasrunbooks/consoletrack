@@ -11,6 +11,8 @@
       "Bash(make test-compose)",
       "Bash(make test-all)",
       "Bash(make test-frontend)",
+      "Bash(make test-k8s-mcp)",
+      "Bash(make lint-k8s-mcp)",
       "Bash(make lint-hooks)",
       "Bash(make lint-openapi)",
       "Bash(make lint-terraform)",

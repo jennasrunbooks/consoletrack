@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 
 import pytest
-from conftest import APP_CHARTS, chart_of
+import yaml
+from conftest import APP_CHARTS, DuplicateKeyLoader, chart_of, helm_template_text
 
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
 # Secrets the charts may read: created by scripts/create-secrets.sh, or by CloudNativePG.
@@ -307,3 +308,14 @@ def test_exposure(ours: list[dict], config: str) -> None:
 
 def test_charts_are_labelled(app_objects: list[dict]) -> None:
     assert {chart_of(d) for d in app_objects} == set(APP_CHARTS)
+
+
+def test_no_duplicate_keys(config: str) -> None:
+    # PyYAML (and so every other test here) keeps the last of two equal keys; the API server's
+    # strict decoding and other tools reject the manifest. Rendered with plain `helm template`,
+    # our charts only.
+    for chart, _, text in helm_template_text(config):
+        try:
+            list(yaml.load_all(text, Loader=DuplicateKeyLoader))
+        except yaml.constructor.ConstructorError as exc:
+            pytest.fail(f"{chart} ({config}): {exc}")

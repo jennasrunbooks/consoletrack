@@ -1,15 +1,29 @@
+# PROPOSED: a human needs to move this to .github/workflows/ci.yaml, replacing the current file.
+# (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
+#
+# This is an exact copy of the current .github/workflows/ci.yaml (as of #46) plus two new jobs.
+# Neither is meant to be a required check yet, so the ruleset needs no change.
+# - `k8s-mcp-kind` (#10, k8s-mcp PR), at the end: `make test-k8s` against a throwaway kind
+#   cluster with the chart's real k8s-mcp RBAC.
+# - `demo-app-image` (#51), after `frontend-image`: builds the demo app image (amd64, no push),
+#   runs the server and the traffic generator hardened as in the cluster (read-only root, no
+#   capabilities), checks the loadgen's /metrics, and checks the OOM fault's sizing with Docker's
+#   memory limit: 128 MiB allocated is killed under 128m and runs under 256m. Pushing to GHCR
+#   belongs to deploy.yaml. `lint` and `test` need no change: `make lint` and `make test` now
+#   include lint-demo-app and test-demo-app, which use uv (already set up in both jobs).
+#
 # CI for every PR and push to main. Required checks (main ruleset): lint, test, terraform-fmt.
 # Not required: frontend-image and demo-app-image (amd64 builds), e2e (Playwright in Chromium).
 # `test` runs with SKIP_E2E=1 so the browser tests run once, in `e2e`.
 #
-# Changes from the current .github/workflows/ci.yaml (#51, demo-app service):
-# - New `demo-app-image` job builds the demo app image (amd64, no push), the same as
-#   `frontend-image`: it runs the server and the traffic generator hardened as in the cluster
-#   (read-only root, no capabilities), checks both /metrics, and checks the OOM fault's sizing with
-#   Docker's memory limit: 128 MiB allocated is killed under 128m and runs under 256m. Not meant to
-#   be a required check. Pushing to GHCR belongs to deploy.yaml.
-# - `lint` and `test` need no change: `make lint` and `make test` now include lint-demo-app and
-#   test-demo-app, which use uv (already set up in both jobs).
+# Changes from the current .github/workflows/ci.yaml (#13, frontend PR 1):
+# - `lint` and `test` set up Node 24, because `make lint` now runs lint-frontend (ESLint, tsc,
+#   and the openapi.yaml → schema.d.ts check) and `make test` runs test-frontend (Vitest).
+# - New `frontend-image` job builds the dashboard image and checks /healthz. It is not meant to
+#   be a required check.
+# - New `e2e` job runs the Playwright browser tests (`make test-e2e`) in Chromium installed by
+#   Playwright, and uploads the HTML report and traces when it fails. `test` sets SKIP_E2E=1 so
+#   the browser tests run once, in `e2e`. Add `e2e` to the ruleset's required checks if wanted.
 # Job names `lint`, `test`, and `terraform-fmt` are unchanged, so the ruleset needs no change.
 name: ci
 
@@ -232,3 +246,26 @@ jobs:
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down --volumes
+
+  # Not a required check (yet): k8s-mcp's tools against a real API server with the RBAC the
+  # consoletrack chart ships (`kubectl auth can-i` denies Secrets, ConfigMaps, exec, and writes).
+  # scripts/test-k8s.sh renders the RBAC with helm and creates and deletes the kind cluster
+  # itself; kind-action only installs kind and kubectl.
+  k8s-mcp-kind:
+    name: k8s-mcp-kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: "v4.3.1"
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          install_only: true
+      - run: make test-k8s
