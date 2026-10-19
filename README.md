@@ -104,7 +104,7 @@ The session cookie is always `Secure`, with no setting to turn that off. Chrome 
 ### Prerequisites
 
 - An AWS account you can use as a sandbox, with admin access and an AWS CLI profile
-- Terraform ≥ 1.11, AWS CLI v2, kubectl, Helm 3 with the helm-diff plugin, Helmfile, jq, `make`. Or open [.devcontainer/](.devcontainer/), which has them pinned.
+- Terraform ≥ 1.11, AWS CLI v2, kubectl, Helm 4 with the helm-diff plugin, Helmfile, jq, `make`. Or open [.devcontainer/](.devcontainer/), which has them pinned.
 - An Anthropic API key with a monthly spend limit
 - Optional: a domain you control (`DOMAIN`, `DNS_PARENT`). Required only for `EXPOSURE=alb`, because the load balancer serves HTTPS only.
 
@@ -118,7 +118,7 @@ make up                        # Terraform (global, us-east-1, demo-app), then H
 make open                      # port-forwards the dashboard and prints the URL and admin password
 ```
 
-`make up` takes about 20–25 minutes and is safe to rerun. Terraform builds only AWS resources; Helmfile installs everything inside the cluster.
+`make up` takes about 20–25 minutes and is safe to rerun. Terraform is AWS-only; Helmfile owns every chart: it installs everything inside the cluster from [helm/helmfile.yaml.gotmpl](helm/), the add-ons with `make addons` (`helmfile -l tier=addons apply`) and the app with `make deploy` (`helmfile -l tier=app apply`).
 
 ### Optional: GitHub Actions on your fork
 
@@ -149,15 +149,15 @@ make down-all                  # optional: also the global root and the state bu
 
 ## Cost
 
-About **$0.16 per hour** while the cluster is up, about $0.19 with the optional load balancer. Run `make down` when you're done; `global` (IAM roles, DNS zone) costs pennies a month and can stay.
+About **$0.20 per hour** while the cluster is up, about $0.24 with the optional load balancer. Run `make down` when you're done; `global` (IAM roles, DNS zone) costs pennies a month and can stay.
 
 | Item | $/hour |
 |---|---|
 | EKS control plane, standard support | 0.100 |
 | 2× t4g.medium Spot nodes | 0.040 |
-| fck-nat on t4g.nano, plus its public IPv4 | 0.009 |
+| One managed NAT gateway, plus its public IPv4 (and $0.045/GB processed) | 0.050 |
 | EBS gp3, about 60 GB | 0.007 |
-| **Total, default** | **about 0.16** |
+| **Total, default** | **about 0.20** |
 | Optional ALB (`EXPOSURE=alb`) | +0.035 |
 
 Claude usage is per triage run; the default model is Haiku-class. Details and sources: [product-spec.md → AWS design and cost](product-spec.md#aws-design-and-cost).
@@ -177,6 +177,8 @@ Claude usage is per triage run; the default model is Haiku-class. Details and so
 | `K8S_VERSION` | `1.36` | EKS version, in standard support until Aug 2, 2027 |
 | `USE_SPOT` | `true` | Spot nodes; set `false` if you hit capacity errors |
 | `NODE_INSTANCE_TYPE` | `t4g.medium` | Graviton (arm64) nodes |
+| `VPC_CIDR` | `10.0.0.0/16` | VPC range; change it only if it overlaps a network you connect to |
+| `EKS_PUBLIC_ACCESS_CIDRS` | `0.0.0.0/0` | Who can reach the EKS API's public endpoint (IAM still required); keep it open while CI deploys from GitHub-hosted runners |
 | `EXPOSURE` | `port-forward` | `port-forward` (nothing public) or `alb` (needs `DOMAIN`) |
 | `ALLOWED_CIDRS` | your IP | Who can reach the ALB |
 | `DOMAIN` | | HTTPS hostname, e.g. `consoletrack.example.com` |
@@ -243,7 +245,7 @@ Conventions for humans and coding agents: [AGENTS.md](AGENTS.md). The devcontain
 
 ```bash
 make help                      # every target
-make lint                      # ruff, OpenAPI validation, terraform fmt, helmfile lint
+make lint                      # ruff, OpenAPI validation, shellcheck, helmfile lint, no Terraform helm/kubernetes provider
 make test                      # unit and contract tests, no network or API key needed
 make tf-validate               # terraform init -backend=false + validate for every root
 ```
@@ -305,7 +307,7 @@ consoletrack/
 
 - **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; gated Revert; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; two cloud scenarios (security group opened, demo role permission removed) and three cluster faults; the dashboard; EKS via Terraform and Helmfile; CI/CD; the agent extension pack.
 - **Phase 2 (Nov 16):** Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); Slack and analytics; auto-remediation for the cluster OOM scenario after it graduates.
-- **Later:** managed NAT, Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
+- **Later:** a NAT gateway per AZ, or fck-nat as a raw NAT instance under `/ct/` to cut the NAT cost; Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
 
 ## Course rubric mapping
 

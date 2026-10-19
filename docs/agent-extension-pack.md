@@ -39,6 +39,8 @@ Claude Code shows that message to the agent instead of running the call.
 | Terraform writes | `apply`, `destroy`, `import`, `taint`, `untaint`, `force-unlock`, `refresh`, `state rm/mv/push/replace-provider`, `workspace new/delete/select` | 1 |
 | Mutating `kubectl` | `apply`, `create`, `delete`, `edit`, `patch`, `replace`, `scale`, `rollout` (except `status`/`history`), `label`, `annotate`, `drain`, `cordon`, `exec`, `cp`, `run`, … | 1 |
 | Mutating `helm` | `install`, `upgrade`, `uninstall`, `rollback`, `test` | 1 |
+| Mutating `helmfile` | anything but a known read (`lint`, `template`, `diff`, `deps`, `build`, `list`, `version`, `write-values`, …): `apply`, `sync`, `destroy`, `delete`, `init`, `test`, after any global flags (`-e`, `-l`, `--file`); helm write verbs passed through `--` or `--args` | 1 |
+| Terraform `helm`/`kubernetes` provider | an `Edit`/`Write`/`MultiEdit` of a `*.tf` file that adds `provider "helm"`, `provider "kubernetes"`, `hashicorp/helm`, or `hashicorp/kubernetes` (Terraform is AWS-only; Helmfile owns every chart) | 1 |
 | AWS writes | anything that isn't a read (`describe-*`, `get-*`, `list-*`, `lookup-*`, `simulate-*`, …); `aws s3` except `ls` | 1 |
 | AWS credential setup | `aws configure`, `aws sso login`, `aws login`, `sts assume-role*`, `eks update-kubeconfig`, `get-session-token`, … | 2 |
 | `eksctl` | any subcommand | 1 |

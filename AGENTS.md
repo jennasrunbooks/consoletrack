@@ -13,6 +13,26 @@ incidents (e.g. `AccessDenied`) back to the change that likely caused them. Revi
 (gated GitHub workflow re-applies Terraform), **Codify** (Phase 2 PR), or **Accept** with a note.
 The triage agent only reads.
 
+## Where to read more
+
+This file is the entry point. Read the doc for the area you're working in before starting an issue.
+
+| Doc | Read it when |
+|---|---|
+| [product-spec.md](product-spec.md) | Always: the section your issue names. What to build and why |
+| [docs/agent-team.md](docs/agent-team.md) | Before your first issue: roles, how an issue becomes a merged PR, the rules for parallel agents |
+| [docs/architecture.md](docs/architecture.md) | Backend work: layers, state machines, database |
+| [docs/permissions.md](docs/permissions.md) | Anything touching IAM, RBAC, tokens, or guardrails; includes the accepted gaps |
+| [docs/agent-extension-pack.md](docs/agent-extension-pack.md) | Changing hooks, skills, the subagent, or MCP wiring |
+| [docs/observability.md](docs/observability.md) | Adding a span, metric, log field, or alert; the privacy allowlist |
+| [docs/remediation-graduation.md](docs/remediation-graduation.md) | Changing the policy gate or adding a remediation kind |
+| [openapi.yaml](openapi.yaml) | Any API change: update it first |
+| [terraform/consoletrack/global/README.md](terraform/consoletrack/global/README.md), [terraform/consoletrack/us-east-1/README.md](terraform/consoletrack/us-east-1/README.md) | Terraform work: bootstrap order, roles, naming, the intake pattern |
+| [helm/README.md](helm/README.md) | Helmfile releases, environments, values |
+| [backend/README.md](backend/README.md) | Running and testing the backend |
+| [docs/proposed-workflows/](docs/proposed-workflows/) | You need a workflow change (you can't edit `.github/workflows/`) |
+
+
 ## Stack
 
 | Area | Stack | Location |
@@ -22,7 +42,8 @@ The triage agent only reads.
 | MCP servers | FastMCP (streamable HTTP), read-only | `mcp-server/k8s/`, `mcp-server/aws/` |
 | Frontend | React + Vite + TypeScript | `frontend/` |
 | Database | Postgres (CloudNativePG in cluster, Compose/Testcontainers locally) | — |
-| Infra | Terraform ≥ 1.11, terraform-aws-modules, EKS, Helm | `terraform/`, `helm/` |
+| Infra | Terraform ≥ 1.11, terraform-aws-modules, EKS (AWS only) | `terraform/` |
+| Cluster releases | Helmfile + Helm 4 (with helm-diff); every chart, ours and third-party | `helm/` |
 | CI/CD | GitHub Actions with OIDC to AWS | `.github/workflows/` (human-edited only, see below) |
 
 Images are built for **arm64** (Graviton nodes). amd64 is only for local Compose.
@@ -44,7 +65,8 @@ mcp-server/k8s/            # k8s-mcp
 mcp-server/aws/            # aws-mcp (+ fixtures mode for demo-replay)
 frontend/src/api/          # the ONLY place the frontend calls the backend
 terraform/<account>/<global|region>/   # consoletrack/{global,us-east-1}, demo-app/us-east-1
-helm/{consoletrack,demo-app,addons}/
+helm/helmfile.yaml.gotmpl  # every release (tier=addons|app), pinned chart versions, environments
+helm/charts/{consoletrack,demo-app,gateway-api-crds}/  helm/values/  helm/environments/
 scripts/  scripts/scenarios/
 agent-capabilities/  agent-hooks/  custom-agent/  docs/
 ```
@@ -60,6 +82,7 @@ Run from the repo root unless noted. Prefer `make` targets over ad-hoc commands.
 | Backend tests directly | `cd backend && uv run pytest -m "not integration"` |
 | Integration tests (needs Docker) | `cd backend && uv run pytest -m integration` |
 | Frontend | `cd frontend && npm ci && npm run lint && npm test` |
+| Helm checks (no cluster calls) | `make helm-lint` (`helmfile lint`; part of `make lint`) |
 | Terraform checks (no AWS calls) | `terraform fmt -check -recursive terraform/` and `terraform -chdir=terraform/<account>/<root> validate` |
 | Local stack without AWS | `make demo-replay` |
 
@@ -73,8 +96,9 @@ These are enforced by `.claude/settings.json`, hooks in `agent-hooks/`, the agen
 and the `main` ruleset. Don't try to work around a block — report it.
 
 1. **Never change real infrastructure.** No `terraform apply`/`destroy`/`import`/`state` writes, no
-   `kubectl apply|create|delete|edit|patch|scale`, no `helm install|upgrade|uninstall`, no AWS CLI or
-   SDK calls that write. Infra changes ship as code in a PR; CI posts the plan and a human applies.
+   `kubectl apply|create|delete|edit|patch|scale`, no `helm install|upgrade|uninstall`, no
+   `helmfile apply|sync|destroy|delete|init`, no AWS CLI or SDK calls that write. Infra changes
+   ship as code in a PR; CI posts the plan and a human applies.
 2. **You have no AWS or cluster credentials, and that is intended.** Don't ask for them, don't look
    for them in `~/.aws`, `~/.kube`, or environment variables.
 3. **Never read or print `.env` or `.env.*`** (`.env.example` is fine). Never put secrets, API keys,
@@ -116,6 +140,18 @@ and the `main` ruleset. Don't try to work around a block — report it.
 - IAM: least privilege, scoped to resource ARNs where the service allows it, no `*:*`. Explain any
   wildcard in a comment.
 - Commit `.terraform.lock.hcl`.
+
+**Helm**
+- Terraform is AWS-only; Helmfile owns every chart. Every release, third-party and ours, lives in
+  `helm/helmfile.yaml.gotmpl` with a `tier=addons` or `tier=app` label. Environments are deployment
+  targets (`eks` default, `local` for kind), not apps.
+- Chart versions are pinned. Values come from `helm/values/` (third-party), the chart's own
+  `values.yaml` (ours: `helm/charts/<chart>/values.yaml`), and the generated environment file
+  (`helm/environments/values.generated.yaml`, from `.env`, gitignored).
+- **Never** add the Terraform `helm` or `kubernetes` provider. The guard rejects it in `*.tf`
+  edits and `make lint` (`lint-terraform-providers`) fails on it.
+- `make addons` (`helmfile -l tier=addons apply`) and `make deploy` (`helmfile -l tier=app apply`)
+  are for humans and CI; the CI deploy role only ever runs `-l tier=app`.
 
 **Backend**
 - OpenAPI first: change `openapi.yaml` before (or in the same PR as) any route, schema, or enum change.
