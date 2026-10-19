@@ -66,7 +66,9 @@ def name(workload: dict, container: dict) -> str:
 
 def test_renders_our_workloads(ours: list[dict], config: str) -> None:
     names = {d["metadata"]["name"] for d in ours if d["kind"] == "Deployment"}
-    assert names >= {"backend", "worker", "frontend", "k8s-mcp", "aws-mcp", "demo-app"}
+    assert names >= {
+        "backend", "worker", "frontend", "k8s-mcp", "aws-mcp", "demo-app", "demo-app-loadgen",
+    }  # fmt: skip
     has_canary = any(
         d["kind"] == "CronJob" and d["metadata"]["name"] == "canary" for d in ours
     )

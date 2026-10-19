@@ -87,6 +87,13 @@ BACKEND_RUN ?= cd backend && uv run --locked
 # The frontend's locked node_modules (frontend/package-lock.json), installed on demand below.
 FRONTEND_RUN ?= cd frontend && npm run --silent
 FRONTEND_DEPS := frontend/node_modules/.package-lock.json
+# The demo workload's own locked environment (demo-app/uv.lock).
+DEMO_APP_RUN ?= cd demo-app && uv run --locked
+# The tag the Helmfile `local` environment deploys (helm/environments/local.yaml → imageTag).
+DEMO_APP_IMAGE := ghcr.io/jennasrunbooks/consoletrack-demo-app:local
+DOCKER ?= docker
+KIND ?= kind
+KIND_CLUSTER ?= consoletrack
 
 # Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
 HELMFILE_STATE := helm/helmfile.yaml.gotmpl
@@ -118,8 +125,8 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks test-terraform lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers \
-	lint-shell lint-frontend lint-compose helm-lint helm-test db-sql hash-password \
-	test-all test-backend test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
+	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
+	test-all test-backend test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
 	local local-down demo demo-replay demo-drift demo-identity revert eval audit-rbac
@@ -131,15 +138,15 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend lint-compose ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-demo-app lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend lint-compose ## Lint and format checks (run before every commit)
 
-test: test-hooks test-backend test-contract test-terraform test-compose test-frontend ## Unit and contract tests (run before every commit)
+test: test-hooks test-backend test-demo-app test-contract test-terraform test-compose test-frontend ## Unit and contract tests (run before every commit)
 
 test-all: test test-integration ## Every automated test: unit, contract, frontend, and integration (needs Docker)
 
 fmt: ## Format Python and Terraform in place
-	$(RUFF) format agent-hooks backend
-	$(RUFF) check --fix-only --select I backend
+	$(RUFF) format agent-hooks backend demo-app
+	$(RUFF) check --fix-only --select I backend demo-app
 	@if command -v $(TERRAFORM) >/dev/null; then $(TERRAFORM) fmt -recursive terraform/; \
 		else echo "terraform not installed; skipped terraform fmt" >&2; fi
 
@@ -150,6 +157,10 @@ lint-hooks: ## ruff check + format check for agent-hooks/
 lint-backend: ## ruff check + format check for backend/ (config in backend/pyproject.toml)
 	$(RUFF) check backend
 	$(RUFF) format --check backend
+
+lint-demo-app: ## ruff check + format check for demo-app/ (config in demo-app/pyproject.toml)
+	$(RUFF) check demo-app
+	$(RUFF) format --check demo-app
 
 lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 	$(OPENAPI_VALIDATOR) openapi.yaml
@@ -244,6 +255,9 @@ test-backend: ## Backend unit tests, with app/services/ coverage >= 90%
 	$(BACKEND_RUN) pytest tests/unit -q -m "not integration" \
 		--cov=app/services --cov-report=term-missing --cov-fail-under=90
 
+test-demo-app: ## Demo app and traffic generator unit tests (loopback fakes only, no AWS)
+	$(DEMO_APP_RUN) pytest -q
+
 test-contract: ## FastAPI schema matches openapi.yaml
 	$(BACKEND_RUN) pytest tests/contract -q
 
@@ -252,6 +266,9 @@ test-compose: ## docker-compose.yaml invariants: loopback ports, no literal secr
 
 test-integration: ## Backend integration tests on Postgres: Testcontainers (Docker) or CT_TEST_DATABASE_URL
 	$(BACKEND_RUN) pytest tests/integration -q -m integration
+
+demo-app-image: ## Build the demo app image (consoletrack-demo-app:local) for this machine's architecture
+	$(DOCKER) build -t $(DEMO_APP_IMAGE) demo-app/
 
 db-sql: ## Print the full schema migration as SQL, offline (no database needed)
 	$(BACKEND_RUN) alembic upgrade head --sql
@@ -383,13 +400,19 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 # The kind half (kube-prometheus-stack and demo-app from the Helmfile `local` environment,
 # Alertmanager pointed at the Compose backend) and the worker and MCP services follow once #12,
 # #9, and #10 land; see #15.
-local: env-check-local ## Compose stack, no AWS: Postgres, ElasticMQ, backend, dashboard (kind part: #12)
+local: env-check-local ## Compose stack, no AWS (Postgres, ElasticMQ, backend, dashboard); loads demo-app into kind if one runs
 	$(COMPOSE) up --build --wait
 	@echo "make $@: dashboard http://localhost:$(or $(DASHBOARD_PORT),8080), API http://localhost:$(or $(BACKEND_PORT),8000)"
 	@if pw=$$($(COMPOSE) exec -T backend cat /run/consoletrack/admin-password 2>/dev/null); then \
 		echo "make $@: log in as admin with the generated local password: $$pw"; \
 	else \
 		echo "make $@: log in as admin with the password for ADMIN_PASSWORD_HASH in $(ENV_FILE)"; \
+	fi
+	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(KIND_CLUSTER); then \
+		$(MAKE) --no-print-directory demo-app-image && \
+		$(KIND) load docker-image $(DEMO_APP_IMAGE) --name $(KIND_CLUSTER); \
+	else \
+		echo "make $@: no kind cluster '$(KIND_CLUSTER)'; skipped loading $(DEMO_APP_IMAGE) into kind"; \
 	fi
 
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present

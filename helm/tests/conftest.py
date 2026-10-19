@@ -94,38 +94,41 @@ def _load(text: str) -> list[dict]:
     return [doc for doc in yaml.safe_load_all(text) if doc]
 
 
-def _helm_template(config: str) -> list[dict]:
+def helm_template(release: str, namespace: str, chart: str, values: dict) -> list[dict]:
+    """`helm template` one of our charts with these values (needs helm, not helmfile)."""
     helm = shutil.which("helm")
     if not helm:
         pytest.fail(
             "neither HELM_RENDER_DIR (from `make helm-lint`) nor helm is available"
         )
-    docs: list[dict] = []
-    for release, namespace, chart, values in _FALLBACK[config]:
-        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
-            yaml.safe_dump(values, f)
-        try:
-            out = subprocess.run(
-                [
-                    helm,
-                    "template",
-                    release,
-                    str(CHARTS / chart),
-                    "-n",
-                    namespace,
-                    "-f",
-                    f.name,
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-        finally:
-            os.unlink(f.name)
-        for doc in _load(out):
-            doc.setdefault("metadata", {}).setdefault("namespace", namespace)
-            docs.append(doc)
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(values, f)
+    try:
+        out = subprocess.run(
+            [
+                helm,
+                "template",
+                release,
+                str(CHARTS / chart),
+                "-n",
+                namespace,
+                "-f",
+                f.name,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    finally:
+        os.unlink(f.name)
+    docs = _load(out)
+    for doc in docs:
+        doc.setdefault("metadata", {}).setdefault("namespace", namespace)
     return docs
+
+
+def _helm_template(config: str) -> list[dict]:
+    return [doc for args in _FALLBACK[config] for doc in helm_template(*args)]
 
 
 @pytest.fixture(scope="session", params=CONFIGS)

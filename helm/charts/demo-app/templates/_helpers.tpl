@@ -1,5 +1,9 @@
 {{- define "demo-app.labels" -}}
 {{ include "demo-app.selectorLabels" . }}
+{{ include "demo-app.commonLabels" . }}
+{{- end }}
+
+{{- define "demo-app.commonLabels" -}}
 app.kubernetes.io/part-of: demo-app
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
@@ -8,6 +12,18 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- define "demo-app.selectorLabels" -}}
 app.kubernetes.io/name: demo-app
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- /* A different app.kubernetes.io/name, so the demo-app Service never selects these pods. */}}
+{{- define "demo-app.loadgenSelectorLabels" -}}
+app.kubernetes.io/name: demo-app-loadgen
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "demo-app.loadgenLabels" -}}
+{{ include "demo-app.loadgenSelectorLabels" . }}
+app.kubernetes.io/component: loadgen
+{{ include "demo-app.commonLabels" . }}
 {{- end }}
 
 {{- define "demo-app.validate" -}}

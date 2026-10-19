@@ -284,6 +284,7 @@ consoletrack/
 ├── compose/                   # Compose config: ElasticMQ queues, the dashboard's /api route
 ├── backend/                   # FastAPI API, intake worker, triage agent (Python, uv)
 ├── frontend/                  # React + Vite + TypeScript dashboard
+├── demo-app/                  # the demo workload and its traffic generator (Python, uv)
 ├── mcp-server/
 │   ├── k8s/                   # k8s-mcp: read-only Kubernetes tools
 │   └── aws/                   # aws-mcp: read-only AWS tools, fixtures mode
