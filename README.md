@@ -4,7 +4,7 @@
 
 Someone opens the AWS console (or the CLI, CloudShell, an SDK script, or a local `terraform apply`), changes a security group, and moves on. Nobody records why. A week later a pod gets `AccessDenied` and the on-call engineer starts from scratch.
 
-ConsoleTrack catches every out-of-band AWS change within minutes, records who made it, how, and to which Terraform-managed resource, and links later EKS incidents back to the change that most likely caused them. A reviewer can **Revert** it (a gated GitHub workflow re-applies the reviewed Terraform), **Codify** it (open a PR adopting it, Phase 2), or **Accept** it with a note. Either way the change ends up documented. The triage agent only reads; every fix needs a human's approval.
+ConsoleTrack catches every out-of-band AWS change within minutes, records who made it, how, and to which Terraform-managed resource, and links later EKS incidents back to the change that most likely caused them. A reviewer can **Revert** it (a gated GitHub workflow re-applies the reviewed Terraform), **Codify** it (open a PR adopting it, Phase 2), or **Accept** it with a note. Either way the change ends up documented. The triage agent only reads. AWS-side fixes always need a human's approval; one narrow cluster fix, raising a memory limit after an OOM kill, is applied automatically, verified, and rolled back if it doesn't work.
 
 ![ConsoleTrack change log](docs/mockups/change-log.png)
 
@@ -66,13 +66,13 @@ flowchart TB
   awsmcp -- read-only APIs --> aws
 ```
 
-The agent only reads; every fix goes through an approval (thick arrows).
+The agent only reads; every fix goes through the policy gate (thick arrows).
 
 1. **Intake.** A CloudTrail trail feeds an EventBridge rule that keeps write events from people and scripts and drops pipeline sessions (`gh-<run id>`), AWS services acting on your behalf, and ConsoleTrack's own controllers. Matches land in an SQS queue with a dead-letter queue.
 2. **Change records.** The worker parses each event (who, `via` = console, CLI, CloudShell, SDK, or Terraform outside the pipeline, source IP, resource), dedupes it, looks up the resource's Terraform address, and stores a change record in Postgres.
 3. **Analysis.** The triage agent (Claude) reads the change and related CloudTrail activity through the read-only `aws-mcp` server and writes a summary, a risk rating, and options.
 4. **Incidents.** Alertmanager posts alerts to the backend, which opens an incident. The agent gathers pod evidence through the read-only `k8s-mcp` server; if logs show an AWS error such as `AccessDenied`, it links the incident to the recent change that caused it.
-5. **Review.** Revert, Codify (Phase 2), or Accept for changes; approve or reject the proposed fix for incidents. AWS-side fixes always need a human.
+5. **Review.** Revert, Codify (Phase 2), or Accept for changes; approve or reject the proposed fix for incidents. AWS-side fixes always need a human; the OOM memory-limit fix is the one cluster fix that runs automatically.
 6. **Intake health.** A canary CronJob makes a known, harmless change every 15 minutes, so the header indicator can tell "nothing changed" from "intake is broken": Live, Delayed, Down, or Replay.
 
 Full design: [product-spec.md](product-spec.md) · API: [openapi.yaml](openapi.yaml)
@@ -305,32 +305,28 @@ consoletrack/
 
 ## Roadmap
 
-- **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; gated Revert; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; two cloud scenarios (security group opened, demo role permission removed) and three cluster faults; the dashboard; EKS via Terraform and Helmfile; CI/CD; the agent extension pack.
-- **Phase 2 (Nov 16):** Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); Slack and analytics; auto-remediation for the cluster OOM scenario after it graduates.
+- **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; gated Revert; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; two cloud scenarios (security group opened, demo role permission removed) and three cluster faults; automatic fix for the OOM fault (the first remediation kind to graduate); OpenTelemetry traces, metrics, and logs in Grafana, with an alert on user impact; the dashboard; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team and extension pack.
+- **Phase 2 (Nov 16):** Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); Slack and analytics; the next remediation kinds to graduate (rollback of a bad image, probe fixes).
 - **Later:** a NAT gateway per AZ, or fck-nat as a raw NAT instance under `/ct/` to cut the NAT cost; Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
 
 ## Course rubric mapping
 
-Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) final project.
+Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) final project ([criteria](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md): 12 criteria, 24 points, 10 to pass).
 
-| # | Criterion | Where to look |
+| Criterion | Points | Where to look |
 |---|---|---|
-| 1 | Problem description | The opening of this README |
-| 2 | AI-assisted workflow | [docs/ai-workflow.md](docs/ai-workflow.md), [AGENTS.md](AGENTS.md), [agent-hooks/](agent-hooks/) |
-| 3 | Technologies and architecture | [How it works](#how-it-works), [product-spec.md](product-spec.md) |
-| 4 | Frontend | [frontend/](frontend/): `src/api/` client generated from OpenAPI; `make test-frontend` |
-| 5 | API contract | [openapi.yaml](openapi.yaml), contract test in CI |
-| 6 | Backend | [backend/](backend/): layered FastAPI app with unit tests |
-| 7 | Database | Alembic migrations; Postgres in Compose, Testcontainers, and CloudNativePG |
-| 8 | Containerization | [docker-compose.yaml](docker-compose.yaml); images for every service |
-| 9 | Integration testing | `backend/tests/integration/` (Testcontainers) and kind-based `make test-k8s` |
-| 10 | Deployment | EKS via [terraform/](terraform/) and [helm/](helm/); live URL and dates below; [Deploy to AWS](#deploy-to-aws) |
-| 11 | CI/CD | [.github/workflows/](.github/workflows/): `ci.yaml`, `deploy.yaml` |
-| 12 | Agent extension pack | [Agent extension pack](#agent-extension-pack) |
-| 13 | Security, audit, DevOps | [Security and permissions](#security-and-permissions), [docs/permissions.md](docs/permissions.md), [security/](security/) |
-| 14 | Reproducibility | `make preflight` → `make up` → `make demo` → `make down` → `make verify-clean` |
-
-<!-- TODO: live URL and the dates it will be up during peer review -->
+| Problem description | 2 | The opening of this README |
+| Product specification | 2 | [product-spec.md](product-spec.md) and the public [issue tracker](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue): acceptance criteria on every issue, agent PRs that close them |
+| Agent team specification | 2 | [docs/agent-team.md](docs/agent-team.md) |
+| Context management | 2 | [AGENTS.md](AGENTS.md) and its "Where to read more" index |
+| Application | 2 | [Try it without AWS](#try-it-without-aws): `make local` starts the frontend, backend, and Postgres |
+| Testing | 2 | `make test-all`: unit, contract, integration (Testcontainers), and frontend tests; see [Testing and CI/CD](#testing-and-cicd) |
+| Containerization | 2 | [docker-compose.yaml](docker-compose.yaml), started by `make local` |
+| Deployment | 2 | <!-- TODO: live URL, dates, demo recording --> EKS via [terraform/](terraform/) and [helm/](helm/); [Deploy to AWS](#deploy-to-aws) |
+| CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
+| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana |
+| Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `consoletrack` chart's alert rules |
+| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make demo-oom`: the alert, the diagnosis, the automatic fix |
 
 ## License
 
