@@ -1,12 +1,3 @@
-# Everything below is the current .github/workflows/ci.yaml unchanged, plus two jobs at the end
-# from #15 (local run):
-# - `integration`: `make test-integration` on Testcontainers Postgres (Docker is on the runner;
-#   no secrets). Add it to the ruleset's required checks after moving this file.
-# - `local-stack`: builds the Compose stack, waits for every healthcheck, and logs in through
-#   the dashboard's /api route. Not a required check.
-# `lint` also runs `docker compose config` now, through `make lint` → lint-compose; no step changes.
-# The `k8s` job (kind; `make test-k8s`) lands with #10, which adds that target.
-#
 # CI for every PR and push to main. Required checks (main ruleset): lint, test, terraform-fmt.
 # Not required: frontend-image (amd64 build + /healthz), e2e (Playwright in Chromium).
 # `test` runs with SKIP_E2E=1 so the browser tests run once, in `e2e`.
