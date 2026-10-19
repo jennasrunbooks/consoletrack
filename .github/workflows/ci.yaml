@@ -1,6 +1,3 @@
-# PROPOSED: a human needs to move this to .github/workflows/ci.yaml, replacing the current file.
-# (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
-#
 # Everything below is the current .github/workflows/ci.yaml unchanged, plus two jobs at the end
 # from #15 (local run):
 # - `integration`: `make test-integration` on Testcontainers Postgres (Docker is on the runner;
