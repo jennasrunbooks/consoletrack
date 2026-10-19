@@ -653,7 +653,8 @@ input[aria-invalid="true"] {
   cursor: pointer;
 }
 
-:root[data-theme="dark"] .chip {
+/* Not the selected chip: this selector outranks .chip[aria-pressed="true"] below. */
+:root[data-theme="dark"] .chip:not([aria-pressed="true"]) {
   background: transparent;
 }
 

@@ -8,6 +8,7 @@ Project documentation beyond the README.
 | [agent-extension-pack.md](agent-extension-pack.md) | Hooks, skills, subagent, MCP servers, and how to install them |
 | [permissions.md](permissions.md) | Who can do what, layer by layer |
 | [mockups/](mockups/) | Dashboard mockups (light and dark) the frontend and `openapi.yaml` follow |
+| [screenshots/](screenshots/) | The built dashboard (`npm run dev:mock`), named like the mockup each one matches |
 | [proposed-workflows/](proposed-workflows/) | Workflow files the agent proposes for a human to move into `.github/workflows/` |
 
 Still to come: ai-workflow log, evals, troubleshooting.
