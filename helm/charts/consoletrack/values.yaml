@@ -1,0 +1,183 @@
+# ConsoleTrack chart values. helm/helmfile.yaml.gotmpl fills the deployment-specific ones from
+# the environment values (helm/environments/), which come from .env and Terraform outputs.
+# Nothing here is a secret: the pods read Secrets that scripts/create-secrets.sh creates, by the
+# names under `secrets:`.
+
+# eks or local (kind). local leaves out the canary (no AWS) and uses kind's storage class.
+target: eks
+
+image:
+  registry: ghcr.io/jennasrunbooks
+  # Empty = the chart's appVersion. deploy.yaml sets the commit SHA.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# How the dashboard is reached (EXPOSURE):
+# - port-forward: no load balancer. The frontend's nginx also proxies /api to the backend, and
+#   `make open` port-forwards the frontend Service.
+# - alb: a Gateway on the Load Balancer Controller's ALB, HTTPS only, limited to allowedCidrs.
+exposure: port-forward
+# Hostname for HTTPS (DOMAIN). Required with exposure=alb.
+domain: ""
+# CIDRs allowed to reach the ALB (ALLOWED_CIDRS). Required with exposure=alb.
+allowedCidrs: []
+# ACM certificate for `domain` (terraform/consoletrack/us-east-1 → acm.tf). Required with alb.
+certificateArn: ""
+gateway:
+  # GatewayClass from the cluster-defaults release.
+  className: alb
+
+# AWS settings from Terraform outputs (terraform/consoletrack/us-east-1). Not secret, but they
+# contain the account ID, so they live only in the gitignored values.generated.yaml.
+aws:
+  region: us-east-1
+  # The tfstate bucket's suffix (NAME_SUFFIX); aws-mcp reads the demo-app root's state there.
+  nameSuffix: ""
+  clusterName: ""
+  changesQueueUrl: ""
+  changesDlqUrl: ""
+  trailName: ""
+  canarySecurityGroupId: ""
+  # WATCHED_IAM_PATHS, comma-separated.
+  watchedIamPaths: /demo-app/
+
+# Existing Secrets, created by scripts/create-secrets.sh (never by this chart, never in values).
+# Each key below is a key inside that Secret.
+secrets:
+  apiKey:
+    name: consoletrack-api-key
+    anthropicApiKey: anthropic-api-key
+  auth:
+    name: consoletrack-auth
+    adminPasswordHash: admin-password-hash
+    viewerPasswordHash: viewer-password-hash
+    sessionSecret: session-secret
+  webhook:
+    name: consoletrack-webhook
+    # Bearer token Alertmanager sends to /api/v1/alerts/webhook.
+    alertWebhookToken: token
+
+# Namespaces the triage agent may read (k8s-mcp) and the backend may patch (remediator), one
+# Role each. They must already exist; the demo-app release creates `demo`.
+allowedNamespaces: [demo]
+
+# Settings shared by the backend and the worker.
+app:
+  # live, or replay (recorded CloudTrail fixtures; local only).
+  intakeMode: live
+  triageModel: claude-haiku-5-5
+  triageModelEscalation: claude-sonnet-5-5
+  # The "Intake health" dashboard URL the intake panel links to, if the browser can reach it.
+  grafanaUrl: ""
+
+backend:
+  replicas: 1
+  port: 8000
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+  # `alembic upgrade head` in an init container, before the API starts.
+  migrate:
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 256Mi}
+
+worker:
+  replicas: 1
+  command: [python, -m, app.intake.consumer]
+  # The worker has no HTTP server. It touches this file after every poll (20 s long poll), and
+  # both probes fail once it's older than heartbeatMaxAgeSeconds.
+  heartbeatFile: /tmp/worker-heartbeat
+  heartbeatMaxAgeSeconds: 120
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+
+frontend:
+  replicas: 1
+  port: 8080
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 64Mi}
+
+k8sMcp:
+  replicas: 1
+  port: 8080
+  # Empty = kube-prometheus-stack's Prometheus in the monitoring namespace.
+  prometheusUrl: ""
+  resources:
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+
+awsMcp:
+  replicas: 1
+  port: 8080
+  # live, or fixtures (recorded responses for demo-replay; local only).
+  mode: live
+  resources:
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {cpu: 250m, memory: 256Mi}
+
+# Tags the canary security group every 15 minutes through CloudTrail → EventBridge → SQS
+# (product-spec.md → Intake health and canary). EKS only.
+canary:
+  enabled: true
+  schedule: "*/15 * * * *"
+  image:
+    repository: public.ecr.aws/aws-cli/aws-cli
+    tag: 2.37.4
+    digest: sha256:fdd8d1fcbea9c371678dee5a40df8b178c7a781b4586605756ee28114c97ead6
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {cpu: 250m, memory: 192Mi}
+
+# CloudNativePG Cluster. The operator creates the `<name>-app` Secret the app reads.
+postgres:
+  name: consoletrack-db
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.15-minimal-trixie
+  database: consoletrack
+  owner: consoletrack
+  storage:
+    size: 5Gi
+    # From the cluster-defaults release on EKS; `standard` on kind.
+    storageClass: gp3
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+monitoring:
+  # kube-prometheus-stack's release namespace and name, for its Prometheus URL.
+  namespace: monitoring
+  release: kube-prometheus-stack
+  serviceMonitor: true
+  # "Intake health" dashboard for the Grafana sidecar (label grafana_dashboard: "1").
+  dashboard: true
+  alertRules: true
+  # AlertmanagerConfig sending every alert to the backend's webhook with the bearer token.
+  alertmanagerConfig: true
+
+# Kubernetes group of CI's deploy role (terraform/consoletrack/us-east-1 output
+# deploy_kubernetes_group). It gets a Role in these namespaces and nothing cluster-wide.
+deployers:
+  enabled: true
+  group: consoletrack-deployers
+  namespaces: [consoletrack, demo]
+
+# Remediation policies (product-spec.md → Remediation modes), mounted into the backend for the
+# policy gate. Phase 1 ships every policy as `manual` with the kill switch off: a policy moves
+# to `auto` only through a reviewed PR with eval results (docs/remediation-graduation.md).
+remediation:
+  autoEnabled: false          # global kill switch, also toggled from the dashboard
+  policies:
+    - name: oom-memory-bump
+      match: {alertname: KubePodOOMKilled, namespace: demo}
+      mode: manual            # manual | auto
+      allowedChanges: [resources.limits.memory, resources.requests.memory]
+      bounds: {maxMultiplier: 2, ceiling: 1Gi}
+      minConfidence: high
+      rateLimit: {perWorkload: 1, window: 1h}
+      verify: {waitForResolved: 10m, onFailure: rollback}
+    - name: default
+      match: {}
+      mode: manual

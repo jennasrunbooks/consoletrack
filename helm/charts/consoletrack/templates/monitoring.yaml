@@ -1,0 +1,121 @@
+{{- /*
+Observability for the intake (product-spec.md → Intake health and canary): Prometheus scrapes
+the backend's /metrics, ConsoleTrackCanaryMissing fires when no canary has arrived for 45
+minutes, and Alertmanager sends every alert to the backend's webhook with the bearer token from
+the consoletrack-webhook Secret. The add-on values (helm/values/kube-prometheus-stack.yaml)
+make Prometheus and Alertmanager pick these up from any namespace.
+*/}}
+{{- if .Values.monitoring.serviceMonitor }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "backend") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "backend") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+{{- end }}
+{{- if and .Values.monitoring.alertRules .Values.canary.enabled (eq .Values.target "eks") }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: consoletrack-intake
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: consoletrack-intake
+      rules:
+        # The canary arrived before but not in the last 45 minutes.
+        - alert: ConsoleTrackCanaryMissing
+          expr: |
+            max(consoletrack_canary_last_seen_timestamp_seconds) > 0
+            and
+            time() - max(consoletrack_canary_last_seen_timestamp_seconds) > 45 * 60
+          for: 1m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+            workload: canary
+          annotations:
+            summary: No intake canary for 45 minutes
+            description: >-
+              The canary tags its security group every 15 minutes, and the tag change should
+              arrive through CloudTrail, EventBridge, and SQS within minutes. Check the canary
+              CronJob, the trail, the EventBridge rule, the queue, and the worker.
+        # The canary has never arrived (0 = never) for 45 minutes after the backend started.
+        - alert: ConsoleTrackCanaryMissing
+          expr: max(consoletrack_canary_last_seen_timestamp_seconds) == 0
+          for: 45m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace }}
+            workload: canary
+          annotations:
+            summary: The intake canary has never arrived
+            description: >-
+              No canary has come through the intake since ConsoleTrack started. Check the canary
+              CronJob, the trail, the EventBridge rule, the queue, and the worker.
+{{- end }}
+{{- if .Values.monitoring.alertmanagerConfig }}
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: consoletrack
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.labels" . | nindent 4 }}
+spec:
+  route:
+    receiver: consoletrack-backend
+    groupBy: [alertname, namespace]
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    matchers:
+      # kube-prometheus-stack's always-firing heartbeat alerts aren't incidents.
+      - name: alertname
+        matchType: "!~"
+        value: Watchdog|InfoInhibitor
+      # Only workloads ConsoleTrack can investigate (k8s-mcp's allowlist) and its own alerts;
+      # cluster-level alerts stay in Alertmanager and Grafana.
+      - name: namespace
+        matchType: "=~"
+        value: {{ prepend .Values.allowedNamespaces .Release.Namespace | join "|" | quote }}
+  receivers:
+    - name: consoletrack-backend
+      webhookConfigs:
+        - url: {{ printf "http://backend.%s.svc.cluster.local:%d/api/v1/alerts/webhook" .Release.Namespace (int .Values.backend.port) | quote }}
+          sendResolved: true
+          httpConfig:
+            authorization:
+              type: Bearer
+              credentials:
+                name: {{ .Values.secrets.webhook.name }}
+                key: {{ .Values.secrets.webhook.alertWebhookToken }}
+{{- end }}
+{{- if .Values.monitoring.dashboard }}
+---
+# Picked up by kube-prometheus-stack's Grafana sidecar, which watches every namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-intake-health
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  intake-health.json: |-
+    {{- .Files.Get "files/intake-health.json" | nindent 4 }}
+{{- end }}

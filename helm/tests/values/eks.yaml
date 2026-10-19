@@ -1,0 +1,11 @@
+# Placeholder Terraform outputs for `make helm-lint` (helmfile --state-values-file), standing in
+# for helm/environments/values.generated.yaml. Not real resources: the account ID is the
+# documented placeholder 123456789012 and the suffix is "test".
+nameSuffix: test
+clusterName: ct-eks-use1-test
+vpcId: vpc-0123456789abcdef0
+changesQueueUrl: https://sqs.us-east-1.amazonaws.com/123456789012/ct-changes-use1-test
+changesDlqUrl: https://sqs.us-east-1.amazonaws.com/123456789012/ct-changes-dlq-use1-test
+trailName: ct-trail-use1-test
+canarySecurityGroupId: sg-0123456789abcdef0
+demoBucket: demo-app-data-use1-test

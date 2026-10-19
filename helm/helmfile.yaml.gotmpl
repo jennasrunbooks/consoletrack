@@ -1,0 +1,183 @@
+# Every release in the cluster, third-party and ConsoleTrack's own (product-spec.md →
+# Infrastructure as code). Terraform is AWS-only and installs nothing in Kubernetes.
+#
+#   tier=addons  Gateway API CRDs, cluster defaults, kube-prometheus-stack, cloudnative-pg, and
+#                with EXPOSURE=alb / DOMAIN the Load Balancer Controller and ExternalDNS.
+#                Cluster-wide; a human applies them (`make addons`).
+#   tier=app     consoletrack and demo-app, namespaced; `make deploy` and CI (deploy.yaml)
+#                apply only these (`helmfile -l tier=app apply`).
+#
+# Environments are deployment targets, not apps: eks (the default) and local (kind).
+# `helmfile lint` / `helmfile -e <env> template` need no cluster (`make helm-lint`).
+#
+# Chart versions are pinned here and bumped by hand (Dependabot doesn't read Helmfile); pick a
+# release at least two weeks old, and check it supports the cluster's Kubernetes version.
+
+environments:
+  eks: &eks
+    values:
+      - environments/eks.yaml
+      # Written from .env and the Terraform outputs by the Makefile; gitignored, never secret.
+      # Absent in CI and on a fresh clone, where the eks charts then refuse to render.
+      - environments/values.generated.yaml
+    missingFileHandler: Warn
+  # Plain `helmfile …` without -e uses the eks values.
+  default: *eks
+  local:
+    values:
+      - environments/local.yaml
+      - environments/values.generated.yaml
+    missingFileHandler: Warn
+
+---
+{{- $alb := eq .Values.exposure "alb" }}
+{{- $dns := ne .Values.domain "" }}
+{{- $cidrs := .Values.allowedCidrs }}
+{{- if kindIs "string" $cidrs }}{{ $cidrs = splitList "," $cidrs | compact }}{{ end }}
+
+repositories:
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+  - name: cnpg
+    url: https://cloudnative-pg.github.io/charts
+  - name: eks
+    url: https://aws.github.io/eks-charts
+  - name: external-dns
+    url: https://kubernetes-sigs.github.io/external-dns/
+
+helmDefaults:
+  # Wait for every resource to be ready, and roll back a failed upgrade.
+  wait: true
+  atomic: true
+  timeout: 600
+  # Keep a short history: enough for `helm rollback`, not a pile of release Secrets.
+  historyMax: 5
+
+releases:
+  # --- tier=addons -------------------------------------------------------------------------
+
+  - name: gateway-api-crds
+    namespace: kube-system
+    chart: ./charts/gateway-api-crds
+    labels:
+      tier: addons
+
+  - name: cluster-defaults
+    namespace: kube-system
+    chart: ./charts/cluster-defaults
+    labels:
+      tier: addons
+    needs:
+      - kube-system/gateway-api-crds
+    values:
+      - storageClass:
+          enabled: {{ eq .Values.target "eks" }}
+          name: {{ .Values.storageClass }}
+        albGatewayClass:
+          enabled: {{ $alb }}
+
+  - name: kube-prometheus-stack
+    namespace: monitoring
+    createNamespace: true
+    chart: prometheus-community/kube-prometheus-stack
+    version: 91.9.0
+    labels:
+      tier: addons
+    values:
+      - values/kube-prometheus-stack.yaml
+
+  - name: cloudnative-pg
+    namespace: cnpg-system
+    createNamespace: true
+    chart: cnpg/cloudnative-pg
+    version: 0.29.1
+    labels:
+      tier: addons
+    values:
+      - values/cloudnative-pg.yaml
+
+  - name: aws-load-balancer-controller
+    namespace: kube-system
+    chart: eks/aws-load-balancer-controller
+    version: 3.5.0
+    installed: {{ $alb }}
+    labels:
+      tier: addons
+    needs:
+      - kube-system/gateway-api-crds
+      - kube-system/cluster-defaults
+    values:
+      - values/aws-load-balancer-controller.yaml.gotmpl
+
+  - name: external-dns
+    namespace: kube-system
+    chart: external-dns/external-dns
+    version: 1.23.0
+    installed: {{ $dns }}
+    labels:
+      tier: addons
+    needs:
+      - kube-system/gateway-api-crds
+    values:
+      - values/external-dns.yaml.gotmpl
+
+  # --- tier=app ----------------------------------------------------------------------------
+
+  - name: demo-app
+    namespace: demo
+    createNamespace: true
+    chart: ./charts/demo-app
+    labels:
+      tier: app
+    needs:
+      - monitoring/kube-prometheus-stack
+    values:
+      - image:
+          tag: {{ .Values.imageTag | quote }}
+        aws:
+          region: {{ .Values.awsRegion | quote }}
+          bucket: {{ .Values.demoBucket | quote }}
+
+  - name: consoletrack
+    namespace: consoletrack
+    createNamespace: true
+    chart: ./charts/consoletrack
+    labels:
+      tier: app
+    needs:
+      - kube-system/gateway-api-crds
+      - kube-system/cluster-defaults
+      - monitoring/kube-prometheus-stack
+      - cnpg-system/cloudnative-pg
+      {{- if $alb }}
+      - kube-system/aws-load-balancer-controller
+      {{- end }}
+      # Its Roles for k8s-mcp, the remediator, and the deployers go into the demo namespace.
+      - demo/demo-app
+    values:
+      - target: {{ .Values.target }}
+        exposure: {{ .Values.exposure }}
+        domain: {{ .Values.domain | quote }}
+        allowedCidrs: {{ $cidrs | toJson }}
+        certificateArn: {{ .Values.certificateArn | quote }}
+        image:
+          tag: {{ .Values.imageTag | quote }}
+        aws:
+          region: {{ .Values.awsRegion | quote }}
+          nameSuffix: {{ .Values.nameSuffix | quote }}
+          clusterName: {{ .Values.clusterName | quote }}
+          changesQueueUrl: {{ .Values.changesQueueUrl | quote }}
+          changesDlqUrl: {{ .Values.changesDlqUrl | quote }}
+          trailName: {{ .Values.trailName | quote }}
+          canarySecurityGroupId: {{ .Values.canarySecurityGroupId | quote }}
+          watchedIamPaths: {{ .Values.watchedIamPaths | quote }}
+        app:
+          intakeMode: {{ .Values.intakeMode }}
+          triageModel: {{ .Values.triageModel | quote }}
+          triageModelEscalation: {{ .Values.triageModelEscalation | quote }}
+          grafanaUrl: {{ .Values.grafanaUrl | quote }}
+        awsMcp:
+          mode: {{ if eq .Values.target "local" }}fixtures{{ else }}live{{ end }}
+        postgres:
+          storage:
+            storageClass: {{ .Values.storageClass }}

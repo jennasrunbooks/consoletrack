@@ -1,0 +1,33 @@
+# Environment values for the eks target (the default). helm/environments/values.generated.yaml,
+# which the Makefile writes from .env and the Terraform outputs, is layered on top and overrides
+# any key here. Everything AWS-specific is empty until then; the charts refuse to render on EKS
+# without it. Key by key: helm/environments/README.md.
+target: eks
+
+# .env
+exposure: port-forward
+domain: ""
+allowedCidrs: []
+nameSuffix: ""
+awsRegion: us-east-1
+watchedIamPaths: /demo-app/
+triageModel: claude-haiku-5-5
+triageModelEscalation: claude-sonnet-5-5
+grafanaUrl: ""
+
+# Terraform outputs (terraform/consoletrack/us-east-1, terraform/demo-app/us-east-1)
+clusterName: ""
+vpcId: ""
+certificateArn: ""
+changesQueueUrl: ""
+changesDlqUrl: ""
+trailName: ""
+canarySecurityGroupId: ""
+demoBucket: ""
+
+# Image tag for the consoletrack and demo-app images; empty = each chart's appVersion.
+# deploy.yaml passes the commit SHA (--state-values-set imageTag=<sha>).
+imageTag: ""
+
+intakeMode: live
+storageClass: gp3
