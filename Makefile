@@ -84,6 +84,8 @@ SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
 COMPOSE ?= docker compose
 # The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
 BACKEND_RUN ?= cd backend && uv run --locked
+# k8s-mcp's own locked environment (mcp-server/k8s/uv.lock).
+K8S_MCP_RUN ?= cd mcp-server/k8s && uv run --locked
 # The frontend's locked node_modules (frontend/package-lock.json), installed on demand below.
 FRONTEND_RUN ?= cd frontend && npm run --silent
 FRONTEND_DEPS := frontend/node_modules/.package-lock.json
@@ -117,7 +119,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
-	test-hooks test-terraform lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers \
+	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose helm-lint helm-test db-sql hash-password \
 	test-all test-backend test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
@@ -131,15 +133,15 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend lint-compose ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-k8s-mcp lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend lint-compose ## Lint and format checks (run before every commit)
 
-test: test-hooks test-backend test-contract test-terraform test-compose test-frontend ## Unit and contract tests (run before every commit)
+test: test-hooks test-backend test-k8s-mcp test-contract test-terraform test-compose test-frontend ## Unit and contract tests (run before every commit)
 
 test-all: test test-integration ## Every automated test: unit, contract, frontend, and integration (needs Docker)
 
 fmt: ## Format Python and Terraform in place
-	$(RUFF) format agent-hooks backend
-	$(RUFF) check --fix-only --select I backend
+	$(RUFF) format agent-hooks backend mcp-server/k8s
+	$(RUFF) check --fix-only --select I backend mcp-server/k8s
 	@if command -v $(TERRAFORM) >/dev/null; then $(TERRAFORM) fmt -recursive terraform/; \
 		else echo "terraform not installed; skipped terraform fmt" >&2; fi
 
@@ -150,6 +152,10 @@ lint-hooks: ## ruff check + format check for agent-hooks/
 lint-backend: ## ruff check + format check for backend/ (config in backend/pyproject.toml)
 	$(RUFF) check backend
 	$(RUFF) format --check backend
+
+lint-k8s-mcp: ## ruff check + format check for mcp-server/k8s/ (config in its pyproject.toml)
+	$(RUFF) check mcp-server/k8s
+	$(RUFF) format --check mcp-server/k8s
 
 lint-openapi: ## Validate openapi.yaml (OpenAPI 3.1)
 	$(OPENAPI_VALIDATOR) openapi.yaml
@@ -283,8 +289,12 @@ test-e2e: $(FRONTEND_DEPS) ## Playwright in Chromium against `npm run dev:mock` 
 screenshots: $(FRONTEND_DEPS) ## Regenerate docs/screenshots/ from `npm run dev:mock` with Playwright
 	$(FRONTEND_RUN) screenshots
 
-test-k8s: ## k8s-mcp against kind with real RBAC (stub)
-	$(call todo,#10)
+test-k8s-mcp: ## k8s-mcp unit tests with a fake Kubernetes client (no cluster, no network)
+	$(K8S_MCP_RUN) pytest tests/unit -q -m "not kind" \
+		--cov=k8s_mcp.tools --cov=k8s_mcp.redact --cov-report=term-missing --cov-fail-under=90
+
+test-k8s: ## k8s-mcp against a throwaway kind cluster with the real RBAC (needs Docker; runs in CI)
+	scripts/test-k8s.sh
 
 ##@ Configuration
 

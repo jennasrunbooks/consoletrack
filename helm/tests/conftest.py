@@ -94,18 +94,35 @@ def _load(text: str) -> list[dict]:
     return [doc for doc in yaml.safe_load_all(text) if doc]
 
 
-def _helm_template(config: str) -> list[dict]:
+class DuplicateKeyLoader(yaml.SafeLoader):
+    """SafeLoader that fails on a key repeated in one mapping, which PyYAML would silently
+    collapse to the last value."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        seen: set = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate key {key!r}", key_node.start_mark
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def helm_template_text(config: str) -> list[tuple[str, str, str]]:
+    """(chart, namespace, rendered YAML) for each of our releases, with plain `helm template`."""
     helm = shutil.which("helm")
     if not helm:
         pytest.fail(
             "neither HELM_RENDER_DIR (from `make helm-lint`) nor helm is available"
         )
-    docs: list[dict] = []
+    out: list[tuple[str, str, str]] = []
     for release, namespace, chart, values in _FALLBACK[config]:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump(values, f)
         try:
-            out = subprocess.run(
+            text = subprocess.run(
                 [
                     helm,
                     "template",
@@ -122,7 +139,14 @@ def _helm_template(config: str) -> list[dict]:
             ).stdout
         finally:
             os.unlink(f.name)
-        for doc in _load(out):
+        out.append((chart, namespace, text))
+    return out
+
+
+def _helm_template(config: str) -> list[dict]:
+    docs: list[dict] = []
+    for _, namespace, text in helm_template_text(config):
+        for doc in _load(text):
             doc.setdefault("metadata", {}).setdefault("namespace", namespace)
             docs.append(doc)
     return docs
