@@ -1,6 +1,6 @@
 # ConsoleTrack: Product Spec
 
-Last updated Oct 17, 2026
+Last updated Oct 19, 2026
 
 ## Summary
 
@@ -39,7 +39,7 @@ The project is ConsoleTrack: it keeps track of every console change, documents i
 
 ## Scope
 
-Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every graded criterion plus the core cloud loop (change intake, two cloud scenarios, gated revert). Phase 2 targets the Nov 16 fallback deadline and the post-course version. On Oct 22 we check progress: if Phase 1's cloud items are not on track, we submit on Nov 16 instead of cutting the drift features.
+Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every criterion of the course rubric as revised on Oct 16 (see Rubric mapping), plus the core cloud loop (change intake, two cloud scenarios, gated revert). Phase 2 targets the Nov 16 fallback deadline and the post-course version. The Oct 22 check (see Plan) decides whether the cloud loop is part of the Oct 26 submission or finished for Nov 16.
 
 | Phase | Feature | Why it's in this phase |
 | --- | --- | --- |
@@ -49,8 +49,8 @@ Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every graded cr
 | 1 (Oct 26) | Scenarios: security group opened (no outage) and demo app role permission removed (outage) | One demo per trigger |
 | 1 (Oct 26) | Revert through a gated GitHub workflow that re-applies the `terraform/demo-app/us-east-1` root | Fixes cloud drift without giving the app AWS write access |
 | 1 (Oct 26) | Dashboard: incidents, change log, evidence, approve/reject, postmortem editor | Frontend criterion; makes changes documented |
-| 1 (Oct 26) | Cluster-side remediation (patch, rollout undo) with policy model set to `manual` | Baseline faults and the auto-remediation path |
-| 1 (Oct 26) | Terraform + Helm on EKS, CI/CD, reviewer deploy, agent extension pack | Graded criteria |
+| 1 (Oct 26) | Cluster-side remediation (patch, rollout undo) through the policy gate: `manual` for every kind except `set_memory_limit` (see the OOM row) | Baseline faults and the auto-remediation path |
+| 1 (Oct 26) | Terraform + Helm on EKS, CI/CD, local run with one command, reviewer deploy, agent team and context docs | Graded criteria |
 | 2 (Nov 16) | Codify: agent drafts an HCL pull request adopting the change; CI plan must show no diff | Turns a good console change into code |
 | 2 (Nov 16) | Drift confirmation with a targeted `terraform plan -refresh-only` job | Exact attribute-level diff instead of request parameters |
 | 2 (Nov 16) | Scenarios: demo app's Pod Identity association or role trust policy changed; KMS key policy edited | Harder identity failures |
@@ -104,7 +104,7 @@ flowchart TB
   awsmcp -- read-only APIs --> aws
 ```
 
-The agent only reads; every fix goes through an approval (thick arrows).
+The agent only reads. Every fix goes through the policy gate (thick arrows): AWS-side fixes always wait for a human, and one cluster fix, raising a memory limit after an OOM kill, is applied automatically and verified.
 
 The triage worker sees Kubernetes only through `k8s-mcp` and AWS only through `aws-mcp`, each with read-only permissions. AWS changes are fixed by the revert workflow in GitHub, whose role can change only the `terraform/demo-app/us-east-1` root and only after a reviewer approves the run.
 
@@ -383,7 +383,7 @@ ConsoleTrack must be able to tell "nothing changed" apart from "intake is broken
 
 ## Triage agent and guardrails
 
-The agent can only read, and that is enforced by IAM and Kubernetes RBAC on two separate MCP servers, not by the prompt. Anything that changes the cluster or AWS goes through an approval and runs under a different identity.
+The agent can only read, and that is enforced by IAM and Kubernetes RBAC on two separate MCP servers, not by the prompt. Anything that changes the cluster or AWS goes through the policy gate (a human approval, or auto mode for the one graduated cluster fix) and is applied by the backend under its own identity.
 
 **Runtime.** A worker in the backend calls the Claude Messages API with the Anthropic Python SDK, connects to the `k8s-mcp` and `aws-mcp` servers as an MCP client (FastMCP, streamable HTTP inside the cluster), and offers its tools to the model. The run ends when the model calls a `submit_analysis` tool whose JSON schema is the structured result, so no free-text parsing is needed. Limits per run: 12 tool calls, 120 seconds, a token budget, and one automatic retry.
 
@@ -597,50 +597,52 @@ Reviewers who don't set up GitHub OIDC on their fork still get a working Revert:
 
 ## Rubric mapping
 
-The MVP targets 28 of 30 points; the 2 left are the security criterion, which stays a stretch.
+The course rubric was revised on Oct 16, 2026: 12 criteria worth 24 points, with 10 needed to pass ([project README](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md)). Reviewing three other projects is also required to pass. ConsoleTrack targets 23 of 24; the third CI/CD point (automatic deploy to dev, manual deploy to production) is a stretch.
 
-| # | Criterion | Max | Evidence a reviewer will find |
+| Criterion | Max | Target | Evidence a reviewer will find |
 | --- | --- | --- | --- |
-| 1 | Problem description | 2 | README opening: problem, functionality, expected demo behavior |
-| 2 | AI-assisted workflow | 2 | `docs/ai-workflow.md` log, AGENTS.md, skills, hook, review and verification notes |
-| 3 | Technologies and architecture | 2 | README architecture diagram and a table of components and their roles |
-| 4 | Frontend | 3 | Centralized `src/api/` client generated from OpenAPI; Vitest suite; `make test-frontend` |
-| 5 | API contract | 2 | `openapi.yaml` written first; contract test in CI |
-| 6 | Backend | 3 | Layered FastAPI app; unit tests; follows the spec |
-| 7 | Database | 2 | Alembic migrations; Compose, Testcontainers, and CloudNativePG configs; documented |
-| 8 | Containerization | 2 | `docker compose up` runs the full app; images for all four services |
-| 9 | Integration testing | 2 | Separate `tests/integration/` with Testcontainers plus kind-based tests, documented |
-| 10 | Deployment | 2 | EKS via Terraform modules and Helm; URL during review, screenshots, optional demo video; reviewers can deploy it themselves |
-| 11 | CI/CD | 2 | `ci.yaml` tests; `deploy.yaml` deploys on green `main` |
-| 12 | Agent extension pack | 2 | All six required pieces plus overview doc |
-| 13 | Security, audit, DevOps | 2 | P2: RBAC design and permissions doc give a start; scans added if time allows |
-| 14 | Reproducibility | 2 | Reviewer quick start with preflight, one-command up, demo, down, and verify-clean; dry-run in a clean account |
+| Problem description | 2 | 2 | README opening: the problem, what the system does, the expected demo behavior |
+| Product specification | 2 | 2 | This spec, plus the public [issue tracker](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue): every issue has acceptance criteria, and agent PRs close them (`Closes #N`) |
+| Agent team specification | 2 | 2 | `docs/agent-team.md`: roles, how an issue becomes a merged PR, rules for parallel agents, access by role |
+| Context management | 2 | 2 | `AGENTS.md`, with a "Where to read more" index to the modular docs (agent team, architecture, permissions, observability, remediation graduation) |
+| Application | 2 | 2 | `make local`: frontend → backend → Postgres, started with one command |
+| Testing | 2 | 2 | `make test-all`: backend unit and contract tests, integration tests on Testcontainers Postgres, frontend tests; one command, all passing |
+| Containerization | 2 | 2 | `docker-compose.yaml`: the full system including Postgres, started by `make local` |
+| Deployment | 2 | 2 | EKS via Terraform and Helmfile; a recorded demo and screenshots of the deployment; a live URL during the first days of review |
+| CI/CD | 3 | 2 (3 stretch) | `ci.yaml` tests every PR; `deploy.yaml` deploys `main` to EKS automatically. Stretch: Helmfile `dev` deployed automatically, `prod` behind the `consoletrack-deploy` approval |
+| Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki; a redaction test; `docs/observability.md` |
+| Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (demo app 5xx ratio) → Alertmanager → the backend's webhook |
+| On-call agent | 2 | 2 | An alert opens an incident, the agent diagnoses an OOM kill, the backend applies the validated memory-limit fix in auto mode, verifies it, and resolves the incident; `docs/remediation-graduation.md` |
+| **Total** | **24** | **23** | |
 
-If time runs short, criterion 13's cheapest point is one deterministic scan committed to `security/` (for example Trivy on the images and Checkov on `terraform/`), which is about two hours of work.
+No longer graded but kept, because they make the build reliable: the OpenAPI contract (it keeps the backend and frontend agents consistent), the agent extension pack (the coding agents' guardrails), and the security and permissions notes.
 
 ## Plan
 
-Phase 1 is built by Oct 23 for the Monday, Oct 26 submission (6 pm local), with a go/no-go check on Oct 22: if the cloud scenarios and revert workflow aren't working by then, we keep building and submit on Nov 16 rather than cut the drift features. Phase 2 runs to Nov 16 either way.
+Phase 1 is built by Oct 25 for the Monday, Oct 26 submission (6 pm local). The go/no-go check on Oct 22 follows the revised rubric: `make local` starts the full stack with one command, the dashboard shows data from the backend and database, and the on-call agent fixes the OOM scenario after an alert with no human step. If that holds, ConsoleTrack is submitted on Oct 26, with the cloud loop (console change → change record → Revert on EKS) as the showcase. If the cloud loop isn't working by then, it's still submitted on Oct 26 on the local criteria, and the cloud loop is finished for Nov 16. Phase 2 runs to Nov 16 either way.
 
 | Workstream | Dates |
 | --- | --- |
-| Contract + skeleton | Oct 13 – Oct 14 |
-| Backend + database | Oct 14 – Oct 16 |
-| Change intake + aws-mcp | Oct 15 – Oct 17 |
-| Agent loop, both MCPs | Oct 16 – Oct 19 |
-| EKS + deploy pipeline | Oct 17 – Oct 18 |
-| Frontend + change log | Oct 18 – Oct 21 |
-| Cloud scenarios + revert | Oct 20 – Oct 22 |
+| Contract + skeleton, backend + database, auth | Oct 13 – Oct 17 (done) |
+| AWS `global` and platform roots | Oct 16 – Oct 19 |
+| Frontend shell and change log | Oct 17 – Oct 20 |
+| Local run: Compose, one command | Oct 19 – Oct 20 |
+| Helm charts, `make up` on EKS | Oct 19 – Oct 20 |
+| Agent loop + `k8s-mcp` | Oct 19 – Oct 21 |
+| Change intake, `aws-mcp`, demo-app root | Oct 19 – Oct 21 |
+| On-call auto-fix (OOM) | Oct 20 – Oct 21 |
+| Observability + alert on user impact | Oct 20 – Oct 22 |
+| Cloud scenarios + Revert | Oct 21 – Oct 22 |
 | **Go/no-go check** | **Oct 22** |
-| Tests, evals, extension pack | Oct 21 – Oct 23 |
-| Docs, clean-account run | Oct 24 – Oct 25 |
+| Frontend detail, CI/CD dev and prod (stretch), demo recording, README, rubric check | Oct 23 – Oct 25 |
 | **Submit (Zoomcamp)** | **Oct 26, 6 pm** |
+| Peer reviews (three projects) | After submission, on the course platform's dates |
 | Phase 2: codify PRs | Oct 27 – Nov 4 |
-| Phase 2: more scenarios | Nov 3 – Nov 8 |
+| Phase 2: more scenarios, next remediation kinds to graduate | Nov 3 – Nov 8 |
 | Phase 2: Slack, analytics | Nov 9 – Nov 12 |
 | **Fallback deadline** | **Nov 16** |
 
-The change intake and `aws-mcp` start on day 3 because they are the riskiest new pieces and can be tested against a sandbox account before the cluster exists. The deploy pipeline still lands Oct 18, so later work only needs merges. Each phase ends with a blog-ready milestone: the Oct 26 demo, and the Nov 16 codify-and-scenarios release.
+The local run and the on-call auto-fix moved forward when the rubric changed: together with the documentation criteria they carry most of the points, and they work on kind without AWS. Each phase still ends with a blog-ready milestone: the Oct 26 demo, and the Nov 16 codify-and-scenarios release.
 
 ## Open decisions and risks
 
@@ -653,7 +655,7 @@ The change intake and `aws-mcp` start on day 3 because they are the riskiest new
 - [ ] Public repo, which peer review needs and which also gives free arm64 Actions runners.
 
 * [ ] Project name: ConsoleTrack (decided).
-* [ ] Whether to submit Oct 26 or Nov 16, decided at the Oct 22 check.
+* [ ] Whether the cloud loop is in the Oct 26 submission or finished for Nov 16, decided at the Oct 22 check.
 * [ ] Which AWS services the EventBridge rule watches in Phase 1 (proposed: IAM, EC2 security groups, S3 bucket policy).
 * [ ] Which change types count as high risk by default (proposed: IAM policy or trust changes, security group ingress from 0.0.0.0/0, bucket policy or public access changes).
 
@@ -668,4 +670,4 @@ The change intake and `aws-mcp` start on day 3 because they are the riskiest new
 | Spot reclaim during the review window or a recording | Medium | Node group allows t4g.medium and t4g.large; switch to on-demand for demo day |
 | Memory pressure from the Prometheus stack on 8 GiB total | Medium | Short retention, exporters trimmed, resource requests set; add a third node if pods go Pending |
 | `terraform destroy` hangs on load balancer or ENI cleanup | Medium | `make down` runs `helmfile destroy` (Gateway included) before Terraform |
-| Schedule slip | High | Oct 22 go/no-go with Nov 16 as the planned fallback, instead of cutting the differentiator |
+| Schedule slip | High | The revised rubric is met by the local stack and docs alone, so Oct 26 holds; the Oct 22 check decides only whether the cloud loop ships then or on Nov 16 |
