@@ -110,7 +110,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks test-terraform lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend helm-lint db-sql hash-password \
-	test-backend test-frontend test-contract test-integration test-k8s \
+	test-backend test-frontend test-e2e screenshots test-contract test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
 	local demo demo-replay demo-drift demo-identity revert eval audit-rbac
@@ -225,8 +225,20 @@ lint-frontend: $(FRONTEND_DEPS) ## ESLint, tsc, and src/api/schema.d.ts up to da
 	$(FRONTEND_RUN) typecheck
 	$(FRONTEND_RUN) check:api
 
-test-frontend: lint-frontend ## Frontend lint + typecheck, then Vitest (MSW, no network)
+# SKIP_E2E=1 leaves out the browser tests; CI's `test` job sets it because its own `e2e` job
+# runs them with a Playwright-installed Chromium.
+test-frontend: lint-frontend ## Frontend lint + typecheck, Vitest (MSW, no network), then test-e2e
 	$(FRONTEND_RUN) test
+ifneq ($(SKIP_E2E),1)
+	$(MAKE) --no-print-directory test-e2e
+endif
+
+# Browsers: CHROMIUM_PATH (set in the devcontainer), else `npx playwright install chromium`.
+test-e2e: $(FRONTEND_DEPS) ## Playwright in Chromium against `npm run dev:mock` (localhost only)
+	$(FRONTEND_RUN) test:e2e
+
+screenshots: $(FRONTEND_DEPS) ## Regenerate docs/screenshots/ from `npm run dev:mock` with Playwright
+	$(FRONTEND_RUN) screenshots
 
 test-k8s: ## k8s-mcp against kind with real RBAC (stub)
 	$(call todo,#10)
