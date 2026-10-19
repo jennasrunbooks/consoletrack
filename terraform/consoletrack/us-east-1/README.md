@@ -122,3 +122,58 @@ make lint-terraform tflint tf-validate tf-test test-terraform
 (no `"*"` beyond the two accepted reads, aws-mcp read-only and path-scoped, canary tag-only), the
 feature switches, and input validation. Every module and data source that would call AWS is
 overridden.
+
+## Upgrades and replacement
+
+### Kubernetes version upgrades (in place)
+
+EKS upgrades one minor version at a time, and only when someone asks for it. Here that means
+changing `K8S_VERSION`. Upgrade within the version's 14 months of standard support. With
+`upgrade_policy = STANDARD`, EKS never moves the cluster to extended support (6× the price);
+when standard support ends, **EKS upgrades the control plane itself**.
+
+1. **Check:**
+   - `aws eks list-insights --cluster-name ct-eks-use1-<suffix>` should show no `ERROR` for the
+     target version (it lists deprecated APIs that workloads still call).
+   - Every pinned chart in `helm/` must support the target version, kube-prometheus-stack and
+     `gateway-api-crds` especially. Bump charts in their own PR first.
+2. **Bump:** change `K8S_VERSION` (`.env` and the repository variable) in a PR. The plan must
+   show in-place updates only: the cluster version, the add-ons, and the node group. If it
+   shows a replacement, stop.
+3. **Apply:**
+   `make tf-apply ROOT=consoletrack/us-east-1`, or CI with the environment approval. It runs in
+   this order:
+   - control plane (about 10–15 minutes; the API stays up);
+   - managed add-ons, which move to the default versions for the new minor;
+   - the node group, which rolls onto the new AL2023 AMI. It adds one node, drains an old one
+     (respecting PodDisruptionBudgets), and repeats.
+4. **Verify:**
+   - `kubectl get nodes` shows every node on the new version;
+   - `helmfile -e <env> diff` shows no drift;
+   - the change-intake canary is green;
+   - one demo scenario runs end to end.
+
+New AMI releases for the same minor version show up in the plan as a node-group update, and
+apply the same way. With two nodes and single-replica workloads, a node roll causes short
+interruptions. That's acceptable for the demo; for production you'd add two replicas and PDBs.
+
+### Replacing the cluster (destroy and recreate)
+
+The cluster name `ct-eks-use1-<suffix>` is fixed, and the `global` root's deploy, plan, and Pod
+Identity policies name it exactly. A replacement therefore keeps the name, and `global` doesn't
+change:
+
+1. If you want to keep real data rather than reseed it, dump it first:
+   `kubectl -n consoletrack exec <cnpg-primary> -- pg_dump -Fc consoletrack > ct.dump`.
+2. `make down`, which removes the Helm releases, the `demo-app/us-east-1` root, and this root
+   in that order.
+3. `make tf-apply ROOT=consoletrack/us-east-1`, then `make up`.
+4. Restore with `pg_restore`, or reseed the demo data (spec, Postgres row: "a seed script restores demo data").
+
+Expect 20–30 minutes of downtime. Everything outside the cluster stays: the trail, EventBridge,
+the SQS queue (changes recorded during the gap wait there within its retention), Route 53, ACM,
+and every IAM role. What's lost: Postgres data (CloudNativePG on a gp3 volume, unless dumped),
+plus Prometheus, Tempo, and Loki history.
+
+Blue/green replacement, with a second cluster running alongside, is the Phase 2 follow-up
+(see the "Blue/green EKS cluster replacement" issue).
