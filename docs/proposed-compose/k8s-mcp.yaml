@@ -1,0 +1,56 @@
+# PROPOSED: Compose services for k8s-mcp and the triage worker. #15 owns docker-compose.yaml
+# and `make local`; once #15 merges, a small follow-up commit on #10 merges these services into
+# it and deletes this file. Not a working Compose file by itself.
+#
+# k8s-mcp talks to the local kind cluster. From a container, the kubeconfig must use kind's
+# internal API address, and the container must join kind's Docker network:
+#   kind get kubeconfig --internal --name consoletrack > .local/kind-internal.kubeconfig
+# (.local/ would need a .gitignore entry; kubeconfig* is ignored already.)
+services:
+  k8s-mcp:
+    build:
+      context: mcp-server/k8s
+    image: ghcr.io/jennasrunbooks/consoletrack-k8s-mcp:local
+    environment:
+      K8S_MCP_TRANSPORT: http
+      K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-demo}
+      # kube-prometheus-stack in kind, reached through kind's network; empty disables the tool.
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-}
+      KUBECONFIG: /run/kube/config
+    volumes:
+      - ./.local/kind-internal.kubeconfig:/run/kube/config:ro
+    networks: [default, kind]
+    # Only the worker calls it; not published on the host.
+    expose: ["8080"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  # The triage worker: the backend image with the worker entrypoint (#10 PR 2 adds the agent
+  # loop and its settings; the command below is the expected shape, not final).
+  worker:
+    image: ghcr.io/jennasrunbooks/consoletrack-backend:local
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://consoletrack:consoletrack@postgres:5432/consoletrack
+      K8S_MCP_URL: http://k8s-mcp:8080/mcp
+      AWS_MCP_URL: http://aws-mcp:8080/mcp
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-haiku-5-5}
+      TRIAGE_MODEL_ESCALATION: ${TRIAGE_MODEL_ESCALATION:-claude-sonnet-5-5}
+      # From the shell (or `op run`), never written into this file.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres: {condition: service_healthy}
+      k8s-mcp: {condition: service_healthy}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  kind:
+    external: true

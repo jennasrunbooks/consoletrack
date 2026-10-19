@@ -6,6 +6,8 @@
 #   and the openapi.yaml → schema.d.ts check) and `make test` runs test-frontend (Vitest).
 # - New `frontend-image` job builds the dashboard image and checks /healthz. It is not meant to
 #   be a required check.
+# - New `k8s-mcp-kind` job (#10, k8s-mcp PR): `make test-k8s` against a throwaway kind cluster
+#   with the real k8s-mcp RBAC. Not meant to be a required check until it has run green a while.
 # Job names `lint`, `test`, and `terraform-fmt` are unchanged, so the ruleset needs no change.
 name: ci
 
@@ -103,3 +105,22 @@ jobs:
           for i in $(seq 1 20); do curl -fsS http://localhost:8080/healthz && break; sleep 1; done
           curl -fsS http://localhost:8080/changes | grep -q '<div id="root">'
           test "$(docker inspect -f '{{.Config.User}}' consoletrack-frontend:ci)" = "101"
+
+  # Not a required check (yet): k8s-mcp tools against a real API server with the real RBAC
+  # (`kubectl auth can-i` denies Secrets, ConfigMaps, exec, and writes). scripts/test-k8s.sh
+  # creates and deletes the kind cluster itself; kind-action only installs kind and kubectl.
+  k8s-mcp-kind:
+    name: k8s-mcp-kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          install_only: true
+      - run: make test-k8s

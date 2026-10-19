@@ -1,0 +1,64 @@
+# Objects the kind tests read (or must fail to read). Applied by tests/kind/conftest.py after
+# rbac/k8s-mcp.yaml. `other` has no k8s-mcp Role, so every read there must be forbidden.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: other
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-secrets
+  namespace: demo
+stringData:
+  token: kind-test-secret-value
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-config
+  namespace: demo
+data:
+  setting: kind-test-configmap-value
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: demo-app}
+  template:
+    metadata:
+      labels: {app: demo-app}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37.0
+          command: [sh, -c, "echo 'started token=kind-log-token-1234'; echo ready; sleep 3600"]
+          resources:
+            limits: {memory: 32Mi, cpu: 100m}
+            requests: {memory: 16Mi, cpu: 10m}
+          env:
+            - {name: LOG_LEVEL, value: kind-test-literal-value}
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: demo-secrets, key: token}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hidden
+  namespace: other
+spec:
+  replicas: 0
+  selector:
+    matchLabels: {app: hidden}
+  template:
+    metadata:
+      labels: {app: hidden}
+    spec:
+      containers:
+        - {name: app, image: busybox:1.37.0, command: [sleep, "3600"]}

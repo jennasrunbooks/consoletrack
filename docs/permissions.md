@@ -18,6 +18,9 @@ mistakes:
 | `cloudtrail:LookupEvents` on `*` (aws-mcp) | `terraform/consoletrack/us-east-1/pod-identity.tf` | The action has no resource-level permissions | Not possible in IAM; it's a read |
 | `ec2:DescribeSecurityGroups` on `*` (aws-mcp) | same | Same: EC2 describe calls are account-wide | Not possible in IAM; it's a read |
 | EKS API public endpoint open to `0.0.0.0/0` | `terraform/consoletrack/us-east-1/eks.tf` | GitHub-hosted runners deploy through it, and their address ranges don't fit EKS's 40-CIDR limit. Every request still needs IAM authentication and an access entry; nodes use the private endpoint | Narrow `EKS_PUBLIC_ACCESS_CIDRS` (one variable), or turn public access off with a pull-based deploy (spec, Production hardening step 4) |
+| `query_prometheus` isn't namespace-scoped (k8s-mcp) | `mcp-server/k8s/k8s_mcp/tools.py` | Prometheus has no per-namespace access control. k8s-mcp refuses any `namespace` matcher other than `namespace="<allowlisted>"`, but a query with no namespace matcher sees every namespace's metrics. Metrics hold numbers and labels, not Secret data | Put a label-enforcing proxy (prom-label-proxy) in front of Prometheus for k8s-mcp |
+| k8s-mcp's `/mcp` endpoint has no authentication | `mcp-server/k8s/` | Every tool is a read inside the allowlisted namespaces, with RBAC behind it; only the triage worker should reach it | The chart's NetworkPolicy (#12) admits only the backend/worker pods; a shared bearer token or mTLS later |
+| `.mcp.json` runs k8s-mcp with your own kubeconfig | repo root `.mcp.json` | Local kind only (`K8S_CONTEXT`, default `kind-consoletrack`); the in-server checks (namespace allowlist, no Secrets/ConfigMaps, env values redacted) still apply, but RBAC is whatever your context allows | Point `KUBECONFIG` at a kubeconfig for the `k8s-mcp` ServiceAccount's token (see `mcp-server/k8s/README.md`) |
 
 The node role has AmazonEC2ContainerRegistryReadOnly attached (the module’s default); the permissions boundary limits it to GetAuthorizationToken, BatchGetImage, and GetDownloadUrlForLayer.
 
@@ -103,6 +106,27 @@ the spec's reviewer setup), and a human reviews every PR, including any script t
 - **No `make` target that touches AWS or a cluster is ever added to `permissions.allow`**: not
   `up`, `down`, `addons`, `deploy`, `revert`, `demo-*`, `domain*`, `bootstrap`, `audit-rbac`, or
   `test-k8s` (kind). They always prompt, and the agent's own PRs follow this rule too.
+
+## Triage agent (runtime)
+
+The agent sees the cluster only through `k8s-mcp`, and AWS only through `aws-mcp`. Each check
+below holds on its own if the prompt is subverted.
+
+| Principal | Where it's set | Allowed | Explicitly not allowed |
+| --- | --- | --- | --- |
+| `k8s-mcp` ServiceAccount (`consoletrack/k8s-mcp`) | `mcp-server/k8s/rbac/k8s-mcp.yaml` (moves into the chart with #12): one Role + RoleBinding per namespace in `K8S_ALLOWED_NAMESPACES` (`demo` for the course) | `get`, `list`, `watch` on `pods`, `pods/log`, `events`, `deployments`, `replicasets`, `statefulsets` in those namespaces | Secrets, ConfigMaps, `pods/exec`, `pods/attach`, `pods/portforward`, any write verb, any other namespace, any cluster-scoped resource. `make test-k8s` asserts each with `kubectl auth can-i` against kind |
+
+Inside the server, in front of RBAC (`mcp-server/k8s/k8s_mcp/tools.py`):
+
+- namespaces outside `K8S_ALLOWED_NAMESPACES` are refused before any API call, and the server
+  won't start with an empty list;
+- `kind=Secret`/`ConfigMap` is refused by name, and the Kubernetes reader has no method that
+  could read either;
+- `get_workload` returns env var names only, and no annotations (`last-applied-configuration`
+  would carry values); container-written termination messages are left out of `get_pods`;
+- logs and events come back in an `untrusted_data` field, redacted (tokens, keys, connection
+  string passwords, private keys), lines capped at 200 and 2,000 characters each;
+- unexpected errors are masked; only the scope refusals' messages reach the model.
 
 ## CI deploy role
 

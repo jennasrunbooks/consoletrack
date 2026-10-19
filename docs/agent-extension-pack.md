@@ -12,7 +12,7 @@ See [permissions.md](permissions.md) for every permission layer side by side.
 | Permission notes | `docs/permissions.md` | Dev-time agent done; runtime identities come with the Terraform and Helm issues |
 | Skills | `agent-capabilities/add-endpoint/`, `agent-capabilities/break-demo/` | Planned |
 | Subagent | `custom-agent/k8s-manifest-reviewer.md` | Planned |
-| MCP servers | `mcp-server/k8s/`, `mcp-server/aws/`, `.mcp.json` | Planned |
+| MCP servers | `mcp-server/k8s/` and `.mcp.json` (this page); `mcp-server/aws/` | `k8s-mcp` done; `aws-mcp` with #9 |
 
 ## Installing
 
@@ -23,6 +23,39 @@ from the repo root: it loads `.claude/settings.json`, which runs the hooks with 
 
 Check it works: `/hooks` lists both hooks, `/memory` lists `AGENTS.md`, and asking the agent to
 run `terraform apply` comes back with a block message.
+
+## MCP servers
+
+### `k8s-mcp` through `.mcp.json`
+
+The same read-only server the triage worker uses in the cluster, wired into Claude Code for
+development against a local kind cluster. `.mcp.json` at the repo root starts it over stdio:
+
+```json
+"k8s-mcp": {
+  "command": "uv",
+  "args": ["run", "--locked", "--directory", "mcp-server/k8s", "python", "-m", "k8s_mcp"],
+  "env": {"K8S_MCP_TRANSPORT": "stdio", "K8S_CONTEXT": "${K8S_MCP_CONTEXT:-kind-consoletrack}", …}
+}
+```
+
+- **Where it runs.** On the host, next to kind: it needs a kubeconfig, and the devcontainer
+  has none on purpose. Claude Code asks once before enabling a project MCP server; `/mcp`
+  shows its status and the six tools.
+- **What it can do.** Only the six reads in [mcp-server/k8s/README.md](../mcp-server/k8s/README.md#tools),
+  in `K8S_ALLOWED_NAMESPACES` (default `demo`). Secrets and ConfigMaps are refused, env values
+  are never returned, and logs and events arrive in `untrusted_data`, redacted. Every tool is
+  annotated `readOnlyHint`.
+- **Settings.** `K8S_MCP_CONTEXT`, `K8S_ALLOWED_NAMESPACES`, and `K8S_MCP_PROMETHEUS_URL`
+  from the shell that starts Claude Code override the defaults.
+- **Identity.** Locally it uses your kubeconfig context, so RBAC is whatever that context has;
+  the in-server checks are what keep it read-only there. In the cluster it runs as the
+  `k8s-mcp` ServiceAccount (`get`/`list`/`watch` only). See
+  [permissions.md](permissions.md#triage-agent-runtime) and its accepted gaps.
+
+Adding a tool: it must be a read, go in the spec's tool table, and come with the matching RBAC
+change in the same PR (`AGENTS.md` → Hard rules, rule 6), plus a unit test and, for a new
+resource, a `kubectl auth can-i` case in `mcp-server/k8s/tests/kind/`.
 
 ## Hooks
 
