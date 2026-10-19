@@ -292,16 +292,18 @@ class K8sTools:
             )
 
     def _promql_namespaces(self, promql: str) -> None:
-        # Best effort: Prometheus isn't namespace-scoped, so this only stops a query that names
-        # another namespace or matches namespaces by pattern. A query with no namespace matcher
-        # still runs (documented in docs/permissions.md → Accepted gaps).
-        for op, quoted in _PROM_NAMESPACE.findall(promql):
-            value = quoted[1:-1]
-            if op != "=" or value not in self._allowed:
-                raise ToolError(
-                    'PromQL may only select namespaces with namespace="<ns>" for a namespace '
-                    f"in K8S_ALLOWED_NAMESPACES ({', '.join(sorted(self._allowed))})"
-                )
+        # Best effort: Prometheus isn't namespace-scoped. Every namespace matcher must be
+        # namespace="<allowlisted>", and there must be at least one. A query that also has a
+        # selector without one (`up{namespace="demo"} or up`) still runs; closing that needs a
+        # PromQL parser or prom-label-proxy (docs/permissions.md → Accepted gaps).
+        matchers = _PROM_NAMESPACE.findall(promql)
+        if not matchers or any(
+            op != "=" or quoted[1:-1] not in self._allowed for op, quoted in matchers
+        ):
+            raise ToolError(
+                'PromQL must select namespaces with namespace="<ns>", each one in '
+                f"K8S_ALLOWED_NAMESPACES ({', '.join(sorted(self._allowed))})"
+            )
 
     @staticmethod
     def _kind(kind: str) -> str:

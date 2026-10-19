@@ -73,11 +73,15 @@ $(foreach v,$(TF_INPUTS),$(if $(strip $($v)),$(eval export $(call tf_var,$v) = $
 # Pinned so `make lint` gives the same answer everywhere. Bump deliberately.
 RUFF ?= uvx ruff@0.16.10
 PYTEST ?= uvx pytest@9.1.1
+# PyYAML matches backend/uv.lock.
+PYTEST_YAML ?= uvx --with pyyaml==6.0.3 pytest@9.1.1
 OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
 TFLINT ?= tflint
 HELMFILE ?= helmfile
 SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
+# Docker Compose v2 (the `docker compose` plugin), for docker-compose.yaml.
+COMPOSE ?= docker compose
 # The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
 BACKEND_RUN ?= cd backend && uv run --locked
 # k8s-mcp's own locked environment (mcp-server/k8s/uv.lock).
@@ -88,6 +92,11 @@ FRONTEND_DEPS := frontend/node_modules/.package-lock.json
 
 # Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
 HELMFILE_STATE := helm/helmfile.yaml.gotmpl
+# Helm, Helmfile, and helm-diff keep release records in ConfigMaps rather than Secrets, so CI's
+# deploy group needs no Secret access (docs/permissions.md). Not overridable from .env or the
+# shell: every run must use the same storage, or Helm can't find the existing releases.
+override HELM_DRIVER := configmap
+export HELM_DRIVER
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
@@ -111,11 +120,11 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-openapi lint-terraform lint-terraform-providers \
-	lint-shell lint-frontend helm-lint db-sql hash-password \
-	test-backend test-frontend test-contract test-integration test-k8s \
+	lint-shell lint-frontend lint-compose helm-lint helm-test db-sql hash-password \
+	test-all test-backend test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
-	local demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -124,9 +133,11 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-k8s-mcp lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-k8s-mcp lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend lint-compose ## Lint and format checks (run before every commit)
 
-test: test-hooks test-backend test-k8s-mcp test-contract test-terraform test-frontend ## Unit and contract tests (run before every commit)
+test: test-hooks test-backend test-k8s-mcp test-contract test-terraform test-compose test-frontend ## Unit and contract tests (run before every commit)
+
+test-all: test test-integration ## Every automated test: unit, contract, frontend, and integration (needs Docker)
 
 fmt: ## Format Python and Terraform in place
 	$(RUFF) format agent-hooks backend mcp-server/k8s
@@ -163,12 +174,41 @@ lint-terraform-providers: ## Fail if any Terraform root uses the helm or kuberne
 	fi; \
 	echo "make $@: no helm or kubernetes provider in terraform/"
 
-helm-lint: ## helmfile lint every release in helm/helmfile.yaml.gotmpl (skipped until it exists)
-	@if [ ! -f $(HELMFILE_STATE) ]; then \
-		echo "make $@: $(HELMFILE_STATE) doesn't exist yet, skipped"; exit 0; fi; \
-	if ! command -v $(HELMFILE) >/dev/null; then \
-		echo "make $@: $(HELMFILE) is not installed (see README → Prerequisites)" >&2; exit 1; fi; \
-	$(HELMFILE) --file $(HELMFILE_STATE) lint
+# Each configuration helm-lint renders: eks with placeholder Terraform outputs, the same with
+# EXPOSURE=alb and DOMAIN, and local (kind). No cluster, no AWS; helm/tests/values/ explains.
+HELM_LINT_CONFIGS := eks eks-alb local
+helm_config_args = $(strip \
+	$(if $(filter eks,$(1)),-e eks --state-values-file $(CURDIR)/helm/tests/values/eks.yaml) \
+	$(if $(filter eks-alb,$(1)),-e eks --state-values-file $(CURDIR)/helm/tests/values/eks.yaml \
+		--state-values-file $(CURDIR)/helm/tests/values/alb.yaml) \
+	$(if $(filter local,$(1)),-e local))
+
+helm-lint: ## helmfile lint + template (eks, eks with alb, local), then helm-test on the rendered output
+	@if ! command -v $(HELMFILE) >/dev/null; then \
+		echo "make $@: $(HELMFILE) is not installed (see README → Prerequisites);" \
+			"\`make helm-test\` checks the local charts with helm alone" >&2; exit 1; fi
+	@set -e; out=$$(mktemp -d); trap 'rm -rf "$$out"' EXIT; \
+	$(foreach c,$(HELM_LINT_CONFIGS), \
+		echo "--- $(c): helmfile $(call helm_config_args,$(c)) lint / template"; \
+		$(HELMFILE) --file $(HELMFILE_STATE) $(call helm_config_args,$(c)) lint; \
+		$(HELMFILE) --file $(HELMFILE_STATE) $(call helm_config_args,$(c)) template \
+			--output-dir "$$out/$(c)" >/dev/null;) \
+	HELM_RENDER_DIR="$$out" $(MAKE) --no-print-directory helm-test
+
+# Without HELM_RENDER_DIR the tests render our own charts with plain `helm template`.
+helm-test: ## Checks over our charts' rendered manifests: pod security, probes, RBAC, secrets by name
+	$(PYTEST_YAML) helm/tests -q -p no:cacheprovider
+	$(RUFF) check helm/tests
+	$(RUFF) format --check helm/tests
+
+lint-compose: ## ruff for compose/, and `docker compose config` wherever Docker is installed (CI)
+	$(RUFF) check compose
+	$(RUFF) format --check compose
+	@if ! command -v docker >/dev/null; then \
+		echo "make $@: docker isn't installed (the devcontainer has none); skipped docker compose config, CI runs it"; \
+		exit 0; \
+	fi; \
+	$(COMPOSE) config --quiet && echo "make $@: docker-compose.yaml is valid"
 
 lint-shell: ## shellcheck every script under scripts/ (pinned, through uvx)
 	$(SHELLCHECK) $$(find scripts -name '*.sh' -type f | sort)
@@ -213,6 +253,9 @@ test-backend: ## Backend unit tests, with app/services/ coverage >= 90%
 test-contract: ## FastAPI schema matches openapi.yaml
 	$(BACKEND_RUN) pytest tests/contract -q
 
+test-compose: ## docker-compose.yaml invariants: loopback ports, no literal secrets, pinned images (no Docker)
+	$(PYTEST_YAML) compose/tests -q
+
 test-integration: ## Backend integration tests on Postgres: Testcontainers (Docker) or CT_TEST_DATABASE_URL
 	$(BACKEND_RUN) pytest tests/integration -q -m integration
 
@@ -231,8 +274,20 @@ lint-frontend: $(FRONTEND_DEPS) ## ESLint, tsc, and src/api/schema.d.ts up to da
 	$(FRONTEND_RUN) typecheck
 	$(FRONTEND_RUN) check:api
 
-test-frontend: lint-frontend ## Frontend lint + typecheck, then Vitest (MSW, no network)
+# SKIP_E2E=1 leaves out the browser tests; CI's `test` job sets it because its own `e2e` job
+# runs them with a Playwright-installed Chromium.
+test-frontend: lint-frontend ## Frontend lint + typecheck, Vitest (MSW, no network), then test-e2e
 	$(FRONTEND_RUN) test
+ifneq ($(SKIP_E2E),1)
+	$(MAKE) --no-print-directory test-e2e
+endif
+
+# Browsers: CHROMIUM_PATH (set in the devcontainer), else `npx playwright install chromium`.
+test-e2e: $(FRONTEND_DEPS) ## Playwright in Chromium against `npm run dev:mock` (localhost only)
+	$(FRONTEND_RUN) test:e2e
+
+screenshots: $(FRONTEND_DEPS) ## Regenerate docs/screenshots/ from `npm run dev:mock` with Playwright
+	$(FRONTEND_RUN) screenshots
 
 test-k8s-mcp: ## k8s-mcp unit tests with a fake Kubernetes client (no cluster, no network)
 	$(K8S_MCP_RUN) pytest tests/unit -q -m "not kind" \
@@ -335,11 +390,26 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 
 ##@ Demo and evaluation
 
-local: env-check-local ## Full stack on kind + Compose, no AWS (stub)
-	$(call todo,the local-run workstream; no issue yet)
+# The kind half (kube-prometheus-stack and demo-app from the Helmfile `local` environment,
+# Alertmanager pointed at the Compose backend) and the worker and MCP services follow once #12,
+# #9, and #10 land; see #15.
+local: env-check-local ## Compose stack, no AWS: Postgres, ElasticMQ, backend, dashboard (kind part: #12)
+	$(COMPOSE) up --build --wait
+	@echo "make $@: dashboard http://localhost:$(or $(DASHBOARD_PORT),8080), API http://localhost:$(or $(BACKEND_PORT),8000)"
+	@if pw=$$($(COMPOSE) exec -T backend cat /run/consoletrack/admin-password 2>/dev/null); then \
+		echo "make $@: log in as admin with the generated local password: $$pw"; \
+	else \
+		echo "make $@: log in as admin with the password for ADMIN_PASSWORD_HASH in $(ENV_FILE)"; \
+	fi
+
+local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
+	$(COMPOSE) down --volumes --remove-orphans
+	@if command -v kind >/dev/null && kind get clusters 2>/dev/null | grep -qx consoletrack; then \
+		kind delete cluster --name consoletrack; \
+	fi
 
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
-	$(call todo,the local-run workstream; no issue yet. #9 provides scripts/replay-fixtures.py)
+	$(call todo,#9 (scripts/replay-fixtures.py and the worker's replay mode); see #15)
 
 demo: env-check-aws ## Run the three cluster fault scenarios (stub)
 	$(call todo,the agent loop workstream; no issue yet)

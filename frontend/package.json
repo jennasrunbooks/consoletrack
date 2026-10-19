@@ -16,7 +16,9 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test --project=e2e",
+    "screenshots": "playwright test --project=screenshots"
   },
   "dependencies": {
     "@fontsource/ibm-plex-mono": "5.3.0",
@@ -28,11 +30,12 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
     "@testing-library/dom": "10.4.2",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "14.6.8",
-    "@types/node": "24.19.2",
+    "@types/node": "26.6.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",

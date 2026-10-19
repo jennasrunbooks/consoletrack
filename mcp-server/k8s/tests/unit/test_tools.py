@@ -324,7 +324,7 @@ def test_query_prometheus_instant(tools: K8sTools, prom: FakePrometheus) -> None
 
 
 def test_query_prometheus_range(tools: K8sTools, prom: FakePrometheus) -> None:
-    tools.query_prometheus("container_memory_working_set_bytes", minutes=30)
+    tools.query_prometheus('container_memory_working_set_bytes{namespace="demo"}', minutes=30)
 
     ((method, args),) = prom.calls
     assert method == "query_range"
@@ -335,7 +335,7 @@ def test_query_prometheus_range(tools: K8sTools, prom: FakePrometheus) -> None:
 @pytest.mark.parametrize("minutes", [-1, 61, 10_000])
 def test_query_prometheus_range_cap(tools: K8sTools, prom: FakePrometheus, minutes: int) -> None:
     with pytest.raises(ToolError, match="minutes must be between 0"):
-        tools.query_prometheus("up", minutes)
+        tools.query_prometheus('up{namespace="demo"}', minutes)
     assert prom.calls == []
 
 
@@ -346,6 +346,9 @@ def test_query_prometheus_range_cap(tools: K8sTools, prom: FakePrometheus, minut
         'up{namespace=~".+"}',
         'up{namespace!="demo"}',
         "up{namespace!~'demo'}",
+        "up",
+        'sum(container_memory_working_set_bytes{pod="x"})',
+        'up{job="namespace"}',
         'sum(up{namespace="demo"}) + sum(up{namespace="consoletrack"})',
     ],
 )
@@ -360,7 +363,7 @@ def test_query_prometheus_namespace_matchers(
 def test_query_prometheus_truncates_series(tools: K8sTools, prom: FakePrometheus) -> None:
     prom.data = {"resultType": "vector", "result": [{"metric": {"i": str(i)}} for i in range(50)]}
 
-    result = tools.query_prometheus("up")
+    result = tools.query_prometheus('up{namespace="demo"}')
 
     assert result["series_count"] == 50
     assert result["truncated"] is True
@@ -370,7 +373,7 @@ def test_query_prometheus_truncates_series(tools: K8sTools, prom: FakePrometheus
 def test_query_prometheus_errors(tools: K8sTools, prom: FakePrometheus) -> None:
     prom.error = PrometheusError("Prometheus timed out after 10.0s")
     with pytest.raises(ToolError, match="timed out"):
-        tools.query_prometheus("up")
+        tools.query_prometheus('up{namespace="demo"}')
 
 
 def test_query_prometheus_unconfigured(settings, kube: FakeKube) -> None:

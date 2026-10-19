@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     # The only namespaces any tool may read. Must match the namespaces that have a k8s-mcp Role
-    # (rbac/k8s-mcp.yaml); the server refuses to start with an empty list (fail closed).
+    # (the consoletrack chart's `allowedNamespaces`); the server refuses to start with an empty
+    # list (fail closed).
     k8s_allowed_namespaces: Annotated[list[str], NoDecode] = Field(min_length=1)
     # kubeconfig context for local use. Ignored in-cluster, where the ServiceAccount token is used.
     k8s_context: str | None = None

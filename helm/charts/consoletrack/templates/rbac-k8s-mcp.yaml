@@ -1,0 +1,39 @@
+{{- /*
+k8s-mcp's read-only access (product-spec.md → Identity and access): one Role and RoleBinding
+per allowlisted namespace, nothing cluster-wide. Deliberately absent: secrets, configmaps,
+pods/exec, pods/attach, pods/portforward, and every write verb. Moved here from
+mcp-server/k8s/rbac/k8s-mcp.yaml (#10); helm/tests/test_rendered.py checks all of this.
+*/}}
+{{- range .Values.allowedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-mcp-read
+  namespace: {{ . }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-mcp-read
+  namespace: {{ . }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-mcp-read
+subjects:
+  - kind: ServiceAccount
+    name: k8s-mcp
+    namespace: {{ $.Release.Namespace }}
+{{- end }}

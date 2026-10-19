@@ -1,9 +1,11 @@
-"""kind fixtures: apply the real RBAC, then connect as the k8s-mcp ServiceAccount.
+"""kind fixtures: test objects on top of the chart's RBAC, and the k8s-mcp ServiceAccount's token.
 
 Needs K8S_MCP_KIND_KUBECONFIG, the admin kubeconfig of a throwaway kind cluster that
-`scripts/test-k8s.sh` creates (`make test-k8s`, run in CI). Without it every test here is
-skipped, so `pytest` collects them anywhere without touching a cluster. Never point it at a real
-cluster: the setup applies manifests.
+`scripts/test-k8s.sh` creates (`make test-k8s`, run in CI). The script also creates the
+`consoletrack` and `demo` namespaces and applies the consoletrack chart's rendered k8s-mcp RBAC
+(helm/charts/consoletrack/templates/rbac-k8s-mcp.yaml, serviceaccounts.yaml). Without it every
+test here is skipped, so `pytest` collects them anywhere without touching a cluster. Never point
+it at a real cluster: the setup applies manifests.
 """
 
 from __future__ import annotations
@@ -16,8 +18,6 @@ from pathlib import Path
 import pytest
 from kubernetes import client, config
 
-ROOT = Path(__file__).resolve().parents[2]
-RBAC = ROOT / "rbac" / "k8s-mcp.yaml"
 FIXTURES = Path(__file__).with_name("fixtures.yaml")
 SERVICE_ACCOUNT = "system:serviceaccount:consoletrack:k8s-mcp"
 
@@ -36,9 +36,8 @@ def kubectl(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
 
 @pytest.fixture(scope="session")
 def cluster() -> None:
-    kubectl("create", "namespace", "consoletrack", check=False)
-    kubectl("create", "namespace", "demo", check=False)
-    kubectl("apply", "-f", str(RBAC))
+    # The ServiceAccount comes from the chart; fail early with a clear message if it's missing.
+    kubectl("-n", "consoletrack", "get", "serviceaccount", "k8s-mcp")
     kubectl("apply", "-f", str(FIXTURES))
     kubectl("-n", "demo", "rollout", "status", "deployment/demo-app", "--timeout=120s")
 

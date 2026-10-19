@@ -1,4 +1,5 @@
-"""k8s-mcp against a real API server with the real RBAC (rbac/k8s-mcp.yaml)."""
+"""k8s-mcp against a real API server with the RBAC the consoletrack chart ships
+(helm/charts/consoletrack/templates/rbac-k8s-mcp.yaml)."""
 
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  globalIgnores(["dist", "public", "src/api/schema.d.ts"]),
+  globalIgnores(["dist", "public", "src/api/schema.d.ts", "playwright-report", "test-results"]),
   {
     files: ["**/*.{ts,tsx}"],
     extends: [
@@ -35,6 +35,12 @@ export default defineConfig([
     // Test helpers export components alongside functions; fast refresh doesn't apply to them.
     files: ["src/test/**", "**/*.test.{ts,tsx}"],
     rules: { "react-refresh/only-export-components": "off" },
+  },
+  {
+    // Playwright tests run in Node; its fixture callback is named `use`, which isn't React's.
+    files: ["e2e/**", "playwright.config.ts"],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+    rules: { "react-hooks/rules-of-hooks": "off" },
   },
   {
     // Only src/api/ talks to the backend (AGENTS.md → Frontend).

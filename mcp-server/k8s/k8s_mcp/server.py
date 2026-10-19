@@ -113,8 +113,8 @@ def build_server(
             ),
         ] = 0,
     ) -> dict[str, Any]:
-        """Run a PromQL query, e.g. a container's memory trend before an OOM kill. Namespace
-        matchers must use namespace="<ns>" with an allowlisted namespace."""
+        """Run a PromQL query, e.g. a container's memory trend before an OOM kill. Every
+        selector should carry namespace="<ns>" for an allowlisted namespace; at least one must."""
         audit("query_prometheus", None)
         return tools.query_prometheus(promql, minutes)
 

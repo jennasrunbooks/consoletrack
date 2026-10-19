@@ -51,7 +51,7 @@ development against a local kind cluster. `.mcp.json` at the repo root starts it
 - **Identity.** Locally it uses your kubeconfig context, so RBAC is whatever that context has;
   the in-server checks are what keep it read-only there. In the cluster it runs as the
   `k8s-mcp` ServiceAccount (`get`/`list`/`watch` only). See
-  [permissions.md](permissions.md#triage-agent-runtime) and its accepted gaps.
+  [permissions.md](permissions.md#k8s-mcp-checks-inside-the-server) and its accepted gaps.
 
 Adding a tool: it must be a read, go in the spec's tool table, and come with the matching RBAC
 change in the same PR (`AGENTS.md` → Hard rules, rule 6), plus a unit test and, for a new

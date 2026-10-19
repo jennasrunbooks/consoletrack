@@ -3,7 +3,7 @@
 Read-only FastMCP server the triage agent uses to see the cluster: workloads, pods, logs,
 events, rollout history, Prometheus queries. Streamable HTTP on `:8080/mcp` in the cluster,
 stdio when Claude Code starts it through the repo's `.mcp.json`. Spec: `product-spec.md` →
-Triage agent and guardrails; permissions: [docs/permissions.md](../../docs/permissions.md#triage-agent-runtime).
+Triage agent and guardrails; permissions: [docs/permissions.md](../../docs/permissions.md#kubernetes-rbac).
 
 ## Tools
 
@@ -17,7 +17,7 @@ All six are reads (`readOnlyHint: true`). Each refuses a namespace outside
 | `get_pod_logs(namespace, pod, container, previous, tail)` | Last lines in `untrusted_data`, redacted | `tail` clamped to 1–200, 2,000 chars per line, 256 KiB per request |
 | `get_events(namespace, involved_object)` | Warning events, newest first, in `untrusted_data`, redacted | 50 events; `involved_object` is `name` or `Kind/name` |
 | `get_rollout_history(namespace, deployment)` | The Deployment's ReplicaSets: revision, images, created, replicas | 10 revisions |
-| `query_prometheus(promql, minutes)` | `minutes=0` instant query, else a range ending now | `PROMETHEUS_MAX_MINUTES` (60), `PROMETHEUS_TIMEOUT_SECONDS` (10), 20 series; namespace matchers must be `namespace="<allowlisted>"` |
+| `query_prometheus(promql, minutes)` | `minutes=0` instant query, else a range ending now | `PROMETHEUS_MAX_MINUTES` (60), `PROMETHEUS_TIMEOUT_SECONDS` (10), 20 series; at least one namespace matcher, each `namespace="<allowlisted>"` |
 
 `/healthz` is liveness; `/readyz` lists one pod in every allowlisted namespace, so it fails
 if the API server is unreachable or the RBAC is missing.
@@ -26,7 +26,7 @@ if the API server is unreachable or the RBAC is missing.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `K8S_ALLOWED_NAMESPACES` | required | Comma-separated. Must match the namespaces with a Role in `rbac/k8s-mcp.yaml`; empty refuses to start |
+| `K8S_ALLOWED_NAMESPACES` | required | Comma-separated. Must match the chart's `allowedNamespaces` (each gets a k8s-mcp Role); empty refuses to start |
 | `K8S_CONTEXT` | current context | kubeconfig context; ignored in-cluster |
 | `PROMETHEUS_URL` | unset | e.g. `http://kube-prometheus-stack-prometheus.monitoring:9090`; unset makes `query_prometheus` return an error |
 | `PROMETHEUS_TIMEOUT_SECONDS` | `10` | Sent to Prometheus as `timeout`, and the client's own limit (+1 s) |
@@ -36,10 +36,12 @@ if the API server is unreachable or the RBAC is missing.
 
 ## RBAC
 
-`rbac/k8s-mcp.yaml` holds the ServiceAccount (`consoletrack/k8s-mcp`) and one Role +
-RoleBinding for `demo`. #12 moves it into `helm/charts/consoletrack/templates/` and loops the
-Role over the allowlist. It grants `get`/`list`/`watch` on pods, pods/log, events, deployments,
-replicasets, statefulsets, and nothing else.
+The consoletrack chart owns it, so there is one source:
+`helm/charts/consoletrack/templates/serviceaccounts.yaml` (the `consoletrack/k8s-mcp`
+ServiceAccount) and `templates/rbac-k8s-mcp.yaml` (a `k8s-mcp-read` Role and RoleBinding in each
+of `allowedNamespaces`, `[demo]` by default). It grants `get`/`list`/`watch` on pods, pods/log,
+events, deployments, replicasets, statefulsets, and nothing else. `helm/tests/test_rendered.py`
+checks the rendered Role; `make test-k8s` checks it against a real API server.
 
 ## Tests
 
@@ -50,7 +52,9 @@ make test-k8s       # kind cluster + real RBAC (needs Docker; runs in CI, not in
 ```
 
 `make test-k8s` (`scripts/test-k8s.sh`) creates a throwaway kind cluster with its own kubeconfig
-file, applies `rbac/k8s-mcp.yaml` and `tests/kind/fixtures.yaml`, then checks with
+file, creates the `consoletrack` and `demo` namespaces, applies the chart's k8s-mcp RBAC
+(rendered with `helm template ... --show-only templates/rbac-k8s-mcp.yaml --show-only
+templates/serviceaccounts.yaml`) and `tests/kind/fixtures.yaml`, then checks with
 `kubectl auth can-i` that the ServiceAccount is denied Secrets, ConfigMaps, exec, writes, and
 other namespaces, and runs the tools with the ServiceAccount's own token. `KEEP_CLUSTER=true`
 keeps the cluster for re-runs. Without `K8S_MCP_KIND_KUBECONFIG` the kind tests are collected
@@ -65,9 +69,21 @@ port-forward) in the shell that starts Claude Code. It needs a kubeconfig, so it
 host, not in the devcontainer (which has none by design).
 
 With your own kind admin context, RBAC doesn't narrow anything; only the in-server checks
-apply. To get the real ServiceAccount's permissions locally, apply `rbac/k8s-mcp.yaml` to kind
-yourself and point `KUBECONFIG` at a file that uses its token
-(`kubectl -n consoletrack create token k8s-mcp`).
+apply. To get the real ServiceAccount's permissions locally, apply the chart's k8s-mcp RBAC to
+kind (the same `helm template` render `scripts/test-k8s.sh` uses) and point `KUBECONFIG` at a
+file that uses its token (`kubectl -n consoletrack create token k8s-mcp`).
+
+## Docker Compose
+
+`docker-compose.yaml` has a `k8s-mcp` service in the `kind` profile, so plain `make local` doesn't
+start it. With the `consoletrack` kind cluster running:
+
+```bash
+kind get kubeconfig --internal --name consoletrack > kind-internal.kubeconfig   # gitignored
+COMPOSE_PROFILES=kind make local
+```
+
+It joins kind's Docker network to reach the API server and isn't published on the host.
 
 ## Image
 

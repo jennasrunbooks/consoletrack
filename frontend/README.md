@@ -15,7 +15,9 @@ incidents, evidence, and the postmortem editor come in PR 2; their routes are pl
 | Dev against mocks, no backend | `npm run dev:mock` → http://localhost:5173 (log in as `admin`/`admin` or `viewer`/`viewer`) |
 | Dev against a backend on :8000 | `npm run dev` (`CT_BACKEND_URL` to point elsewhere); open it on `localhost`, not the printed `Network:` address, or the browser drops the `Secure` session cookie |
 | Regenerate API types after editing `openapi.yaml` | `npm run gen:api` |
-| Lint, typecheck, API types up to date, tests | `make test-frontend` from the repo root |
+| Lint, typecheck, API types up to date, tests | `make test-frontend` from the repo root (Vitest, then `make test-e2e`; `SKIP_E2E=1` leaves the browser out) |
+| Browser tests (Playwright, Chromium) | `make test-e2e`: starts `npm run dev:mock` on 127.0.0.1:5173; uses `CHROMIUM_PATH` if set, else `npx playwright install chromium` once |
+| Regenerate `docs/screenshots/` | `make screenshots` (1440×900 at 2×, both themes) |
 | Production build | `npm run build` → `dist/` |
 | Image (nginx, non-root, :8080, `/healthz`) | `docker buildx build --platform linux/arm64 frontend/` |
 
@@ -31,6 +33,7 @@ src/pages/        login, change log (filters in the URL), PR 2 placeholders
 src/lib/          formatting, theme, small data hooks
 src/mocks/        MSW handlers + fixtures shared by tests and `npm run dev:mock`
 src/test/         Vitest setup and render helpers
+e2e/              Playwright specs; fixtures.ts fails any test that requests beyond localhost
 ```
 
 ## Rules this code keeps
@@ -45,7 +48,9 @@ src/test/         Vitest setup and render helpers
 - **Writes are admin-only.** Use `AdminButton`: viewers see it disabled with an "Admin only"
   tooltip; the backend enforces the same with 403.
 - **Tests never touch the network.** MSW answers every request and fails the test on any
-  request without a handler. Fixtures are typed against `schema.d.ts`, so a contract change
+  request without a handler. Playwright tests abort and fail on any request beyond localhost,
+  and Chromium resolves no other hostname. They seed mock state through `window.__ctMock`
+  (`src/mocks/browser.ts`), since MSW's service worker answers before `page.route` sees it. Fixtures are typed against `schema.d.ts`, so a contract change
   that breaks them fails `typecheck`.
 - **Colors are CSS variables** in `src/styles.css`, one set per theme. The theme follows the OS
   until the header toggle sets it; `public/theme-init.js` applies it before first paint.

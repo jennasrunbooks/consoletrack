@@ -1,0 +1,44 @@
+# The demo app's Kubernetes side (namespace demo). Its AWS side - IAM role, S3 bucket, security
+# group, and the demo:demo-app Pod Identity association - is terraform/demo-app/us-east-1.
+
+image:
+  repository: ghcr.io/jennasrunbooks/consoletrack-demo-app
+  # Empty = the chart's appVersion. deploy.yaml sets the commit SHA.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicas: 1
+port: 8080
+
+# The object it reads on every request (terraform/demo-app/us-east-1 outputs). Empty bucket =
+# no AWS (kind): the app serves without the S3 read.
+aws:
+  region: us-east-1
+  bucket: ""
+  objectKey: seed.txt
+
+resources:
+  requests: {cpu: 10m, memory: 64Mi}
+  limits: {cpu: 200m, memory: 128Mi}
+
+probes:
+  path: /healthz
+
+# Cluster faults for the baseline scenarios (`make demo`, the break-demo skill). At most one at a
+# time; turning it off again is the fix the agent should find.
+faults:
+  # Memory request and limit drop to oomMemoryLimit and the app allocates allocateMi at startup,
+  # so the container is OOMKilled. oom-memory-bump's 2x (128Mi) fits again, so the auto-fix can
+  # succeed.
+  oom: false
+  oomMemoryLimit: 64Mi
+  allocateMi: 80
+  # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
+  badImage: false
+  badImageTag: does-not-exist
+  # Liveness and readiness on a path the app doesn't serve: restarts, never Ready.
+  badProbe: false
+  badProbePath: /not-a-health-check
+
+serviceMonitor:
+  enabled: true

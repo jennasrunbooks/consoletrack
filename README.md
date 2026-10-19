@@ -90,12 +90,14 @@ cp .env.example .env
 export ANTHROPIC_API_KEY=...   # or keep it in a password manager: op run --env-file=.env -- make local
 make local                     # Docker Compose + a kind cluster with the demo app
 make demo-replay               # replays recorded CloudTrail events into the local queue
-# open http://localhost:5173
+# open http://localhost:8080 (DASHBOARD_PORT)
 ```
 
-The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything.
+The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the database volume.
 
-**Logging in.** There are two fixed accounts, `admin` (can act) and `viewer` (read-only). Run `make hash-password` once per account and paste each output into `.env` as `ADMIN_PASSWORD_HASH` and `VIEWER_PASSWORD_HASH`; it prints an argon2id hash with every `$` doubled, which `.env` needs because make reads it. An account with no hash can't log in. The backend also needs a `SESSION_SECRET` of at least 32 bytes and refuses to start without one; Compose generates it for local runs. Five failed logins for one username, or from one address, within five minutes lock further attempts for five minutes (`429`).
+**What runs today.** `make local` starts the Compose stack from [docker-compose.yaml](docker-compose.yaml): Postgres 16, ElasticMQ (the SQS-compatible queue, with queues named like the real ones), the backend (it runs `alembic upgrade head` on start), and the dashboard, which also routes `/api` to the backend. It builds the images for your machine (amd64 or arm64), waits for every healthcheck, and binds every port to `127.0.0.1` only. Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the kind cluster with kube-prometheus-stack and the demo app (#12), the worker and `make demo-replay` (#9), and `k8s-mcp` and `aws-mcp` (#9, #10).
+
+**Logging in.** There are two fixed accounts, `admin` (can act) and `viewer` (read-only). Locally you can skip the setup below: if `.env` sets no `ADMIN_PASSWORD_HASH`, Compose generates an admin password on first start and `make local` prints it, and it generates the `SESSION_SECRET` the same way. Both live in a Docker volume until `make local-down`. Otherwise, run `make hash-password` once per account and paste each output into `.env` as `ADMIN_PASSWORD_HASH` and `VIEWER_PASSWORD_HASH`; it prints an argon2id hash with every `$` doubled, which `.env` needs because make reads it. Start the stack with `make local` rather than a bare `docker compose up`, so the hash reaches Compose already un-doubled. An account with no hash can't log in. The backend also needs a `SESSION_SECRET` of at least 32 bytes and refuses to start without one. Five failed logins for one username, or from one address, within five minutes lock further attempts for five minutes (`429`).
 
 The session cookie is always `Secure`, with no setting to turn that off. Chrome and Firefox treat `http://localhost` as a secure context and keep the cookie over plain HTTP. Safari may not: if login seems to succeed but the next page says you're logged out, use Chrome or Firefox.
 
@@ -260,6 +262,7 @@ make tf-validate               # terraform init -backend=false + validate for ev
 | Integration | pytest + Testcontainers Postgres + ElasticMQ | `make test-integration` |
 | Cluster | `k8s-mcp` against kind with the real RBAC | `make test-k8s` |
 | Agent eval (manual) | fault scenarios with the real model | `make eval` |
+| All of the above but the cluster and eval layers | one command; integration needs Docker | `make test-all` |
 
 | Workflow | Trigger | Does |
 |---|---|---|
@@ -278,6 +281,7 @@ consoletrack/
 ├── Makefile                   # every command: preflight, up, deploy, demo-*, revert, down
 ├── .env.example               # the only config file (copy to .env)
 ├── docker-compose.yaml        # local stack, no AWS
+├── compose/                   # Compose config: ElasticMQ queues, the dashboard's /api route
 ├── backend/                   # FastAPI API, intake worker, triage agent (Python, uv)
 ├── frontend/                  # React + Vite + TypeScript dashboard
 ├── mcp-server/

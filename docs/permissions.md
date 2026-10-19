@@ -18,9 +18,9 @@ mistakes:
 | `cloudtrail:LookupEvents` on `*` (aws-mcp) | `terraform/consoletrack/us-east-1/pod-identity.tf` | The action has no resource-level permissions | Not possible in IAM; it's a read |
 | `ec2:DescribeSecurityGroups` on `*` (aws-mcp) | same | Same: EC2 describe calls are account-wide | Not possible in IAM; it's a read |
 | EKS API public endpoint open to `0.0.0.0/0` | `terraform/consoletrack/us-east-1/eks.tf` | GitHub-hosted runners deploy through it, and their address ranges don't fit EKS's 40-CIDR limit. Every request still needs IAM authentication and an access entry; nodes use the private endpoint | Narrow `EKS_PUBLIC_ACCESS_CIDRS` (one variable), or turn public access off with a pull-based deploy (spec, Production hardening step 4) |
-| `query_prometheus` isn't namespace-scoped (k8s-mcp) | `mcp-server/k8s/k8s_mcp/tools.py` | Prometheus has no per-namespace access control. k8s-mcp refuses any `namespace` matcher other than `namespace="<allowlisted>"`, but a query with no namespace matcher sees every namespace's metrics. Metrics hold numbers and labels, not Secret data | Put a label-enforcing proxy (prom-label-proxy) in front of Prometheus for k8s-mcp |
+| `query_prometheus` isn't namespace-scoped (k8s-mcp) | `mcp-server/k8s/k8s_mcp/tools.py` | Prometheus has no per-namespace access control. k8s-mcp requires at least one `namespace` matcher and refuses any that isn't `namespace="<allowlisted>"`, but a query that also has an unscoped selector (`up{namespace="demo"} or up`) still sees every namespace's metrics. Metrics hold numbers and labels, not Secret data | Put a label-enforcing proxy (prom-label-proxy) in front of Prometheus for k8s-mcp |
 | k8s-mcp's `/mcp` endpoint has no authentication | `mcp-server/k8s/` | Every tool is a read inside the allowlisted namespaces, with RBAC behind it; only the triage worker should reach it | The chart's NetworkPolicy (#12) admits only the backend/worker pods; a shared bearer token or mTLS later |
-| `.mcp.json` runs k8s-mcp with your own kubeconfig | repo root `.mcp.json` | Local kind only (`K8S_CONTEXT`, default `kind-consoletrack`); the in-server checks (namespace allowlist, no Secrets/ConfigMaps, env values redacted) still apply, but RBAC is whatever your context allows | Point `KUBECONFIG` at a kubeconfig for the `k8s-mcp` ServiceAccount's token (see `mcp-server/k8s/README.md`) |
+| `.mcp.json` runs k8s-mcp with your own kubeconfig | repo root `.mcp.json` | Local kind only (`K8S_CONTEXT`, default `kind-consoletrack`); the in-server checks (namespace allowlist, no Secrets/ConfigMaps, env values redacted) still apply, but RBAC is whatever your context allows | Point `KUBECONFIG` at a kubeconfig for the `k8s-mcp` ServiceAccount's token (see `mcp-server/k8s/README.md` → Local use) |
 
 The node role has AmazonEC2ContainerRegistryReadOnly attached (the module’s default); the permissions boundary limits it to GetAuthorizationToken, BatchGetImage, and GetDownloadUrlForLayer.
 
@@ -36,7 +36,7 @@ bypassed.
 | GitHub token | Fine-grained PAT, owned by a human (see the spec's "Development-time access") | Contents and PRs only. No Workflows permission, so pushes that touch `.github/workflows/` are rejected; no Administration, Secrets, or Environments, so no ruleset, secret, or environment changes. | Pushing feature branches and opening PRs, which is the job. |
 | `main` ruleset | GitHub repo settings | Direct pushes and merges to `main`: everything needs a PR with your approval and passing CI. A commit made on local `main` can't land. | What's in the PR; that's what review is for. |
 | Environments | GitHub environments `consoletrack-apply`, `consoletrack-revert` (with the Terraform and revert workflows) | `terraform apply` and Revert runs wait for a named reviewer, and only those environments' OIDC roles can write to AWS. | Plans, which are read-only. |
-| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `make helm-lint`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
+| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `make helm-lint`, `make helm-test`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
 | `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env` and the common `.env.<name>` variants (listed one by one, because deny globs can't exclude `.env.example`, which the agent maintains), editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `helmfile apply/sync/destroy/delete/init`, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
 | PreToolUse guard | `agent-hooks/guard.py` | Tokenizes each command and file path and blocks everything in `AGENTS.md → Hard rules` that a tool call can break, including chained, wrapped, and nested forms. For `helmfile` it allows only known reads (`lint`, `template`, `diff`, `deps`, `build`, `list`, …) after any global flags, and blocks helm write verbs passed through `--` or `--args`. It also rejects a `*.tf` edit that adds the Terraform `helm` or `kubernetes` provider, which `make lint` (`lint-terraform-providers`) checks again for humans and shell writes. See [agent-extension-pack.md](agent-extension-pack.md#hooks). | See "What the guard can't see" below. |
 | PostToolUse lint | `agent-hooks/lint_edited.py` | Lint errors in edited Python, frontend, and Terraform files, reported back in the same turn. | It's a quality check, not a security control. |
@@ -107,16 +107,26 @@ the spec's reviewer setup), and a human reviews every PR, including any script t
   `up`, `down`, `addons`, `deploy`, `revert`, `demo-*`, `domain*`, `bootstrap`, `audit-rbac`, or
   `test-k8s` (kind). They always prompt, and the agent's own PRs follow this rule too.
 
-## Triage agent (runtime)
+## Kubernetes RBAC
 
-The agent sees the cluster only through `k8s-mcp`, and AWS only through `aws-mcp`. Each check
-below holds on its own if the prompt is subverted.
+Everything the `consoletrack` chart grants is a namespaced Role; the app charts create no
+ClusterRole or ClusterRoleBinding (`helm/tests/test_rendered.py` checks the rendered output).
 
-| Principal | Where it's set | Allowed | Explicitly not allowed |
+| Subject | Role, namespaces | Allowed | Not allowed |
 | --- | --- | --- | --- |
-| `k8s-mcp` ServiceAccount (`consoletrack/k8s-mcp`) | `mcp-server/k8s/rbac/k8s-mcp.yaml` (moves into the chart with #12): one Role + RoleBinding per namespace in `K8S_ALLOWED_NAMESPACES` (`demo` for the course) | `get`, `list`, `watch` on `pods`, `pods/log`, `events`, `deployments`, `replicasets`, `statefulsets` in those namespaces | Secrets, ConfigMaps, `pods/exec`, `pods/attach`, `pods/portforward`, any write verb, any other namespace, any cluster-scoped resource. `make test-k8s` asserts each with `kubectl auth can-i` against kind |
+| ServiceAccount `consoletrack:k8s-mcp` | `k8s-mcp-read` in each of `allowedNamespaces` (`demo`) | get, list, watch on pods, pods/log, events, deployments, replicasets, statefulsets | Secrets, ConfigMaps, exec, attach, port-forward, any write, any other namespace |
+| ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
+| Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create, including Helm's release records (ConfigMaps, `HELM_DRIVER=configmap`); read pods, logs, events; port-forward for the smoke test | Secrets, anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
 
-Inside the server, in front of RBAC (`mcp-server/k8s/k8s_mcp/tools.py`):
+Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, and the
+canary reach AWS through Pod Identity's own projected token, and the frontend and demo app call
+nothing. `make audit-rbac` prints the effective permissions per ServiceAccount.
+
+### k8s-mcp: checks inside the server
+
+The triage agent sees the cluster only through `k8s-mcp`. In front of the RBAC above, the
+server itself (`mcp-server/k8s/k8s_mcp/tools.py`) holds each of these on its own if the prompt
+is subverted:
 
 - namespaces outside `K8S_ALLOWED_NAMESPACES` are refused before any API call, and the server
   won't start with an empty list;
@@ -128,10 +138,15 @@ Inside the server, in front of RBAC (`mcp-server/k8s/k8s_mcp/tools.py`):
   string passwords, private keys), lines capped at 200 and 2,000 characters each;
 - unexpected errors are masked; only the scope refusals' messages reach the model.
 
+`make test-k8s` renders the chart's `rbac-k8s-mcp.yaml` and `serviceaccounts.yaml`, applies them
+to a throwaway kind cluster, and checks every allow and deny in the `k8s-mcp` row with
+`kubectl auth can-i`, so the test proves the RBAC that ships.
+
 ## CI deploy role
 
-`deploy.yaml`'s OIDC role is mapped to a namespaced Role in `consoletrack` and `demo`, and the
-workflow only ever runs `helmfile -l tier=app apply` (the `consoletrack` and `demo-app`
-releases). The `tier=addons` releases (Gateway API CRDs, kube-prometheus-stack, cloudnative-pg,
+`deploy.yaml`'s OIDC role is mapped to the `consoletrack-deployers` group, bound to a namespaced
+Role in `consoletrack` and `demo` (above), and the workflow only ever runs
+`helmfile -l tier=app apply` (the `consoletrack` and `demo-app` releases). The bindings come
+from the `consoletrack` chart itself, so the first `make deploy` is a human's. The `tier=addons` releases (Gateway API CRDs, kube-prometheus-stack, cloudnative-pg,
 the Load Balancer Controller, ExternalDNS) need cluster-wide rights, so only a human applies
 them, with `make addons`. Terraform never installs anything inside Kubernetes.

@@ -12,6 +12,8 @@ is [`../openapi.yaml`](../openapi.yaml); the layering and both state machines ar
 | `app/services/` | Change and incident state machines, Accept, Alertmanager processing, intake health |
 | `app/db/` | SQLAlchemy models, repository protocols and their SQL versions, Alembic migrations |
 | `app/schemas.py` | API models matching `openapi.yaml` |
+| `app/compose_entrypoint.py` | Docker Compose only: generated local secrets, `alembic upgrade head`, uvicorn |
+| `Dockerfile` | The API and worker image (non-root, locked uv environment); arm64 on EKS |
 | `app/intake/`, `app/agents/` | Filled by #9 (intake worker) and #10 (triage agent) |
 | `tests/unit/` | Fast tests on in-memory repositories (no database) |
 | `tests/contract/` | `app.openapi()` vs `../openapi.yaml` |

@@ -1,0 +1,119 @@
+# Dashboard: the React build on unprivileged nginx (:8080). With exposure=alb the Gateway routes
+# /api to the backend before it reaches nginx. With port-forward there is no Gateway, so nginx
+# gets the /api proxy below and `make open` port-forwards this Service.
+{{- $proxy := ne .Values.exposure "alb" }}
+{{- define "consoletrack.frontendNginxConf" -}}
+server {
+    listen {{ .Values.frontend.port }};
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://backend.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.backend.port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /assets/ {
+        include /etc/nginx/security-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    location / {
+        include /etc/nginx/security-headers.conf;
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+}
+{{- end }}
+{{- if $proxy }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-nginx
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "frontend") | nindent 4 }}
+data:
+  # frontend/nginx.conf plus the /api route the Gateway provides with exposure=alb, so the
+  # browser talks to one origin (the session cookie is SameSite=Strict).
+  default.conf: |
+    {{- include "consoletrack.frontendNginxConf" . | nindent 4 }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "frontend") | nindent 4 }}
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "frontend") | nindent 8 }}
+      {{- if $proxy }}
+      annotations:
+        checksum/nginx: {{ include "consoletrack.frontendNginxConf" . | sha256sum }}
+      {{- end }}
+    spec:
+      serviceAccountName: frontend
+      automountServiceAccountToken: false
+      securityContext:
+        # nginx-unprivileged runs as uid 101.
+        {{- include "consoletrack.podSecurityContext" (dict "uid" 101) | nindent 8 }}
+      containers:
+        - name: frontend
+          image: {{ include "consoletrack.image" (dict "ctx" $ "image" "frontend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.frontend.port }}
+          {{- include "consoletrack.httpProbes" (dict "port" "http" "live" "/healthz" "ready" "/healthz") | nindent 10 }}
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          securityContext:
+            {{- include "consoletrack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            # nginx-unprivileged keeps its pid file and temp paths under /tmp.
+            - {name: tmp, mountPath: /tmp}
+            {{- if $proxy }}
+            - {name: nginx, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true}
+            {{- end }}
+      volumes:
+        {{- include "consoletrack.tmpVolume" . | nindent 8 }}
+        {{- if $proxy }}
+        - name: nginx
+          configMap:
+            name: frontend-nginx
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "frontend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "frontend") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.frontend.port }}
+      targetPort: http
