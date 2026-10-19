@@ -12,13 +12,15 @@ locals {
   # patterns/changes.json is the whole rule, tested by tests/test_event_pattern.py. It keeps:
   #   write calls (readOnly false) to IAM, EC2, S3, KMS, and EKS;
   # and drops:
-  #   pipeline sessions: ct-gh-* roles under a gh-<run id> session name (the roles' trust
-  #   policies require that name, so a person can't hide behind it);
+  #   pipeline sessions: ct-gh-* roles under a gh-<run id> session name, via $or on the role
+  #   name and principalId (the roles' trust policies require that name, so a person can't
+  #   hide behind it);
   #   AWS services acting on your behalf: userIdentity.invokedBy set to a service such as
   #   ec2.amazonaws.com. "AWS Internal" is kept: the console makes some S3 calls that way, and
   #   those are exactly the changes to catch;
-  #   ConsoleTrack's own platform roles: the EKS cluster and node roles (ct-eks-*), CNI, EBS
-  #   CSI, Load Balancer Controller, and ExternalDNS. ct-canary is deliberately not listed:
+  #   ConsoleTrack's own platform roles, by role-name prefix: the EKS cluster and node roles
+  #   (ct-eks-), CNI, EBS CSI, Load Balancer Controller, and ExternalDNS. Prefixes, not ARN
+  #   wildcards: EventBridge rejects wildcard patterns it finds too complex. ct-canary is deliberately not listed:
   #   its tag write must arrive to prove the intake works.
   event_pattern = jsonencode(jsondecode(file("${path.module}/patterns/changes.json")))
 }
