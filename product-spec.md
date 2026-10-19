@@ -530,7 +530,6 @@ backend/
   app/db/                 # SQLAlchemy models, Alembic migrations
   tests/unit/  tests/integration/  tests/contract/
 mcp-server/k8s/          # k8s-mcp (FastMCP), Dockerfile
-demo-app/                # the demo workload and its traffic generator (one image, DEMO_MODE=server|loadgen)
 mcp-server/aws/          # aws-mcp (FastMCP, boto3), Dockerfile, IAM policy notes
 .mcp.json
 terraform/
@@ -612,7 +611,7 @@ The course rubric was revised on Oct 16, 2026: 12 criteria worth 24 points, with
 | Deployment | 2 | 2 | EKS via Terraform and Helmfile; a recorded demo and screenshots of the deployment; a live URL during the first days of review |
 | CI/CD | 3 | 2 (3 stretch) | `ci.yaml` tests every PR; `deploy.yaml` deploys `main` to EKS automatically. Stretch: Helmfile `dev` deployed automatically, `prod` behind the `consoletrack-deploy` approval |
 | Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki; a redaction test; `docs/observability.md` |
-| Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (the error ratio the demo app's traffic generator sees, so it fires even when the app serves nothing) → Alertmanager → the backend's webhook |
+| Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (demo app 5xx ratio) → Alertmanager → the backend's webhook |
 | On-call agent | 2 | 2 | An alert opens an incident, the agent diagnoses an OOM kill, the backend applies the validated memory-limit fix in auto mode, verifies it, and resolves the incident; `docs/remediation-graduation.md` |
 | **Total** | **24** | **23** | |
 
