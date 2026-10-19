@@ -22,7 +22,7 @@ two); turning it off again is the fix.
 
 | Value | Effect | Expected fix |
 |---|---|---|
-| `faults.oom` | Memory request and limit drop to `oomMemoryLimit` (48Mi) and the app allocates `allocateMi` (96) at startup: OOMKilled | Raise the memory limit (the `oom-memory-bump` policy) |
+| `faults.oom` | Memory request and limit both drop to `oomMemoryLimit` (64Mi; normally 64Mi request, 128Mi limit) and the app allocates `allocateMi` (80) at startup: OOMKilled | Raise the memory limit (`set_memory_limit`, the `oom-memory-bump` policy: 2x = 128Mi fits) |
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
 | `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Fix the probe path |
 

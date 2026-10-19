@@ -239,6 +239,8 @@ def test_deployers_are_limited_to_two_namespaces(ours: list[dict]) -> None:
             "monitoring.coreos.com", "gateway.networking.k8s.io", "gateway.k8s.aws",
         }  # fmt: skip
         for rule in r["rules"]:
+            # Release records are ConfigMaps (HELM_DRIVER=configmap): no Secret access at all.
+            assert "secrets" not in rule["resources"]
             if {"pods", "pods/exec", "nodes"} & set(rule["resources"]):
                 assert set(rule["verbs"]) <= {"get", "list", "watch"}
 
@@ -254,6 +256,10 @@ def test_remediation_ships_manual(ours: list[dict]) -> None:
     policies = yaml.safe_load(cm["data"]["policies.yaml"])
     assert policies["autoEnabled"] is False
     assert {p["mode"] for p in policies["policies"]} == {"manual"}
+    (oom,) = [p for p in policies["policies"] if p["name"] == "oom-memory-bump"]
+    # Matched on the remediation kind; the incident's alert is the user-impact one.
+    assert oom["match"] == {"kind": "set_memory_limit", "namespace": "demo"}
+    assert oom["bounds"] == {"maxMultiplier": 2, "ceiling": "512Mi"}
 
 
 def test_exposure(ours: list[dict], config: str) -> None:

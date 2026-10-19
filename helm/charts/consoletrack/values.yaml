@@ -171,10 +171,12 @@ remediation:
   autoEnabled: false          # global kill switch, also toggled from the dashboard
   policies:
     - name: oom-memory-bump
-      match: {alertname: KubePodOOMKilled, namespace: demo}
+      # Matched on the proposed remediation kind, not an alert name: the incident's trigger is
+      # the user-impact alert (DemoAppHighErrorRate), and kube-prometheus-stack has no OOM alert.
+      match: {kind: set_memory_limit, namespace: demo}
       mode: manual            # manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
-      bounds: {maxMultiplier: 2, ceiling: 1Gi}
+      bounds: {maxMultiplier: 2, ceiling: 512Mi}
       minConfidence: high
       rateLimit: {perWorkload: 1, window: 1h}
       verify: {waitForResolved: 10m, onFailure: rollback}

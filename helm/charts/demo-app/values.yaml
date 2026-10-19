@@ -27,11 +27,12 @@ probes:
 # Cluster faults for the baseline scenarios (`make demo`, the break-demo skill). At most one at a
 # time; turning it off again is the fix the agent should find.
 faults:
-  # Memory limit far below what the app needs (it also allocates allocateMi at startup), so the
-  # container is OOMKilled: the auto-remediation candidate (oom-memory-bump).
+  # Memory request and limit drop to oomMemoryLimit and the app allocates allocateMi at startup,
+  # so the container is OOMKilled. oom-memory-bump's 2x (128Mi) fits again, so the auto-fix can
+  # succeed.
   oom: false
-  oomMemoryLimit: 48Mi
-  allocateMi: 96
+  oomMemoryLimit: 64Mi
+  allocateMi: 80
   # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
   badImage: false
   badImageTag: does-not-exist

@@ -18,7 +18,6 @@ mistakes:
 | `cloudtrail:LookupEvents` on `*` (aws-mcp) | `terraform/consoletrack/us-east-1/pod-identity.tf` | The action has no resource-level permissions | Not possible in IAM; it's a read |
 | `ec2:DescribeSecurityGroups` on `*` (aws-mcp) | same | Same: EC2 describe calls are account-wide | Not possible in IAM; it's a read |
 | EKS API public endpoint open to `0.0.0.0/0` | `terraform/consoletrack/us-east-1/eks.tf` | GitHub-hosted runners deploy through it, and their address ranges don't fit EKS's 40-CIDR limit. Every request still needs IAM authentication and an access entry; nodes use the private endpoint | Narrow `EKS_PUBLIC_ACCESS_CIDRS` (one variable), or turn public access off with a pull-based deploy (spec, Production hardening step 4) |
-| CI's deploy group can read and write Secrets in `consoletrack` and `demo` | `helm/charts/consoletrack/templates/rbac-deployers.yaml` | Helm keeps each release in a Secret in its namespace, so `helmfile -l tier=app apply` can't run without Secret access there; RBAC can't narrow it to Helm's own Secrets. It includes the app's Secrets (API key, password hashes). The role is assumable only by this repo's `deploy.yaml` in the `consoletrack-deploy` environment | Switch every Helm run (`make deploy`, `make addons`, `deploy.yaml`) to `HELM_DRIVER=configmap`, then drop `secrets` from the deployer Role |
 
 The node role has AmazonEC2ContainerRegistryReadOnly attached (the module’s default); the permissions boundary limits it to GetAuthorizationToken, BatchGetImage, and GetDownloadUrlForLayer.
 
@@ -114,7 +113,7 @@ ClusterRole or ClusterRoleBinding (`helm/tests/test_rendered.py` checks the rend
 | --- | --- | --- | --- |
 | ServiceAccount `consoletrack:k8s-mcp` | `k8s-mcp-read` in each of `allowedNamespaces` (`demo`) | get, list, watch on pods, pods/log, events, deployments, replicasets, statefulsets | Secrets, ConfigMaps, exec, attach, port-forward, any write, any other namespace |
 | ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
-| Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create; read pods, logs, events; port-forward for the smoke test | Anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
+| Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create, including Helm's release records (ConfigMaps, `HELM_DRIVER=configmap`); read pods, logs, events; port-forward for the smoke test | Secrets, anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
 
 Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, and the
 canary reach AWS through Pod Identity's own projected token, and the frontend and demo app call

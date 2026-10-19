@@ -90,6 +90,11 @@ FRONTEND_DEPS := frontend/node_modules/.package-lock.json
 
 # Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
 HELMFILE_STATE := helm/helmfile.yaml.gotmpl
+# Helm, Helmfile, and helm-diff keep release records in ConfigMaps rather than Secrets, so CI's
+# deploy group needs no Secret access (docs/permissions.md). Not overridable from .env or the
+# shell: every run must use the same storage, or Helm can't find the existing releases.
+override HELM_DRIVER := configmap
+export HELM_DRIVER
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1

@@ -30,6 +30,11 @@ environments:
     missingFileHandler: Warn
 
 ---
+{{- /* Release records live in ConfigMaps (the deploy group has no Secret access). The Makefile
+exports this; anything else running helmfile must too. */}}
+{{- if ne (env "HELM_DRIVER") "configmap" }}
+{{- fail "set HELM_DRIVER=configmap (the Makefile does): ConsoleTrack's Helm releases are stored in ConfigMaps" }}
+{{- end }}
 {{- $alb := eq .Values.exposure "alb" }}
 {{- $dns := ne .Values.domain "" }}
 {{- $cidrs := .Values.allowedCidrs }}
