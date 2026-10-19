@@ -1,9 +1,10 @@
 """Checks patterns/changes.json, the intake's EventBridge pattern, against recorded events.
 
 Run by `make test` (no AWS, no Terraform). A small local matcher implements the subset of
-EventBridge pattern syntax the file uses: exact values, nested fields, `exists`, and
-`anything-but` with `wildcard`. Any other operator fails the test, so extending the pattern
-means extending the matcher. Humans can cross-check against the real service with:
+EventBridge pattern syntax the file uses: exact values, nested fields, `exists`, `$or`, and
+`anything-but` with `prefix` or `wildcard`. Any other operator fails the test, so extending the
+pattern means extending the matcher. The pattern avoids wildcards where a prefix will do:
+EventBridge rejects wildcard patterns it considers too complex ("Rule is too complex"). Humans can cross-check against the real service with:
 
     aws events test-event-pattern \
         --event-pattern file://terraform/consoletrack/us-east-1/patterns/changes.json \
@@ -39,17 +40,26 @@ def _condition(cond, value) -> bool:
     if op == "anything-but":
         if value is _MISSING:
             return False  # EventBridge never matches a missing field with anything-but
-        assert isinstance(arg, dict) and set(arg) == {"wildcard"}, f"unsupported: {cond}"
-        wildcards = arg["wildcard"] if isinstance(arg["wildcard"], list) else [arg["wildcard"]]
-        return isinstance(value, str) and not any(_wildcard(w, value) for w in wildcards)
+        assert isinstance(arg, dict) and len(arg) == 1, f"unsupported: {cond}"
+        (kind, patterns), = arg.items()
+        assert kind in {"prefix", "wildcard"}, f"unsupported: {cond}"
+        patterns = patterns if isinstance(patterns, list) else [patterns]
+        hit = _wildcard if kind == "wildcard" else (lambda p, v: v.startswith(p))
+        return isinstance(value, str) and not any(hit(p, value) for p in patterns)
     raise AssertionError(f"matcher doesn't support {op!r}; extend it with the pattern")
 
 
 def matches(pattern: dict, event: dict) -> bool:
     for key, rule in pattern.items():
+        if key == "$or":
+            if not any(matches(branch, event) for branch in rule):
+                return False
+            continue
         value = event.get(key, _MISSING) if isinstance(event, dict) else _MISSING
         if isinstance(rule, dict):
-            if not isinstance(value, dict) or not matches(rule, value):
+            # EventBridge flattens nested fields, so a missing parent is a missing leaf:
+            # {"exists": false} under it matches (an IAM user has no sessionContext).
+            if not matches(rule, value if isinstance(value, dict) else {}):
                 return False
         else:
             values = value if isinstance(value, list) else [value]
@@ -94,9 +104,16 @@ def test_required_cases_are_present():
 
 
 def test_canary_is_never_excluded():
-    excluded = PATTERN["detail"]["userIdentity"]["arn"][0]["anything-but"]["wildcard"]
-    arn = f"arn:aws:sts::{ACCOUNT_ID}:assumed-role/ct-canary-use1-a1b2c3/eks-session"
-    assert not any(_wildcard(w, arn) for w in excluded)
+    user_name = PATTERN["detail"]["userIdentity"]["sessionContext"]["sessionIssuer"]["userName"]
+    excluded = next(c["anything-but"]["prefix"] for c in user_name if "anything-but" in c)
+    assert not any("ct-canary-use1-a1b2c3".startswith(p) for p in excluded + ["ct-gh-"])
+
+
+def test_pattern_uses_few_wildcards():
+    # EventBridge rejected the earlier pattern (six ARN wildcards) as too complex; keep it small.
+    text = json.dumps(PATTERN)
+    assert text.count('"wildcard"') <= 1
+    assert text.count("*") <= 2
 
 
 def test_fixtures_use_the_placeholder_account_only():
