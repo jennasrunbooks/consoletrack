@@ -20,7 +20,8 @@
   },
   "runArgs": [
     "--cap-drop=ALL",
-    "--security-opt=no-new-privileges"
+    "--security-opt=no-new-privileges",
+    "--shm-size=1g"
   ],
   "mounts": [
     "source=claude-code-config-${devcontainerId},target=/home/vscode/.claude,type=volume"
@@ -50,7 +51,7 @@
       ]
     }
   },
-  "postCreateCommand": "test -n \"$GIT_AUTHOR_NAME\" && test -n \"$GH_TOKEN\" || { echo 'dev-agent env missing: start with dev-agent' >&2; exit 1; }; git config --global user.name \"$GIT_AUTHOR_NAME\" && git config --global user.email \"$GIT_AUTHOR_EMAIL\" && gh auth setup-git && helm plugin install https://github.com/databus23/helm-diff --version v3.15.15",
+  "postCreateCommand": "test -n \"$GIT_AUTHOR_NAME\" && test -n \"$GH_TOKEN\" || { echo 'dev-agent env missing: start with dev-agent' >&2; exit 1; }; git config --global user.name \"$GIT_AUTHOR_NAME\" && git config --global user.email \"$GIT_AUTHOR_EMAIL\" && gh auth setup-git && helm plugin list | grep -q '^diff'",
   "remoteUser": "vscode",
   "forwardPorts": [3000, 5173, 8000]
 }
