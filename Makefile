@@ -73,11 +73,15 @@ $(foreach v,$(TF_INPUTS),$(if $(strip $($v)),$(eval export $(call tf_var,$v) = $
 # Pinned so `make lint` gives the same answer everywhere. Bump deliberately.
 RUFF ?= uvx ruff@0.16.10
 PYTEST ?= uvx pytest@9.1.1
+# PyYAML matches backend/uv.lock.
+PYTEST_YAML ?= uvx --with pyyaml==6.0.3 pytest@9.1.1
 OPENAPI_VALIDATOR ?= uvx openapi-spec-validator@0.9.0
 TERRAFORM ?= terraform
 TFLINT ?= tflint
 HELMFILE ?= helmfile
 SHELLCHECK ?= uvx --from shellcheck-py@0.11.0.1 shellcheck
+# Docker Compose v2 (the `docker compose` plugin), for docker-compose.yaml.
+COMPOSE ?= docker compose
 # The backend's own locked environment (backend/uv.lock); --locked fails if the lock is stale.
 BACKEND_RUN ?= cd backend && uv run --locked
 # The frontend's locked node_modules (frontend/package-lock.json), installed on demand below.
@@ -109,11 +113,11 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks test-terraform lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers \
-	lint-shell lint-frontend helm-lint db-sql hash-password \
-	test-backend test-frontend test-e2e screenshots test-contract test-integration test-k8s \
+	lint-shell lint-frontend lint-compose helm-lint db-sql hash-password \
+	test-all test-backend test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
-	local demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -122,9 +126,11 @@ help: ## List targets
 		/^##@/ {printf "\n%s\n", substr($$0, 5); next} \
 		/^[a-z][a-z0-9-]*:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE)
 
-lint: lint-hooks lint-backend lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend ## Lint and format checks (run before every commit)
+lint: lint-hooks lint-backend lint-openapi lint-shell lint-terraform-providers helm-lint lint-frontend lint-compose ## Lint and format checks (run before every commit)
 
-test: test-hooks test-backend test-contract test-terraform test-frontend ## Unit and contract tests (run before every commit)
+test: test-hooks test-backend test-contract test-terraform test-compose test-frontend ## Unit and contract tests (run before every commit)
+
+test-all: test test-integration ## Every automated test: unit, contract, frontend, and integration (needs Docker)
 
 fmt: ## Format Python and Terraform in place
 	$(RUFF) format agent-hooks backend
@@ -163,6 +169,15 @@ helm-lint: ## helmfile lint every release in helm/helmfile.yaml.gotmpl (skipped 
 	if ! command -v $(HELMFILE) >/dev/null; then \
 		echo "make $@: $(HELMFILE) is not installed (see README → Prerequisites)" >&2; exit 1; fi; \
 	$(HELMFILE) --file $(HELMFILE_STATE) lint
+
+lint-compose: ## ruff for compose/, and `docker compose config` wherever Docker is installed (CI)
+	$(RUFF) check compose
+	$(RUFF) format --check compose
+	@if ! command -v docker >/dev/null; then \
+		echo "make $@: docker isn't installed (the devcontainer has none); skipped docker compose config, CI runs it"; \
+		exit 0; \
+	fi; \
+	$(COMPOSE) config --quiet && echo "make $@: docker-compose.yaml is valid"
 
 lint-shell: ## shellcheck every script under scripts/ (pinned, through uvx)
 	$(SHELLCHECK) $$(find scripts -name '*.sh' -type f | sort)
@@ -206,6 +221,9 @@ test-backend: ## Backend unit tests, with app/services/ coverage >= 90%
 
 test-contract: ## FastAPI schema matches openapi.yaml
 	$(BACKEND_RUN) pytest tests/contract -q
+
+test-compose: ## docker-compose.yaml invariants: loopback ports, no literal secrets, pinned images (no Docker)
+	$(PYTEST_YAML) compose/tests -q
 
 test-integration: ## Backend integration tests on Postgres: Testcontainers (Docker) or CT_TEST_DATABASE_URL
 	$(BACKEND_RUN) pytest tests/integration -q -m integration
@@ -337,11 +355,26 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 
 ##@ Demo and evaluation
 
-local: env-check-local ## Full stack on kind + Compose, no AWS (stub)
-	$(call todo,the local-run workstream; no issue yet)
+# The kind half (kube-prometheus-stack and demo-app from the Helmfile `local` environment,
+# Alertmanager pointed at the Compose backend) and the worker and MCP services follow once #12,
+# #9, and #10 land; see #15.
+local: env-check-local ## Compose stack, no AWS: Postgres, ElasticMQ, backend, dashboard (kind part: #12)
+	$(COMPOSE) up --build --wait
+	@echo "make $@: dashboard http://localhost:$(or $(DASHBOARD_PORT),8080), API http://localhost:$(or $(BACKEND_PORT),8000)"
+	@if pw=$$($(COMPOSE) exec -T backend cat /run/consoletrack/admin-password 2>/dev/null); then \
+		echo "make $@: log in as admin with the generated local password: $$pw"; \
+	else \
+		echo "make $@: log in as admin with the password for ADMIN_PASSWORD_HASH in $(ENV_FILE)"; \
+	fi
+
+local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
+	$(COMPOSE) down --volumes --remove-orphans
+	@if command -v kind >/dev/null && kind get clusters 2>/dev/null | grep -qx consoletrack; then \
+		kind delete cluster --name consoletrack; \
+	fi
 
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
-	$(call todo,the local-run workstream; no issue yet. #9 provides scripts/replay-fixtures.py)
+	$(call todo,#9 (scripts/replay-fixtures.py and the worker's replay mode); see #15)
 
 demo: env-check-aws ## Run the three cluster fault scenarios (stub)
 	$(call todo,the agent loop workstream; no issue yet)

@@ -138,3 +138,46 @@ jobs:
           for i in $(seq 1 20); do curl -fsS http://localhost:8080/healthz && break; sleep 1; done
           curl -fsS http://localhost:8080/changes | grep -q '<div id="root">'
           test "$(docker inspect -f '{{.Config.User}}' consoletrack-frontend:ci)" = "101"
+
+  # Required check (add it to the ruleset): Postgres through Testcontainers, no secrets.
+  integration:
+    name: integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - run: make test-integration
+
+  # Not a required check: the stack `make local` starts (amd64 here), end to end. SESSION_SECRET
+  # and the admin password are generated inside the stack; nothing comes from secrets.
+  local-stack:
+    name: local-stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker compose up --build --wait --wait-timeout 300
+      - name: Log in through the dashboard and read intake health
+        run: |
+          # localhost, not 127.0.0.1: curl, like browsers, keeps the Secure session cookie
+          # over plain HTTP only for localhost.
+          base=http://localhost:8080
+          curl -fsS "$base/healthz"
+          curl -fsS http://127.0.0.1:8000/readyz
+          pw=$(docker compose exec -T backend cat /run/consoletrack/admin-password)
+          echo "::add-mask::$pw"
+          jq -n --arg p "$pw" '{username: "admin", password: $p}' \
+            | curl -fsS -c jar -H 'Content-Type: application/json' --data @- "$base/api/v1/auth/login"
+          curl -fsS -b jar "$base/api/v1/intake/health" | jq -e '.state == "replay"'
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes
