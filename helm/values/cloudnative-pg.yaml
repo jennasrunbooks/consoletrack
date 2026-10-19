@@ -1,0 +1,6 @@
+# CloudNativePG operator (tier=addons, namespace cnpg-system). The consoletrack chart creates
+# the one Postgres Cluster; the operator manages it and generates its credentials Secret.
+replicaCount: 1
+resources:
+  requests: {cpu: 25m, memory: 64Mi}
+  limits: {memory: 256Mi}

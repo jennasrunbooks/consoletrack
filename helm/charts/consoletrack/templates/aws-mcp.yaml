@@ -1,0 +1,72 @@
+# aws-mcp: read-only CloudTrail, IAM, EC2, and Terraform state tools (mcp-server/aws/). Pod
+# Identity role ct-aws-mcp-<region>-<suffix>, read-only and limited to the watched IAM paths and
+# the demo-app root's state object. No Kubernetes token. Only the worker calls it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "aws-mcp") | nindent 4 }}
+spec:
+  replicas: {{ .Values.awsMcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "aws-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "aws-mcp") | nindent 8 }}
+    spec:
+      serviceAccountName: aws-mcp
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "consoletrack.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: aws-mcp
+          image: {{ include "consoletrack.image" (dict "ctx" $ "image" "aws-mcp") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.awsMcp.port }}
+          env:
+            - name: AWS_MCP_MODE
+              value: {{ .Values.awsMcp.mode | quote }}
+            - name: AWS_MCP_PORT
+              value: {{ .Values.awsMcp.port | quote }}
+            - name: AWS_REGION
+              value: {{ .Values.aws.region | quote }}
+            - name: WATCHED_IAM_PATHS
+              value: {{ .Values.aws.watchedIamPaths | quote }}
+            - name: EKS_CLUSTER_NAME
+              value: {{ .Values.aws.clusterName | quote }}
+            # The only state object its role may read (lookup_terraform_address).
+            - name: TF_STATE_BUCKET
+              value: {{ if .Values.aws.nameSuffix }}{{ printf "ct-tfstate-%s" .Values.aws.nameSuffix | quote }}{{ else }}""{{ end }}
+            - name: TF_STATE_KEY
+              value: demo-app/us-east-1/terraform.tfstate
+          {{- include "consoletrack.httpProbes" (dict "port" "http" "live" "/healthz" "ready" "/readyz") | nindent 10 }}
+          resources:
+            {{- toYaml .Values.awsMcp.resources | nindent 12 }}
+          securityContext:
+            {{- include "consoletrack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "consoletrack.tmpVolume" . | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aws-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "aws-mcp") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "aws-mcp") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.awsMcp.port }}
+      targetPort: http

@@ -17,6 +17,7 @@
       "Bash(make lint-terraform-providers)",
       "Bash(make helm-lint)",
       "Bash(make lint-compose)",
+      "Bash(make helm-test)",
       "Bash(uv sync)",
       "Bash(uv sync *)",
       "Bash(uv run pytest *)",

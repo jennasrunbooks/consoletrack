@@ -1,0 +1,82 @@
+# Backend API: webhooks, state machines, approvals, and the approved cluster patch. Runs as the
+# `remediator` ServiceAccount (rbac-remediator.yaml); it has no AWS role.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "backend") | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "backend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "backend") | nindent 8 }}
+      annotations:
+        checksum/remediation: {{ include (print $.Template.BasePath "/remediation-policies.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: remediator
+      # Applies approved patches through the Kubernetes API.
+      automountServiceAccountToken: true
+      securityContext:
+        {{- include "consoletrack.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      initContainers:
+        - name: migrate
+          image: {{ include "consoletrack.image" (dict "ctx" $ "image" "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: [alembic, upgrade, head]
+          env:
+            {{- include "consoletrack.databaseEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.backend.migrate.resources | nindent 12 }}
+          securityContext:
+            {{- include "consoletrack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      containers:
+        - name: backend
+          image: {{ include "consoletrack.image" (dict "ctx" $ "image" "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+          env:
+            {{- include "consoletrack.databaseEnv" . | nindent 12 }}
+            {{- include "consoletrack.appEnv" . | nindent 12 }}
+            - name: GRAFANA_URL
+              value: {{ .Values.app.grafanaUrl | quote }}
+            {{- include "consoletrack.secretEnv" (dict "name" "ADMIN_PASSWORD_HASH" "secret" .Values.secrets.auth.name "key" .Values.secrets.auth.adminPasswordHash) | nindent 12 }}
+            {{- include "consoletrack.secretEnv" (dict "name" "VIEWER_PASSWORD_HASH" "secret" .Values.secrets.auth.name "key" .Values.secrets.auth.viewerPasswordHash) | nindent 12 }}
+            {{- include "consoletrack.secretEnv" (dict "name" "SESSION_SECRET" "secret" .Values.secrets.auth.name "key" .Values.secrets.auth.sessionSecret) | nindent 12 }}
+            {{- include "consoletrack.secretEnv" (dict "name" "ALERT_WEBHOOK_TOKEN" "secret" .Values.secrets.webhook.name "key" .Values.secrets.webhook.alertWebhookToken) | nindent 12 }}
+          {{- include "consoletrack.httpProbes" (dict "port" "http" "live" "/healthz" "ready" "/readyz") | nindent 10 }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          securityContext:
+            {{- include "consoletrack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: remediation, mountPath: /etc/consoletrack/remediation, readOnly: true}
+      volumes:
+        {{- include "consoletrack.tmpVolume" . | nindent 8 }}
+        {{- include "consoletrack.remediationVolume" . | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "backend") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "backend") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.backend.port }}
+      targetPort: http

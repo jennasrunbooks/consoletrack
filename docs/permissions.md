@@ -33,7 +33,7 @@ bypassed.
 | GitHub token | Fine-grained PAT, owned by a human (see the spec's "Development-time access") | Contents and PRs only. No Workflows permission, so pushes that touch `.github/workflows/` are rejected; no Administration, Secrets, or Environments, so no ruleset, secret, or environment changes. | Pushing feature branches and opening PRs, which is the job. |
 | `main` ruleset | GitHub repo settings | Direct pushes and merges to `main`: everything needs a PR with your approval and passing CI. A commit made on local `main` can't land. | What's in the PR; that's what review is for. |
 | Environments | GitHub environments `consoletrack-apply`, `consoletrack-revert` (with the Terraform and revert workflows) | `terraform apply` and Revert runs wait for a named reviewer, and only those environments' OIDC roles can write to AWS. | Plans, which are read-only. |
-| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `make helm-lint`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
+| `permissions.allow` | `.claude/settings.json` | Nothing; it removes prompts for routine, safe commands (`make test`, `make lint`, each `make test-*`/`lint-*` target by exact name, `make helm-lint`, `make helm-test`, `terraform fmt`, `helm lint`, read-only `git` and `gh`). No `make` target that touches AWS or a cluster is listed; see "Adding to the rules". | — |
 | `permissions.deny` | `.claude/settings.json` | Backup for the guard: reading `.env` and the common `.env.<name>` variants (listed one by one, because deny globs can't exclude `.env.example`, which the agent maintains), editing `.github/workflows/` and `CLAUDE.md`, the Terraform/kubectl/helm write commands, `helmfile apply/sync/destroy/delete/init`, `aws configure`, `aws sso login`, `eksctl`, force pushes, `gh pr merge`, `gh api`, `gh secret`, `gh variable`, `gh repo edit`, `gh workflow run`. See "Guard and deny rules" below for which one answers first. | Commands it can't pattern-match: flags in another order, wrappers, nested shells. The guard covers those. |
 | PreToolUse guard | `agent-hooks/guard.py` | Tokenizes each command and file path and blocks everything in `AGENTS.md → Hard rules` that a tool call can break, including chained, wrapped, and nested forms. For `helmfile` it allows only known reads (`lint`, `template`, `diff`, `deps`, `build`, `list`, …) after any global flags, and blocks helm write verbs passed through `--` or `--args`. It also rejects a `*.tf` edit that adds the Terraform `helm` or `kubernetes` provider, which `make lint` (`lint-terraform-providers`) checks again for humans and shell writes. See [agent-extension-pack.md](agent-extension-pack.md#hooks). | See "What the guard can't see" below. |
 | PostToolUse lint | `agent-hooks/lint_edited.py` | Lint errors in edited Python, frontend, and Terraform files, reported back in the same turn. | It's a quality check, not a security control. |
@@ -104,10 +104,26 @@ the spec's reviewer setup), and a human reviews every PR, including any script t
   `up`, `down`, `addons`, `deploy`, `revert`, `demo-*`, `domain*`, `bootstrap`, `audit-rbac`, or
   `test-k8s` (kind). They always prompt, and the agent's own PRs follow this rule too.
 
+## Kubernetes RBAC
+
+Everything the `consoletrack` chart grants is a namespaced Role; the app charts create no
+ClusterRole or ClusterRoleBinding (`helm/tests/test_rendered.py` checks the rendered output).
+
+| Subject | Role, namespaces | Allowed | Not allowed |
+| --- | --- | --- | --- |
+| ServiceAccount `consoletrack:k8s-mcp` | `k8s-mcp-read` in each of `allowedNamespaces` (`demo`) | get, list, watch on pods, pods/log, events, deployments, replicasets, statefulsets | Secrets, ConfigMaps, exec, attach, port-forward, any write, any other namespace |
+| ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
+| Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create, including Helm's release records (ConfigMaps, `HELM_DRIVER=configmap`); read pods, logs, events; port-forward for the smoke test | Secrets, anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
+
+Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, and the
+canary reach AWS through Pod Identity's own projected token, and the frontend and demo app call
+nothing. `make audit-rbac` prints the effective permissions per ServiceAccount.
+
 ## CI deploy role
 
-`deploy.yaml`'s OIDC role is mapped to a namespaced Role in `consoletrack` and `demo`, and the
-workflow only ever runs `helmfile -l tier=app apply` (the `consoletrack` and `demo-app`
-releases). The `tier=addons` releases (Gateway API CRDs, kube-prometheus-stack, cloudnative-pg,
+`deploy.yaml`'s OIDC role is mapped to the `consoletrack-deployers` group, bound to a namespaced
+Role in `consoletrack` and `demo` (above), and the workflow only ever runs
+`helmfile -l tier=app apply` (the `consoletrack` and `demo-app` releases). The bindings come
+from the `consoletrack` chart itself, so the first `make deploy` is a human's. The `tier=addons` releases (Gateway API CRDs, kube-prometheus-stack, cloudnative-pg,
 the Load Balancer Controller, ExternalDNS) need cluster-wide rights, so only a human applies
 them, with `make addons`. Terraform never installs anything inside Kubernetes.

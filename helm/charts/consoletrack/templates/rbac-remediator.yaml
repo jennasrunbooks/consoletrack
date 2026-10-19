@@ -1,0 +1,38 @@
+{{- /*
+The backend's apply identity (ServiceAccount `remediator`): get and patch Deployments, get and
+list ReplicaSets (for rollout undo), in the allowlisted namespaces only. No create, delete,
+exec, Secrets, or anything cluster-scoped. The backend validates every patch before using it.
+*/}}
+{{- range .Values.allowedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: remediator
+  namespace: {{ . }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "backend") | nindent 4 }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, patch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: remediator
+  namespace: {{ . }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "backend") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: remediator
+subjects:
+  - kind: ServiceAccount
+    name: remediator
+    namespace: {{ $.Release.Namespace }}
+{{- end }}

@@ -1,0 +1,25 @@
+# ExternalDNS (tier=addons, DOMAIN only). Points DOMAIN at the current cluster's ALB, from the
+# consoletrack HTTPRoute's hostname, so a rebuilt cluster needs no manual DNS change.
+provider:
+  name: aws
+sources: [gateway-httproute]
+domainFilters: [{{ .Values.domain | quote }}]
+# TXT ownership records: it only ever changes records it created for this suffix.
+registry: txt
+txtOwnerId: {{ .Values.nameSuffix | quote }}
+policy: sync
+extraArgs:
+  - --aws-zone-type=public
+
+serviceAccount:
+  create: true
+  # Bound to ct-external-dns-<region>-<suffix> by Pod Identity (kube-system:external-dns).
+  name: external-dns
+
+env:
+  - name: AWS_REGION
+    value: {{ .Values.awsRegion | quote }}
+
+resources:
+  requests: {cpu: 10m, memory: 48Mi}
+  limits: {memory: 128Mi}

@@ -1,0 +1,27 @@
+# AWS Load Balancer Controller (tier=addons, EXPOSURE=alb only). Provisions the one ALB for the
+# consoletrack Gateway through its Gateway API support.
+clusterName: {{ .Values.clusterName | quote }}
+# Set explicitly: pods can't reach the instance metadata service (hop limit 1), so the
+# controller can't discover them itself.
+region: {{ .Values.awsRegion | quote }}
+vpcId: {{ .Values.vpcId | quote }}
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  # Bound to ct-lbc-<region>-<suffix> by Pod Identity (kube-system:aws-load-balancer-controller).
+  name: aws-load-balancer-controller
+
+# The ct permissions boundary has no WAF, WAFv2, or Shield actions, and nothing here uses them.
+enableWaf: false
+enableWafv2: false
+enableShield: false
+
+controllerConfig:
+  featureGates:
+    ALBGatewayAPI: true
+    NLBGatewayAPI: false
+
+resources:
+  requests: {cpu: 25m, memory: 96Mi}
+  limits: {memory: 256Mi}

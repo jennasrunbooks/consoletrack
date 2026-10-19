@@ -90,6 +90,11 @@ FRONTEND_DEPS := frontend/node_modules/.package-lock.json
 
 # Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
 HELMFILE_STATE := helm/helmfile.yaml.gotmpl
+# Helm, Helmfile, and helm-diff keep release records in ConfigMaps rather than Secrets, so CI's
+# deploy group needs no Secret access (docs/permissions.md). Not overridable from .env or the
+# shell: every run must use the same storage, or Helm can't find the existing releases.
+override HELM_DRIVER := configmap
+export HELM_DRIVER
 
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
@@ -113,7 +118,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks test-terraform lint-hooks lint-backend lint-openapi lint-terraform lint-terraform-providers \
-	lint-shell lint-frontend lint-compose helm-lint db-sql hash-password \
+	lint-shell lint-frontend lint-compose helm-lint helm-test db-sql hash-password \
 	test-all test-backend test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
@@ -163,12 +168,32 @@ lint-terraform-providers: ## Fail if any Terraform root uses the helm or kuberne
 	fi; \
 	echo "make $@: no helm or kubernetes provider in terraform/"
 
-helm-lint: ## helmfile lint every release in helm/helmfile.yaml.gotmpl (skipped until it exists)
-	@if [ ! -f $(HELMFILE_STATE) ]; then \
-		echo "make $@: $(HELMFILE_STATE) doesn't exist yet, skipped"; exit 0; fi; \
-	if ! command -v $(HELMFILE) >/dev/null; then \
-		echo "make $@: $(HELMFILE) is not installed (see README → Prerequisites)" >&2; exit 1; fi; \
-	$(HELMFILE) --file $(HELMFILE_STATE) lint
+# Each configuration helm-lint renders: eks with placeholder Terraform outputs, the same with
+# EXPOSURE=alb and DOMAIN, and local (kind). No cluster, no AWS; helm/tests/values/ explains.
+HELM_LINT_CONFIGS := eks eks-alb local
+helm_config_args = $(strip \
+	$(if $(filter eks,$(1)),-e eks --state-values-file $(CURDIR)/helm/tests/values/eks.yaml) \
+	$(if $(filter eks-alb,$(1)),-e eks --state-values-file $(CURDIR)/helm/tests/values/eks.yaml \
+		--state-values-file $(CURDIR)/helm/tests/values/alb.yaml) \
+	$(if $(filter local,$(1)),-e local))
+
+helm-lint: ## helmfile lint + template (eks, eks with alb, local), then helm-test on the rendered output
+	@if ! command -v $(HELMFILE) >/dev/null; then \
+		echo "make $@: $(HELMFILE) is not installed (see README → Prerequisites);" \
+			"\`make helm-test\` checks the local charts with helm alone" >&2; exit 1; fi
+	@set -e; out=$$(mktemp -d); trap 'rm -rf "$$out"' EXIT; \
+	$(foreach c,$(HELM_LINT_CONFIGS), \
+		echo "--- $(c): helmfile $(call helm_config_args,$(c)) lint / template"; \
+		$(HELMFILE) --file $(HELMFILE_STATE) $(call helm_config_args,$(c)) lint; \
+		$(HELMFILE) --file $(HELMFILE_STATE) $(call helm_config_args,$(c)) template \
+			--output-dir "$$out/$(c)" >/dev/null;) \
+	HELM_RENDER_DIR="$$out" $(MAKE) --no-print-directory helm-test
+
+# Without HELM_RENDER_DIR the tests render our own charts with plain `helm template`.
+helm-test: ## Checks over our charts' rendered manifests: pod security, probes, RBAC, secrets by name
+	$(PYTEST_YAML) helm/tests -q -p no:cacheprovider
+	$(RUFF) check helm/tests
+	$(RUFF) format --check helm/tests
 
 lint-compose: ## ruff for compose/, and `docker compose config` wherever Docker is installed (CI)
 	$(RUFF) check compose

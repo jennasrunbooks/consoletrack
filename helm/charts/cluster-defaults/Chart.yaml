@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cluster-defaults
+description: Cluster-scoped objects ConsoleTrack needs that no third-party chart creates (the gp3 StorageClass, the ALB GatewayClass).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

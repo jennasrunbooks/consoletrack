@@ -1,0 +1,67 @@
+# k8s-mcp: read-only cluster tools for the triage agent (mcp-server/k8s/). Its Roles
+# (rbac-k8s-mcp.yaml) allow get/list/watch in the allowlisted namespaces only, and the server
+# refuses any other namespace itself. Only the worker calls it.
+{{- $prometheus := .Values.k8sMcp.prometheusUrl | default (printf "http://%s-prometheus.%s.svc.cluster.local:9090" .Values.monitoring.release .Values.monitoring.namespace) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 4 }}
+spec:
+  replicas: {{ .Values.k8sMcp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 8 }}
+    spec:
+      serviceAccountName: k8s-mcp
+      # Reads the cluster with its own read-only token.
+      automountServiceAccountToken: true
+      securityContext:
+        {{- include "consoletrack.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: k8s-mcp
+          image: {{ include "consoletrack.image" (dict "ctx" $ "image" "k8s-mcp") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.k8sMcp.port }}
+          env:
+            - name: K8S_MCP_TRANSPORT
+              value: http
+            - name: K8S_MCP_PORT
+              value: {{ .Values.k8sMcp.port | quote }}
+            - name: K8S_ALLOWED_NAMESPACES
+              value: {{ join "," .Values.allowedNamespaces | quote }}
+            - name: PROMETHEUS_URL
+              value: {{ $prometheus | quote }}
+          {{- include "consoletrack.httpProbes" (dict "port" "http" "live" "/healthz" "ready" "/readyz") | nindent 10 }}
+          resources:
+            {{- toYaml .Values.k8sMcp.resources | nindent 12 }}
+          securityContext:
+            {{- include "consoletrack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        {{- include "consoletrack.tmpVolume" . | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "k8s-mcp") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.k8sMcp.port }}
+      targetPort: http

@@ -1,0 +1,111 @@
+{{- if eq .Values.exposure "alb" }}
+{{- /*
+EXPOSURE=alb: one internet-facing ALB from the Load Balancer Controller's Gateway API support,
+HTTPS only with the ACM certificate, reachable from allowedCidrs only. HTTP answers with a
+redirect to HTTPS. ExternalDNS points `domain` at the ALB from the HTTPRoute's hostname.
+/api goes to the backend, everything else to the frontend; /metrics is never routed.
+*/}}
+apiVersion: gateway.k8s.aws/v1
+kind: LoadBalancerConfiguration
+metadata:
+  name: consoletrack
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "gateway") | nindent 4 }}
+spec:
+  scheme: internet-facing
+  sourceRanges:
+    {{- toYaml .Values.allowedCidrs | nindent 4 }}
+  listenerConfigurations:
+    - protocolPort: HTTPS:443
+      defaultCertificate: {{ .Values.certificateArn | quote }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: consoletrack
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "gateway") | nindent 4 }}
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  infrastructure:
+    parametersRef:
+      group: gateway.k8s.aws
+      kind: LoadBalancerConfiguration
+      name: consoletrack
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: {{ .Values.domain | quote }}
+      allowedRoutes:
+        namespaces: {from: Same}
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .Values.domain | quote }}
+      allowedRoutes:
+        namespaces: {from: Same}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: consoletrack-https-redirect
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "gateway") | nindent 4 }}
+spec:
+  parentRefs:
+    - name: consoletrack
+      sectionName: http
+  hostnames: [{{ .Values.domain | quote }}]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: consoletrack
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "gateway") | nindent 4 }}
+spec:
+  parentRefs:
+    - name: consoletrack
+      sectionName: https
+  hostnames: [{{ .Values.domain | quote }}]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /api}
+      backendRefs:
+        - name: backend
+          port: {{ .Values.backend.port }}
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      backendRefs:
+        - name: frontend
+          port: {{ .Values.frontend.port }}
+{{- /* IP targets (pod IPs) and health checks on each Service's own probe path. */}}
+{{- range (list (dict "name" "backend" "path" "/readyz") (dict "name" "frontend" "path" "/healthz")) }}
+---
+apiVersion: gateway.k8s.aws/v1
+kind: TargetGroupConfiguration
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "gateway") | nindent 4 }}
+spec:
+  targetReference:
+    name: {{ .name }}
+  defaultConfiguration:
+    targetType: ip
+    healthCheckConfig:
+      healthCheckPath: {{ .path }}
+{{- end }}
+{{- end }}

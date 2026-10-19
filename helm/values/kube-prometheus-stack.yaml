@@ -1,0 +1,83 @@
+# kube-prometheus-stack (tier=addons, namespace monitoring). Sized for two t4g.medium nodes
+# (8 GiB total): short retention on an emptyDir, Grafana on, exporters the EKS control plane
+# doesn't expose turned off (product-spec.md → Cost choices).
+
+# EKS (and kind) run etcd, the scheduler, and the controller manager out of reach, and kube-proxy
+# binds its metrics to localhost: their monitors would only ever be down, and their alerts fire.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+defaultRules:
+  rules:
+    etcd: false
+    kubeControllerManager: false
+    kubeProxy: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    windows: false
+
+prometheus:
+  prometheusSpec:
+    retention: 2d
+    retentionSize: 1GB
+    # Pick up ServiceMonitors and PrometheusRules from every namespace, not only ones labelled
+    # with this release (the consoletrack and demo-app charts ship their own).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    probeSelectorNilUsesHelmValues: false
+    scrapeConfigSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {memory: 1Gi}
+
+alertmanager:
+  alertmanagerSpec:
+    retention: 24h
+    # AlertmanagerConfigs from every namespace (consoletrack's routes alerts to the backend), and
+    # without the operator's default namespace matcher, so that one config also receives alerts
+    # from the demo namespace. The consoletrack chart's own matchers decide what it receives.
+    alertmanagerConfigSelector: {}
+    alertmanagerConfigNamespaceSelector: {}
+    alertmanagerConfigMatcherStrategy:
+      type: None
+    resources:
+      requests: {cpu: 10m, memory: 48Mi}
+      limits: {memory: 128Mi}
+
+grafana:
+  enabled: true
+  # No admin password in values: the chart generates one into its Secret
+  # (kubectl -n monitoring get secret kube-prometheus-stack-grafana).
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      # The consoletrack chart's "Intake health" dashboard lives in the consoletrack namespace.
+      searchNamespace: ALL
+  resources:
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
+prometheusOperator:
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {memory: 192Mi}
+
+kube-state-metrics:
+  resources:
+    requests: {cpu: 10m, memory: 48Mi}
+    limits: {memory: 128Mi}
+
+prometheus-node-exporter:
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {memory: 64Mi}
