@@ -4,21 +4,23 @@
   "detail": {
     "readOnly": [false],
     "userIdentity": {
-      "arn": [
-        {
-          "anything-but": {
-            "wildcard": [
-              "*:assumed-role/ct-gh-*/gh-*",
-              "*:assumed-role/ct-eks-*/*",
-              "*:assumed-role/ct-vpc-cni-*/*",
-              "*:assumed-role/ct-ebs-csi-*/*",
-              "*:assumed-role/ct-lbc-*/*",
-              "*:assumed-role/ct-external-dns-*/*"
-            ]
-          }
+      "invokedBy": [{ "exists": false }, "AWS Internal"],
+      "sessionContext": {
+        "sessionIssuer": {
+          "userName": [
+            { "exists": false },
+            {
+              "anything-but": {
+                "prefix": ["ct-eks-", "ct-vpc-cni-", "ct-ebs-csi-", "ct-lbc-", "ct-external-dns-"]
+              }
+            }
+          ]
         }
-      ],
-      "invokedBy": [{ "exists": false }, "AWS Internal"]
-    }
+      }
+    },
+    "$or": [
+      { "userIdentity": { "sessionContext": { "sessionIssuer": { "userName": [{ "anything-but": { "prefix": "ct-gh-" } }] } } } },
+      { "userIdentity": { "principalId": [{ "anything-but": { "wildcard": "*:gh-*" } }] } }
+    ]
   }
 }

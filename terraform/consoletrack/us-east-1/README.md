@@ -63,15 +63,20 @@ Every role is under `/ct/`, carries the `ct-boundary-<suffix>` boundary, trusts 
 `patterns/changes.json` is the rule's whole pattern. It keeps write calls (`readOnly: false`) to
 IAM, EC2, S3, KMS, and EKS, and drops three kinds of caller:
 
-- **Pipeline sessions**: `*:assumed-role/ct-gh-*/gh-*`. The CI roles' trust policies require a
-  `gh-` session name, so this matches only GitHub runs. A pipeline role used under any other session
-  name still comes through.
+- **Pipeline sessions**: role names starting `ct-gh-` *and* a session name starting `gh-`
+  (matched on `principalId`, which ends in `:<session name>`). The CI roles' trust policies
+  require a `gh-` session name, so this matches only GitHub runs. A pipeline role used under any
+  other session name still comes through, and so does a `gh-` session name on any other role.
 - **AWS services acting on your behalf**: `userIdentity.invokedBy` set to a service such as
   `ec2.amazonaws.com`. The pattern keeps events where it's missing or `"AWS Internal"`, which the
   console sets on some S3 calls, so console S3 changes still arrive.
-- **ConsoleTrack's platform roles**: the cluster and node roles (`ct-eks-*`), CNI, EBS CSI, Load
-  Balancer Controller, and ExternalDNS. `ct-canary` is deliberately not excluded, and neither is the
-  demo developer role.
+- **ConsoleTrack's platform roles**, by role name prefix (`sessionIssuer.userName`): the cluster
+  and node roles (`ct-eks-`), CNI, EBS CSI, Load Balancer Controller, and ExternalDNS.
+  `ct-canary` is deliberately not excluded, and neither is the demo developer role. Callers with
+  no role session (IAM users, root) always come through.
+
+The pattern uses prefixes rather than ARN wildcards: EventBridge rejected the six-wildcard
+version as "Rule is too complex". `tests/test_event_pattern.py` keeps it to one wildcard.
 
 `tests/test_event_pattern.py` (`make test`) runs recorded events in `tests/fixtures/events/` through
 a local matcher. To check one against the real service:
