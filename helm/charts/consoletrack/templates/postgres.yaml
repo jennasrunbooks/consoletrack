@@ -1,0 +1,25 @@
+# Postgres through CloudNativePG (the cloudnative-pg release installs the operator and CRD).
+# The operator creates the `<name>-app` Secret (username, password) that the backend and worker
+# read; no database password passes through values. One instance on one gp3 volume: destroyed
+# with the cluster, reseeded on the next `make up`.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.postgres.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "postgres") | nindent 4 }}
+spec:
+  instances: {{ .Values.postgres.instances }}
+  imageName: {{ .Values.postgres.imageName }}
+  # A single instance can't move during a node drain anyway; a PDB would only block the drain.
+  enablePDB: false
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.database }}
+      owner: {{ .Values.postgres.owner }}
+  storage:
+    size: {{ .Values.postgres.storage.size }}
+    storageClass: {{ .Values.postgres.storage.storageClass }}
+  resources:
+    {{- toYaml .Values.postgres.resources | nindent 4 }}

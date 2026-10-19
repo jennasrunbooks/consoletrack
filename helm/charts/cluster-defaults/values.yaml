@@ -1,0 +1,17 @@
+# Cluster-scoped objects ConsoleTrack needs that no third-party chart creates. A tier=addons
+# release, so only a human with cluster admin applies it (`make addons`); the CI deploy role
+# can't create cluster-scoped objects, which is why these aren't in the consoletrack chart.
+
+# gp3 EBS volumes through the EBS CSI driver (the EKS managed add-on), for the CloudNativePG
+# volume. EKS only ships the old gp2 class. Not the cluster default: nothing else changes.
+storageClass:
+  enabled: true
+  name: gp3
+  # Delete: the volume goes with the PVC, so `make down` leaves no EBS volume behind.
+  reclaimPolicy: Delete
+
+# The Load Balancer Controller's ALB Gateway class (EXPOSURE=alb only). The consoletrack chart's
+# Gateway names it, and its LoadBalancerConfiguration holds the certificate and ALLOWED_CIDRS.
+albGatewayClass:
+  enabled: false
+  name: alb

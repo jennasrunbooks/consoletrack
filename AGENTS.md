@@ -66,7 +66,7 @@ mcp-server/aws/            # aws-mcp (+ fixtures mode for demo-replay)
 frontend/src/api/          # the ONLY place the frontend calls the backend
 terraform/<account>/<global|region>/   # consoletrack/{global,us-east-1}, demo-app/us-east-1
 helm/helmfile.yaml.gotmpl  # every release (tier=addons|app), pinned chart versions, environments
-helm/charts/{consoletrack,demo-app,gateway-api-crds}/  helm/values/  helm/environments/
+helm/charts/{consoletrack,demo-app,gateway-api-crds,cluster-defaults}/  helm/values/  helm/environments/  helm/tests/
 scripts/  scripts/scenarios/
 agent-capabilities/  agent-hooks/  custom-agent/  docs/
 ```
@@ -82,7 +82,7 @@ Run from the repo root unless noted. Prefer `make` targets over ad-hoc commands.
 | Backend tests directly | `cd backend && uv run pytest -m "not integration"` |
 | Integration tests (needs Docker) | `cd backend && uv run pytest -m integration` |
 | Frontend | `cd frontend && npm ci && npm run lint && npm test` |
-| Helm checks (no cluster calls) | `make helm-lint` (`helmfile lint`; part of `make lint`) |
+| Helm checks (no cluster calls) | `make helm-lint` (`helmfile lint` + `template` for eks, eks with alb, and local, then the rendered-manifest checks; part of `make lint`). Without Helmfile, `make helm-test` runs the checks on `helm template` output |
 | Terraform checks (no AWS calls) | `terraform fmt -check -recursive terraform/` and `terraform -chdir=terraform/<account>/<root> validate` |
 | Local stack without AWS | `make demo-replay` |
 

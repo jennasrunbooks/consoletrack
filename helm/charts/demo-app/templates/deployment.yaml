@@ -1,0 +1,86 @@
+{{- include "demo-app.validate" . }}
+{{- $f := .Values.faults }}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
+{{- if $f.badImage }}{{ $tag = $f.badImageTag }}{{ end }}
+{{- $probePath := .Values.probes.path }}
+{{- if $f.badProbe }}{{ $probePath = $f.badProbePath }}{{ end }}
+{{- $resources := deepCopy .Values.resources }}
+{{- if $f.oom }}
+{{- $_ := set $resources.limits "memory" $f.oomMemoryLimit }}
+{{- $_ := set $resources.requests "memory" $f.oomMemoryLimit }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  # Keep the history short but non-empty: the bad-image fix is a rollout undo.
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "demo-app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.labels" . | nindent 8 }}
+    spec:
+      # Bound to demo-app-role-<suffix> by the demo:demo-app Pod Identity association.
+      serviceAccountName: demo-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: demo-app
+          image: {{ printf "%s:%s" .Values.image.repository $tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.port | quote }}
+            - name: AWS_REGION
+              value: {{ .Values.aws.region | quote }}
+            - name: DEMO_BUCKET
+              value: {{ .Values.aws.bucket | quote }}
+            - name: DEMO_OBJECT_KEY
+              value: {{ .Values.aws.objectKey | quote }}
+            {{- if $f.oom }}
+            - name: DEMO_ALLOCATE_MI
+              value: {{ $f.allocateMi | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ $probePath }}
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: {{ $probePath }}
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+            {{- toYaml $resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

@@ -1,0 +1,80 @@
+{{- if .Values.deployers.enabled }}
+{{- /*
+CI's deploy role (`deploy.yaml`, `helmfile -l tier=app apply`) maps to the Kubernetes group
+`consoletrack-deployers` through its EKS access entry, with no access policy. This Role is all it
+gets, in the consoletrack and demo namespaces only: the kinds the consoletrack and demo-app
+charts manage, plus what `helm --wait`, helm-diff, and the /readyz smoke test (port-forward)
+read. Nothing cluster-scoped, so it can't touch the add-ons, CRDs, or other namespaces.
+
+No Secrets at all: every Helm run uses HELM_DRIVER=configmap (the Makefile exports it, and
+helm/helmfile.yaml.gotmpl refuses to run without it), so release records are ConfigMaps, and
+the charts create no Secret objects. The first `make deploy` is a human's, because these
+bindings don't exist until it runs.
+
+Every permission the charts' own Roles grant (k8s-mcp, remediator) is also here, because
+Kubernetes only lets a subject create a Role with permissions it already holds.
+*/}}
+{{- range .Values.deployers.namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: consoletrack-deployer
+  namespace: {{ . }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "deployer") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, services, serviceaccounts]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log, events, endpoints, persistentvolumeclaims]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [apps]
+    resources: [replicasets, statefulsets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors, prometheusrules, alertmanagerconfigs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [gateways, httproutes]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [gateway.k8s.aws]
+    resources: [loadbalancerconfigurations, targetgroupconfigurations]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: consoletrack-deployer
+  namespace: {{ . }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "deployer") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: consoletrack-deployer
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: {{ $.Values.deployers.group }}
+{{- end }}
+{{- end }}

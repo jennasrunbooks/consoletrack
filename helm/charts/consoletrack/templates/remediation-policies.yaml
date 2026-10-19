@@ -1,0 +1,12 @@
+# The `remediation:` block from values.yaml, read by the policy gate in the backend and worker
+# (REMEDIATION_POLICIES_FILE). Changing a mode here is a reviewed PR, never a runtime edit.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remediation-policies
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.labels" . | nindent 4 }}
+data:
+  policies.yaml: |
+    {{- toYaml .Values.remediation | nindent 4 }}

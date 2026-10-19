@@ -1,0 +1,7 @@
+apiVersion: v2
+name: demo-app
+description: The demo workload ConsoleTrack watches - a small Python service that reads its S3 object through Pod Identity - with the cluster faults as values toggles.
+type: application
+version: 0.1.0
+# Default image tag when image.tag is empty; deploy.yaml always sets the commit SHA.
+appVersion: "0.1.0"

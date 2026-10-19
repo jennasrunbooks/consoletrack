@@ -1,0 +1,30 @@
+# Environment values for the local target: kind, no AWS. No Load Balancer Controller or
+# ExternalDNS, no canary; the intake replays recorded CloudTrail events and aws-mcp answers from
+# fixtures (make demo-replay). values.generated.yaml is layered on top here too.
+target: local
+
+exposure: port-forward
+domain: ""
+allowedCidrs: []
+nameSuffix: local
+awsRegion: us-east-1
+watchedIamPaths: /demo-app/
+triageModel: claude-haiku-5-5
+triageModelEscalation: claude-sonnet-5-5
+grafanaUrl: ""
+
+clusterName: ""
+vpcId: ""
+certificateArn: ""
+changesQueueUrl: ""
+changesDlqUrl: ""
+trailName: ""
+canarySecurityGroupId: ""
+demoBucket: ""
+
+# Images loaded into kind by the local-run workflow (`kind load docker-image ...:local`).
+imageTag: local
+
+intakeMode: replay
+# kind's built-in local-path class.
+storageClass: standard

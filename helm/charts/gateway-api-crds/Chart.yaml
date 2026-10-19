@@ -1,0 +1,11 @@
+apiVersion: v2
+name: gateway-api-crds
+description: Upstream Gateway API standard-channel CRDs at a pinned version, so Helmfile manages them like every other release.
+type: application
+# Our wrapper's version; bump it with appVersion.
+version: 1.6.2
+# The upstream Gateway API release in templates/standard-install.yaml.
+appVersion: v1.6.2
+home: https://gateway-api.sigs.k8s.io/
+sources:
+  - https://github.com/kubernetes-sigs/gateway-api/releases/tag/v1.6.2

@@ -1,0 +1,72 @@
+# Triage worker: the SQS change consumer and the agent loop (same image as the backend). Pod
+# Identity role ct-worker-<region>-<suffix>: receive/delete on the change queue, queue
+# attributes, trail status. Sees the cluster only through k8s-mcp and AWS only through aws-mcp.
+{{- $heartbeat := .Values.worker.heartbeatFile }}
+{{- $probe := printf "import os, sys, time; sys.exit(time.time() - os.path.getmtime(%q) > %d)" $heartbeat (int .Values.worker.heartbeatMaxAgeSeconds) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "consoletrack.selectorLabels" (dict "ctx" $ "name" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "consoletrack.componentLabels" (dict "ctx" $ "name" "worker") | nindent 8 }}
+      annotations:
+        checksum/remediation: {{ include (print $.Template.BasePath "/remediation-policies.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: worker
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "consoletrack.podSecurityContext" (dict "uid" 10001) | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "consoletrack.image" (dict "ctx" $ "image" "backend") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: {{ toJson .Values.worker.command }}
+          env:
+            {{- include "consoletrack.databaseEnv" . | nindent 12 }}
+            {{- include "consoletrack.appEnv" . | nindent 12 }}
+            - name: CHANGES_QUEUE_URL
+              value: {{ .Values.aws.changesQueueUrl | quote }}
+            - name: CHANGES_DLQ_URL
+              value: {{ .Values.aws.changesDlqUrl | quote }}
+            - name: TRAIL_NAME
+              value: {{ .Values.aws.trailName | quote }}
+            - name: K8S_MCP_URL
+              value: {{ printf "http://k8s-mcp:%d/mcp" (int .Values.k8sMcp.port) | quote }}
+            - name: AWS_MCP_URL
+              value: {{ printf "http://aws-mcp:%d/mcp" (int .Values.awsMcp.port) | quote }}
+            - name: WORKER_HEARTBEAT_FILE
+              value: {{ $heartbeat | quote }}
+            {{- include "consoletrack.secretEnv" (dict "name" "ANTHROPIC_API_KEY" "secret" .Values.secrets.apiKey.name "key" .Values.secrets.apiKey.anthropicApiKey) | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: [python, -c, {{ $probe | quote }}]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: [python, -c, {{ $probe | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- include "consoletrack.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: remediation, mountPath: /etc/consoletrack/remediation, readOnly: true}
+      volumes:
+        {{- include "consoletrack.tmpVolume" . | nindent 8 }}
+        {{- include "consoletrack.remediationVolume" . | nindent 8 }}
