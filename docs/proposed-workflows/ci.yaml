@@ -6,6 +6,9 @@
 #   and the openapi.yaml → schema.d.ts check) and `make test` runs test-frontend (Vitest).
 # - New `frontend-image` job builds the dashboard image and checks /healthz. It is not meant to
 #   be a required check.
+# - New `e2e` job runs the Playwright browser tests (`make test-e2e`) in Chromium installed by
+#   Playwright, and uploads the HTML report and traces when it fails. `test` sets SKIP_E2E=1 so
+#   the browser tests run once, in `e2e`. Add `e2e` to the ruleset's required checks if wanted.
 # Job names `lint`, `test`, and `terraform-fmt` are unchanged, so the ruleset needs no change.
 name: ci
 
@@ -67,7 +70,8 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: make test
+      # The browser tests run in the `e2e` job below.
+      - run: make test SKIP_E2E=1
 
   terraform-fmt:
     name: terraform-fmt
@@ -85,6 +89,36 @@ jobs:
           terraform_wrapper: false
       # Same as `terraform fmt -check -recursive terraform/`.
       - run: make lint-terraform
+
+  # Playwright against `npm run dev:mock` (MSW in the page, no backend). The tests abort and fail
+  # on any request beyond localhost, so the runner's network is only used to install.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      # The version comes from frontend/package-lock.json (@playwright/test, pinned).
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: make test-e2e
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
 
   # Not a required check: builds the dashboard image (amd64, no push) so Dockerfile and
   # nginx.conf changes are exercised. The arm64 build and push belong to the deploy pipeline.
