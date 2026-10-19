@@ -13,7 +13,7 @@ incidents, evidence, and the postmortem editor come in PR 2; their routes are pl
 |---|---|
 | Install (lockfile, no install scripts) | `npm ci --ignore-scripts` |
 | Dev against mocks, no backend | `npm run dev:mock` → http://localhost:5173 (log in as `admin`/`admin` or `viewer`/`viewer`) |
-| Dev against a backend on :8000 | `npm run dev` (`CT_BACKEND_URL` to point elsewhere) |
+| Dev against a backend on :8000 | `npm run dev` (`CT_BACKEND_URL` to point elsewhere); open it on `localhost`, not the printed `Network:` address, or the browser drops the `Secure` session cookie |
 | Regenerate API types after editing `openapi.yaml` | `npm run gen:api` |
 | Lint, typecheck, API types up to date, tests | `make test-frontend` from the repo root |
 | Production build | `npm run build` → `dist/` |
