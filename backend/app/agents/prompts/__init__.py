@@ -6,6 +6,9 @@ The three prompts move together, so a version names the whole set.
 - v2: reading container restarts for the OOM scenario (#60): exit 137 soon after start without a
   liveness failure is a likely OOM, every container's last termination, working set can miss a
   short peak, a probe diagnosis needs the kubelet's events, `superseded` rollout revisions.
+- v3: after an OOM, whether the memory limit changed in a recent revision decides the fix:
+  lowered → `rollback`, unchanged → `set_memory_limit` (#60). v2's OOM fault lowered the limit in a
+  new revision, so `rollback` was a fair answer to a scenario that expected a limit raise.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from functools import cache
 from importlib.resources import files
 from string import Template
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 
 @cache

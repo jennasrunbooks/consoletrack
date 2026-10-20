@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agents.prompts import PROMPT_VERSION
 from app.agents.runner import AgentRunner, RunLimits
 from app.agents.schema import TOOL_NAME
 from app.agents.tools import ToolsUnavailable
@@ -29,7 +30,9 @@ from app.services.policy_gate import GateDecision, GateMode, ManualPolicyGate
 from app.services.triage import rerun_triage
 from app.settings import Settings
 from tests.unit.agent_fakes import (
+    LOWERED_LIMIT,
     ROLE_ARN,
+    UNCHANGED_LIMIT,
     FakeModelClient,
     FakeToolProvider,
     aws_put_role_policy,
@@ -54,7 +57,7 @@ OOM_PROPOSAL = {
     "deployment": "demo-app",
     "container": "demo-app",
     "memory_limit": "256Mi",
-    "reason": "OOMKilled at 128Mi; the app holds ~150 MiB at startup. 2x the current limit.",
+    "reason": "OOMKilled under traffic at an unchanged 128Mi limit; 2x the current limit.",
 }
 
 
@@ -443,8 +446,52 @@ async def test_exit_137_reported_as_error_without_a_probe_event_takes_the_oom_pa
     (seen_events,) = model.tool_results(2)
     assert "Unhealthy" not in seen_events["content"] and "Killing" not in seen_events["content"]
     (run,) = store.agent_runs.rows
-    assert (run.prompt_version, run.escalated) == ("v2", False)
+    assert (run.prompt_version, run.escalated) == (PROMPT_VERSION, False)
     assert [(p.kind, p.memory_limit) for _, p in gate.proposals] == [("set_memory_limit", "256Mi")]
+
+
+ROLLOUT = call("get_rollout_history", {"namespace": "demo", "deployment": "demo-app"})
+ROLLBACK_PROPOSAL = {
+    "kind": "rollback",
+    "namespace": "demo",
+    "deployment": "demo-app",
+    "to_revision": 1,
+    "reason": "Revision 2 lowered the memory limit from 256Mi to 128Mi; revision 1 ran at 256Mi.",
+}
+
+
+@pytest.mark.parametrize(
+    ("revisions", "proposal", "limits"),
+    [
+        # The scenario: the app outgrew an unchanged limit, so raise it.
+        (UNCHANGED_LIMIT, OOM_PROPOSAL, ["128Mi"]),
+        # A revision lowered the limit, so roll back to the one before it.
+        (LOWERED_LIMIT, ROLLBACK_PROPOSAL, ["128Mi", "256Mi"]),
+    ],
+    ids=["unchanged-limit-raises", "lowered-limit-rolls-back"],
+)
+async def test_the_rollout_history_decides_the_oom_fix(
+    store: FakeStore,
+    make_incident: Any,
+    revisions: list[dict[str, Any]],
+    proposal: dict[str, Any],
+    limits: list[str],
+) -> None:
+    make_incident(triage_requested_at=NOW)
+    model = FakeModelClient([turn(PODS), turn(ROLLOUT), submit(proposed_remediation=proposal)])
+    triage, gate = make_triage(store, model, k8s_oom(revisions=revisions))
+    await triage.run_next()
+
+    # The model saw each revision's memory limit, which the v3 rule turns on.
+    assert "only the memory limit does" in " ".join(model.requests[0]["system"].split())
+    (history,) = model.tool_results(2)
+    seen = json.loads(history["content"])["revisions"]
+    assert [r["resources"]["demo-app"]["limits"]["memory"] for r in seen] == limits
+    assert len({r["images"]["demo-app"] for r in seen}) == 1
+    ((_, gated),) = gate.proposals
+    assert gated.kind == proposal["kind"]
+    assert store.remediations.rows[0].kind is RemediationKind(proposal["kind"])
+    assert store.agent_runs.rows[0].prompt_version == "v3"
 
 
 async def test_low_confidence_on_a_restart_escalates_once(
@@ -471,7 +518,7 @@ async def test_low_confidence_on_a_restart_escalates_once(
         AgentRunOutcome.succeeded,
     )
     assert (escalated.model, escalated.escalated) == (ESCALATION_MODEL, True)
-    assert first.prompt_version == escalated.prompt_version == "v2"
+    assert first.prompt_version == escalated.prompt_version == PROMPT_VERSION
     assert [request["model"] for request in model.requests] == [TRIAGE_MODEL] * 2 + [
         ESCALATION_MODEL
     ] * 3
@@ -497,7 +544,7 @@ async def test_low_confidence_on_a_restart_escalates_once(
     assert (run["model"], run["escalated"], run["prompt_version"]) == (
         ESCALATION_MODEL,
         True,
-        "v2",
+        PROMPT_VERSION,
     )
 
 
