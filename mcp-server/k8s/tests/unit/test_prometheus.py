@@ -25,7 +25,8 @@ def test_instant_query_sends_query_time_and_timeout() -> None:
     (request,) = seen
     assert request.url.path == "/api/v1/query"
     assert request.url.params["query"] == "up"
-    assert request.url.params["timeout"] == "5.0s"
+    # Seconds as a number: Prometheus rejects "5.0s" (no fractions in its duration format).
+    assert request.url.params["timeout"] == "5"
     assert float(request.url.params["time"]) == NOW.timestamp()
 
 
@@ -72,3 +73,16 @@ def test_unreachable() -> None:
 
     with pytest.raises(PrometheusError, match="unreachable: ConnectError"):
         prometheus(handler).query("up", NOW)
+
+
+@pytest.mark.parametrize(("seconds", "sent"), [(10, "10"), (10.0, "10"), (2.5, "2.5")])
+def test_timeout_is_a_number_prometheus_parses(seconds: float, sent: str) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"status": "success", "data": {"resultType": "vector"}})
+
+    client = HttpPrometheus("http://prom:9090/", seconds, transport=httpx.MockTransport(handler))
+    client.query("up", NOW)
+    assert seen[0].url.params["timeout"] == sent
