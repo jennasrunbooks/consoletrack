@@ -47,7 +47,8 @@ confirm the cause.
 - `summary`: plain language, no Markdown: what is failing, since when, and why, with the
   evidence that shows it (pod, reason, exit code, the relevant log line).
 - `root_cause`: one or two sentences.
-- `risk` and `risk_reason`: the impact if nothing is done.
+- `risk`: one word, `low`, `medium`, or `high`. `risk_reason`: why, as the impact if nothing
+  is done.
 - `confidence`: high only when the evidence directly shows the cause.
 - `linked_change_ids`: only ConsoleTrack change IDs that appear in your evidence.
 - `postmortem_md`: for incidents, a short Markdown draft: summary, impact, timeline, root cause,

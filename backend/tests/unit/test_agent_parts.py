@@ -48,9 +48,13 @@ def test_tool_definition_is_self_contained() -> None:
     assert "$ref" not in text and "$defs" not in text
     schema = definition["input_schema"]
     assert schema["additionalProperties"] is False
-    assert {"summary", "risk", "confidence", "proposed_remediation", "flags"} <= set(
+    assert {"summary", "risk", "risk_reason", "confidence", "proposed_remediation", "flags"} <= set(
         schema["required"]
     )
+    # The enums say they're one word, so the model doesn't put its reasoning in them.
+    for name in ("risk", "confidence"):
+        assert schema["properties"][name]["enum"] == ["low", "medium", "high"]
+        assert "One word" in schema["properties"][name]["description"]
     assert SCHEMA_VERSION == "1"
 
 

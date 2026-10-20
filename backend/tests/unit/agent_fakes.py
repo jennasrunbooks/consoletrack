@@ -50,6 +50,7 @@ def submit(**fields: Any) -> ModelTurn:
         "summary": "demo-app is OOMKilled at startup.",
         "root_cause": "The memory limit is too low.",
         "risk": "high",
+        "risk_reason": "The only replica can't start.",
         "confidence": "high",
         "linked_change_ids": [],
         "proposed_remediation": None,

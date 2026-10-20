@@ -100,9 +100,16 @@ class SubmitAnalysis(_Strict):
         str | None,
         Field(max_length=4000, description="Incidents: the cause; null for a change"),
     ]
-    risk: Risk
-    risk_reason: Annotated[str | None, Field(max_length=2000)] = None
-    confidence: Confidence
+    # Descriptions and a required risk_reason keep the explanation out of the enum: without
+    # them Haiku wrote "High. The only replica..." into risk.
+    risk: Annotated[
+        Risk, Field(description="One word: low, medium, or high. Explain in risk_reason")
+    ]
+    risk_reason: Annotated[
+        str | None,
+        Field(max_length=2000, description="Why that risk: the impact if nothing is done"),
+    ]
+    confidence: Annotated[Confidence, Field(description="One word: low, medium, or high")]
     linked_change_ids: Annotated[
         list[Annotated[int, Field(ge=1)]],
         Field(max_length=10, description="IDs of ConsoleTrack changes that likely caused this"),
@@ -136,7 +143,9 @@ def _inline(schema: dict[str, Any]) -> dict[str, Any]:
     def walk(node: Any) -> Any:
         if isinstance(node, dict):
             if "$ref" in node:
-                return walk(defs[node["$ref"].rsplit("/", 1)[-1]])
+                # Keep the field's own keys (its description) next to the inlined definition.
+                siblings = {key: value for key, value in node.items() if key != "$ref"}
+                return walk({**defs[node["$ref"].rsplit("/", 1)[-1]], **siblings})
             return {
                 key: walk(value)
                 for key, value in node.items()
