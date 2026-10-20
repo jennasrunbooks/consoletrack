@@ -290,8 +290,6 @@ jobs:
         with:
           helm-version: "v4.3.1"
           helmfile-version: "v1.8.2"
-          helm-plugins: |
-            https://github.com/databus23/helm-diff@v3.15.15
       - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           install_only: true
