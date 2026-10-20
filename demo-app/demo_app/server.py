@@ -112,11 +112,10 @@ def build(
     """
     held = None
     if config.allocate_mi:
-        log.info(
-            "allocating %d MiB in %gs (DEMO_ALLOCATE_MI)",
-            config.allocate_mi,
-            config.allocate_delay_seconds,
-        )
+        # No size here: the faulted container dies before it logs anything else, so this line is
+        # all the triage agent reads, and it has to find the cause from the limit, the exit code,
+        # and the timing (env values are redacted for the same reason).
+        log.info("allocating memory in %gs", config.allocate_delay_seconds)
         sleep(config.allocate_delay_seconds)
         held = allocate(config.allocate_mi)
         log.info("allocated and holding %d MiB", config.allocate_mi)

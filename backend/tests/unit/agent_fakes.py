@@ -127,7 +127,7 @@ class FakeToolProvider:
 
 
 OOM_LOG = (
-    "2026-10-16T11:58:01Z INFO allocating 128 MiB (DEMO_ALLOCATE_MI)\n"
+    "2026-10-16T11:58:01Z INFO allocating memory in 3s\n"
     "2026-10-16T11:58:01Z INFO starting demo-app on :8080"
 )
 

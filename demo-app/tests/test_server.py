@@ -72,6 +72,18 @@ def test_waits_then_allocates_then_listens(monkeypatch: pytest.MonkeyPatch) -> N
     assert order == [("wait", 2.5), ("allocate", 1), ("listen",)]
 
 
+def test_the_startup_log_does_not_give_the_size_away(caplog: pytest.LogCaptureFixture) -> None:
+    # The triage agent reads the faulted container's log; the size would hand it the answer.
+    caplog.set_level("INFO", logger="demo_app.server")
+    _, httpd = server.build(
+        Config(port=0, allocate_mi=1, allocate_delay_seconds=3), host="127.0.0.1", sleep=no_sleep
+    )
+    httpd.server_close()
+    first = caplog.messages[0]
+    assert first == "allocating memory in 3s"
+    assert "MiB" not in first and "DEMO_ALLOCATE_MI" not in first
+
+
 def test_default_delay_is_three_seconds() -> None:
     waits: list[float] = []
     _, httpd = server.build(Config(port=0, allocate_mi=1), host="127.0.0.1", sleep=waits.append)
