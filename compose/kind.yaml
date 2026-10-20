@@ -11,3 +11,26 @@ services:
       default: {}
       kind:
         aliases: [consoletrack-backend]
+    # The remediation apply loop (backend/app/services/remediation_apply.py) against kind, with
+    # the remediator ServiceAccount's token from kind-remediator.kubeconfig: the chart's Role
+    # lets it patch Deployments in `demo` and nothing else. scripts/local-kind.sh writes both
+    # files (gitignored) before Compose starts.
+    environment:
+      KUBECONFIG: /run/kube/config
+      K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-demo}
+      REMEDIATION_POLICIES_FILE: /etc/consoletrack/remediation/policies.yaml
+      REMEDIATION_APPLY_ENABLED: "true"
+      AUTOFIX_ENABLED: ${AUTOFIX_ENABLED:-true}
+      # kube-prometheus-stack's NodePort on kind's network, as for k8s-mcp.
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://consoletrack-control-plane:30090}
+    volumes:
+      - ./kind-remediator.kubeconfig:/run/kube/config:ro
+      - ./kind-remediation-policies.yaml:/etc/consoletrack/remediation/policies.yaml:ro
+  worker:
+    # The policy gate: the same policies and kill switch as the backend. No cluster credentials.
+    environment:
+      K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-demo}
+      REMEDIATION_POLICIES_FILE: /etc/consoletrack/remediation/policies.yaml
+      AUTOFIX_ENABLED: ${AUTOFIX_ENABLED:-true}
+    volumes:
+      - ./kind-remediation-policies.yaml:/etc/consoletrack/remediation/policies.yaml:ro

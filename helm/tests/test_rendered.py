@@ -8,10 +8,17 @@ only. RBAC is namespaced, read-only for k8s-mcp, and patch-only for the remediat
 from __future__ import annotations
 
 import re
+import subprocess
 
 import pytest
 import yaml
-from conftest import APP_CHARTS, DuplicateKeyLoader, chart_of, helm_template_text
+from conftest import (
+    APP_CHARTS,
+    DuplicateKeyLoader,
+    chart_of,
+    helm_template,
+    helm_template_text,
+)
 
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob"}
 # Secrets the charts may read: created by scripts/create-secrets.sh, or by CloudNativePG.
@@ -228,6 +235,7 @@ def test_remediator_can_only_patch_deployments(ours: list[dict]) -> None:
         assert grants == {
             ("deployments", "get"), ("deployments", "patch"),
             ("replicasets", "get"), ("replicasets", "list"),
+            ("pods", "get"), ("pods", "list"),
         }  # fmt: skip
 
 
@@ -248,21 +256,45 @@ def test_deployers_are_limited_to_two_namespaces(ours: list[dict]) -> None:
                 assert set(rule["verbs"]) <= {"get", "list", "watch"}
 
 
-def test_remediation_ships_manual(ours: list[dict]) -> None:
-    import yaml
-
+def test_remediation_ships_only_the_oom_bump_in_auto(ours: list[dict]) -> None:
     (cm,) = [
         d
         for d in ours
         if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "remediation-policies"
     ]
     policies = yaml.safe_load(cm["data"]["policies.yaml"])
-    assert policies["autoEnabled"] is False
-    assert {p["mode"] for p in policies["policies"]} == {"manual"}
+    assert policies["autoEnabled"] is True
+    modes = {p["name"]: p["mode"] for p in policies["policies"]}
+    assert modes == {"oom-memory-bump": "auto", "default": "manual"}
     (oom,) = [p for p in policies["policies"] if p["name"] == "oom-memory-bump"]
     # Matched on the remediation kind; the incident's alert is the user-impact one.
     assert oom["match"] == {"kind": "set_memory_limit", "namespace": "demo"}
     assert oom["bounds"] == {"maxMultiplier": 2, "ceiling": "512Mi"}
+    assert oom["rateLimit"] == {"perWorkload": 1, "window": "1h"}
+    assert (oom["verify"]["rolloutTimeout"], oom["verify"]["waitForResolved"]) == (
+        "3m",
+        "5m",
+    )
+
+
+def test_backend_and_worker_read_the_policies_and_the_kill_switch(
+    ours: list[dict],
+) -> None:
+    for workload in ("backend", "worker"):
+        ((_, _, container, _),) = [
+            c
+            for c in containers(ours)
+            if c[0]["metadata"]["name"] == workload and not c[3]
+        ]
+        env = {e["name"]: e.get("value") for e in container["env"]}
+        assert (
+            env["REMEDIATION_POLICIES_FILE"]
+            == "/etc/consoletrack/remediation/policies.yaml"
+        )
+        assert env["AUTOFIX_ENABLED"] == "true"
+        assert env["K8S_ALLOWED_NAMESPACES"] == "demo"
+        # Only the backend applies.
+        assert ("REMEDIATION_APPLY_ENABLED" in env) is (workload == "backend")
 
 
 def test_worker_offers_aws_mcp_except_on_kind(ours: list[dict], config: str) -> None:
@@ -330,3 +362,32 @@ def test_no_duplicate_keys(config: str) -> None:
             list(yaml.load_all(text, Loader=DuplicateKeyLoader))
         except yaml.constructor.ConstructorError as exc:
             pytest.fail(f"{chart} ({config}): {exc}")
+
+
+@pytest.mark.parametrize(
+    ("match", "message"),
+    [
+        (
+            {"kind": "revert_workflow", "namespace": "demo"},
+            "changes AWS and can never be auto",
+        ),
+        (
+            {"kind": "codify_pr", "namespace": "demo"},
+            "changes AWS and can never be auto",
+        ),
+        ({}, "auto needs match.kind"),
+        ({"kind": "set_memory_limit"}, "auto needs match.namespace"),
+    ],
+)
+def test_the_chart_refuses_unsafe_auto_policies(match: dict, message: str) -> None:
+    values = {
+        "target": "local",
+        "app": {"intakeMode": "replay"},
+        "remediation": {
+            "autoEnabled": True,
+            "policies": [{"name": "unsafe", "match": match, "mode": "auto"}],
+        },
+    }
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        helm_template("consoletrack", "consoletrack", "consoletrack", values)
+    assert message in exc.value.stderr

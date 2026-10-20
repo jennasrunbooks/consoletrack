@@ -99,6 +99,18 @@ class RemediationStatus(StrEnum):
     failed = "failed"
 
 
+class RemediationMode(StrEnum):
+    """How the policy gate decided: a human approves (`manual`), or the gate does (`auto`)."""
+
+    manual = "manual"
+    auto = "auto"
+
+
+# Kinds that change AWS (through the gated Terraform workflow or a pull request). No policy may
+# set them to `auto` (docs/remediation-graduation.md).
+AWS_REMEDIATION_KINDS = frozenset({RemediationKind.revert_workflow, RemediationKind.codify_pr})
+
+
 class SubjectType(StrEnum):
     change = "change"
     incident = "incident"

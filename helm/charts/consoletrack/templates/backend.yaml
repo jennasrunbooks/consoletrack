@@ -1,5 +1,6 @@
-# Backend API: webhooks, state machines, approvals, and the approved cluster patch. Runs as the
-# `remediator` ServiceAccount (rbac-remediator.yaml); it has no AWS role.
+# Backend API: webhooks, state machines, approvals, and the remediation apply loop that patches
+# approved cluster fixes (backend/app/services/remediation_apply.py). Runs as the `remediator`
+# ServiceAccount (rbac-remediator.yaml); it has no AWS role.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,6 +50,11 @@ spec:
             {{- include "consoletrack.appEnv" . | nindent 12 }}
             - name: GRAFANA_URL
               value: {{ .Values.app.grafanaUrl | quote }}
+            - name: REMEDIATION_APPLY_ENABLED
+              value: "true"
+            # verify's error-ratio check (remediation.policies[].verify.errorRatio).
+            - name: PROMETHEUS_URL
+              value: {{ include "consoletrack.prometheusUrl" . | quote }}
             {{- include "consoletrack.secretEnv" (dict "name" "ADMIN_PASSWORD_HASH" "secret" .Values.secrets.auth.name "key" .Values.secrets.auth.adminPasswordHash) | nindent 12 }}
             {{- include "consoletrack.secretEnv" (dict "name" "VIEWER_PASSWORD_HASH" "secret" .Values.secrets.auth.name "key" .Values.secrets.auth.viewerPasswordHash) | nindent 12 }}
             {{- include "consoletrack.secretEnv" (dict "name" "SESSION_SECRET" "secret" .Values.secrets.auth.name "key" .Values.secrets.auth.sessionSecret) | nindent 12 }}

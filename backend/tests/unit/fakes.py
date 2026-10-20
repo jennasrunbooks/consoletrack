@@ -7,7 +7,7 @@ They hold real (transient) ORM objects in lists, so services run unchanged. The 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime
 from typing import Any, Self
 
@@ -25,6 +25,9 @@ from app.enums import (
     ACTIVE_INCIDENT_STATUSES,
     CLOSED_CHANGE_STATUSES,
     Confidence,
+    RemediationKind,
+    RemediationMode,
+    RemediationStatus,
     Risk,
     SubjectType,
 )
@@ -267,6 +270,44 @@ class _LatestForSubject[T]:
         return max(matches, key=lambda row: row.id, default=None)  # type: ignore[attr-defined]
 
 
+class FakeRemediationRepository(_LatestForSubject[RemediationRow]):
+    def get(self, remediation_id: int, *, for_update: bool = False) -> RemediationRow | None:
+        return next((row for row in self.table.rows if row.id == remediation_id), None)
+
+    def latest_for(
+        self, subject_type: SubjectType, subject_id: int, *, for_update: bool = False
+    ) -> RemediationRow | None:
+        return super().latest_for(subject_type, subject_id)
+
+    def auto_for_workload(self, namespace: str, workload: str) -> list[RemediationRow]:
+        return sorted(
+            (
+                row
+                for row in self.table.rows
+                if (row.namespace, row.workload) == (namespace, workload)
+                and row.mode is RemediationMode.auto
+            ),
+            key=lambda row: row.id,
+        )
+
+    def next_to_apply(
+        self, now: datetime, kinds: Collection[RemediationKind]
+    ) -> RemediationRow | None:
+        due = [
+            row
+            for row in self.table.rows
+            if row.kind in kinds
+            and (
+                row.status is RemediationStatus.approved
+                or (
+                    row.status is RemediationStatus.running
+                    and (row.lease_until is None or row.lease_until < now)
+                )
+            )
+        ]
+        return min(due, key=lambda row: row.id, default=None)
+
+
 class FakeUnitOfWork:
     def __init__(self, store: FakeStore) -> None:
         self.store = store
@@ -276,7 +317,7 @@ class FakeUnitOfWork:
         self.agent_runs = FakeAgentRunRepository(store)
         self.evidence = FakeEvidenceRepository(store)
         self.analyses = _LatestForSubject[AnalysisRow](store.analyses)
-        self.remediations = _LatestForSubject[RemediationRow](store.remediations)
+        self.remediations = FakeRemediationRepository(store.remediations)
 
     def commit(self) -> None:
         self.store.commits += 1

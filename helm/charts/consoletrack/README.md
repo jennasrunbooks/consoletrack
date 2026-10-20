@@ -20,7 +20,7 @@ Plus:
 
 - **RBAC** (`templates/rbac-*.yaml`), one Role per namespace and nothing cluster-scoped:
   `k8s-mcp-read` (get/list/watch on pods, pods/log, events, deployments, replicasets,
-  statefulsets) and `remediator` (get/patch deployments, get/list replicasets) in each of
+  statefulsets) and `remediator` (get/patch deployments, get/list replicasets and pods) in each of
   `allowedNamespaces`; `consoletrack-deployer` for the `consoletrack-deployers` group (CI's
   deploy role) in `consoletrack` and `demo`.
 - **Exposure.** `port-forward` (default): no Gateway; the frontend's nginx also proxies `/api`
@@ -35,8 +35,11 @@ Plus:
   bearer token from `consoletrack-webhook`; and the "Intake health" dashboard
   (`files/intake-health.json`, uid `consoletrack-intake`) for the Grafana sidecar.
 - **Remediation policies**: the `remediation:` block from `values.yaml` as the
-  `remediation-policies` ConfigMap, mounted into the backend and worker. Every policy is
-  `manual` and `autoEnabled` is false; graduating one is a reviewed PR.
+  `remediation-policies` ConfigMap, mounted into the backend and worker. Only `oom-memory-bump`
+  (`set_memory_limit` in `demo`) is `auto`; every other policy is `manual`, and graduating one
+  is a reviewed PR ([docs/remediation-graduation.md](../../../docs/remediation-graduation.md)).
+  `autoEnabled` is also rendered as `AUTOFIX_ENABLED`, the kill switch. The render fails for an
+  `auto` policy on an AWS-side kind or without a named kind and namespace.
 
 ## Pod security
 
@@ -53,7 +56,7 @@ them (or change both in one PR).
 
 | Image | Command and port | Probes | Environment |
 |---|---|---|---|
-| `consoletrack-backend` | image default (`uvicorn … :8000`); `alembic upgrade head` in the init container | `GET /healthz`, `GET /readyz` | `DATABASE_URL`, `AWS_REGION`, `INTAKE_MODE`, `TRIAGE_MODEL(_ESCALATION)`, `GRAFANA_URL`, `K8S_ALLOWED_NAMESPACES`, `REMEDIATION_POLICIES_FILE`, `ADMIN_PASSWORD_HASH`, `VIEWER_PASSWORD_HASH`, `SESSION_SECRET`, `ALERT_WEBHOOK_TOKEN` |
+| `consoletrack-backend` | image default (`uvicorn … :8000`); `alembic upgrade head` in the init container | `GET /healthz`, `GET /readyz` | `DATABASE_URL`, `AWS_REGION`, `INTAKE_MODE`, `TRIAGE_MODEL(_ESCALATION)`, `GRAFANA_URL`, `K8S_ALLOWED_NAMESPACES`, `REMEDIATION_POLICIES_FILE`, `AUTOFIX_ENABLED`, `REMEDIATION_APPLY_ENABLED`, `PROMETHEUS_URL`, `ADMIN_PASSWORD_HASH`, `VIEWER_PASSWORD_HASH`, `SESSION_SECRET`, `ALERT_WEBHOOK_TOKEN` |
 | `consoletrack-backend` as the worker | `python -m app.worker` | touches `WORKER_HEARTBEAT_FILE` after every poll and every 15 s during a triage run; unhealthy when it's older than 120 s | the shared settings above plus `CHANGES_QUEUE_URL`, `CHANGES_DLQ_URL`, `TRAIL_NAME`, `K8S_MCP_URL`, `AWS_MCP_URL`, `ANTHROPIC_API_KEY`, `WORKER_HEARTBEAT_FILE` |
 | `consoletrack-frontend` | image default (nginx :8080) | `GET /healthz` | none |
 | `consoletrack-k8s-mcp` | image default (:8080, `/mcp`) | `GET /healthz`, `GET /readyz` | `K8S_MCP_TRANSPORT=http`, `K8S_MCP_PORT`, `K8S_ALLOWED_NAMESPACES`, `PROMETHEUS_URL` |

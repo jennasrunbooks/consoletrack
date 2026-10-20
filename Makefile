@@ -318,7 +318,7 @@ test-k8s-mcp: ## k8s-mcp unit tests with a fake Kubernetes client (no cluster, n
 	$(K8S_MCP_RUN) pytest tests/unit -q -m "not kind" \
 		--cov=k8s_mcp.tools --cov=k8s_mcp.redact --cov-report=term-missing --cov-fail-under=90
 
-test-k8s: ## k8s-mcp against a throwaway kind cluster with the real RBAC (needs Docker; runs in CI)
+test-k8s: ## k8s-mcp and the remediator's `kubectl auth can-i` checks against a throwaway kind cluster with the real RBAC (needs Docker; runs in CI)
 	scripts/test-k8s.sh
 
 ##@ Configuration
@@ -415,9 +415,9 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 
 ##@ Demo and evaluation
 
-# The kind half (scripts/local-kind.sh) goes around Compose: the cluster, add-ons, demo app, and
-# k8s-mcp's kubeconfig before it, the webhook token and AlertmanagerConfig after it (they need
-# the running backend). The worker and aws-mcp join with #9 and #10 PR 2; see #15.
+# The kind half (scripts/local-kind.sh) goes around Compose: the cluster, add-ons, demo app, the
+# kubeconfigs (k8s-mcp's and the backend's remediator), and the remediation policies before it,
+# the webhook token and AlertmanagerConfig after it (they need the running backend). The worker and aws-mcp join with #9 and #10 PR 2; see #15.
 local: env-check-local ## Compose stack plus the `consoletrack` kind cluster with Prometheus and the demo app, no AWS (LOCAL_KIND=false: Compose only)
 ifeq ($(LOCAL_KIND),true)
 	$(MAKE) --no-print-directory demo-app-image
@@ -451,7 +451,7 @@ local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` 
 	else \
 		$(COMPOSE) down --volumes --remove-orphans; \
 	fi
-	rm -f kind-internal.kubeconfig
+	rm -f kind-internal.kubeconfig kind-remediator.kubeconfig kind-remediation-policies.yaml
 
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
 	$(call todo,#9 (scripts/replay-fixtures.py and the worker's replay mode); see #15)
