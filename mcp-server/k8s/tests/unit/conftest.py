@@ -113,7 +113,17 @@ def stateful_set() -> V1StatefulSet:
     )
 
 
-def replica_set(revision: int, image: str, owner_uid: str = DEPLOYMENT_UID) -> V1ReplicaSet:
+def replica_set(
+    revision: int,
+    image: str,
+    owner_uid: str = DEPLOYMENT_UID,
+    replicas: int | None = None,
+    ready: int | None = None,
+    memory_limit: str = "128Mi",
+) -> V1ReplicaSet:
+    # By default revision 2 is the running one and every other revision is scaled to 0.
+    replicas = (1 if revision == 2 else 0) if replicas is None else replicas
+    ready = replicas if ready is None else ready
     return V1ReplicaSet(
         metadata=V1ObjectMeta(
             name=f"demo-app-rev{revision}",
@@ -127,11 +137,22 @@ def replica_set(revision: int, image: str, owner_uid: str = DEPLOYMENT_UID) -> V
             ],
         ),
         spec=V1ReplicaSetSpec(
-            replicas=1 if revision == 2 else 0,
+            replicas=replicas,
             selector=V1LabelSelector(match_labels={"app": "demo-app"}),
-            template=V1PodTemplateSpec(spec=V1PodSpec(containers=[container(image=image)])),
+            template=V1PodTemplateSpec(
+                spec=V1PodSpec(
+                    containers=[
+                        container(
+                            image=image,
+                            resources=V1ResourceRequirements(
+                                limits={"memory": memory_limit}, requests={"memory": "64Mi"}
+                            ),
+                        )
+                    ]
+                )
+            ),
         ),
-        status=V1ReplicaSetStatus(replicas=1, ready_replicas=1 if revision == 2 else 0),
+        status=V1ReplicaSetStatus(replicas=replicas, ready_replicas=ready),
     )
 
 

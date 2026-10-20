@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -196,6 +197,10 @@ class AgentRunRow(TimestampMixin, Base):
     outcome: Mapped[AgentRunOutcome] = mapped_column(
         enum_column(AgentRunOutcome, "outcome"), default=AgentRunOutcome.running
     )
+    # The prompt set it ran with (app/agents/prompts PROMPT_VERSION); null for runs before 0003.
+    prompt_version: Mapped[str | None] = mapped_column(String(16))
+    # The worker's one re-run with TRIAGE_MODEL_ESCALATION after a low-confidence result.
+    escalated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class EvidenceRow(TimestampMixin, Base):

@@ -147,6 +147,18 @@ def record_triage(
     return remediation
 
 
+def record_superseded_analysis(
+    uow: UnitOfWork, incident_id: int, *, run_id: int, analysis: SubmitAnalysis
+) -> None:
+    """Keep a run's analysis that an escalated run replaced, for the record and the OOM eval.
+
+    Only the analysis row: no links, no remediation, no state change. Stored before the winning
+    run's analysis, so that one stays the incident's latest.
+    """
+    uow.analyses.add(_analysis_row(incident_id, run_id, analysis))
+    uow.commit()
+
+
 def _analysis_row(incident_id: int, run_id: int, analysis: SubmitAnalysis) -> AnalysisRow:
     return AnalysisRow(
         subject_type=SubjectType.incident,

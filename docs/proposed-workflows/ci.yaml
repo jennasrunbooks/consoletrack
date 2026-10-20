@@ -1,6 +1,10 @@
 # PROPOSED: a human needs to move this to .github/workflows/ci.yaml, replacing the current file.
 # (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
 #
+# #60 changes the `demo-app-image` job's "OOM fault sizing" step: the OOM fault is now a report
+# cache the traffic generator fills (DEMO_ALLOCATE_MI is gone), so the step sends large-report
+# requests under 128m and 256m instead. Until this is moved, that step fails on #60's PR.
+#
 # This is an exact copy of the current .github/workflows/ci.yaml (as of #46) plus two new jobs.
 # Neither is meant to be a required check yet, so the ruleset needs no change.
 # - `k8s-mcp-kind` (#10, k8s-mcp PR), at the end: `make test-k8s` against a throwaway kind
@@ -8,7 +12,7 @@
 # - `demo-app-image` (#51), after `frontend-image`: builds the demo app image (amd64, no push),
 #   runs the server and the traffic generator hardened as in the cluster (read-only root, no
 #   capabilities), checks the loadgen's /metrics, and checks the OOM fault's sizing with Docker's
-#   memory limit: 128 MiB allocated is killed under 128m and runs under 256m. Pushing to GHCR
+#   memory limit: a full report cache is killed under 128m and fits under 256m. Pushing to GHCR
 #   belongs to deploy.yaml. `lint` and `test` need no change: `make lint` and `make test` now
 #   include lint-demo-app and test-demo-app, which use uv (already set up in both jobs).
 #
@@ -186,19 +190,31 @@ jobs:
           echo "$metrics" | grep '^demo_client_requests_total'
           echo "$metrics" | grep -Eq '^demo_client_requests_total\{result="ok"\} [1-9]'
           echo "$metrics" | grep -Eq '^demo_client_requests_total\{result="http_error"\} 0'
-      - name: OOM fault sizing (128 MiB held)
+      - name: OOM fault sizing (report cache, 140 MiB cap)
         run: |
-          # The faulted limit: killed at startup.
+          # 80 large reports at 2 MiB each fill the 140 MiB cache; stops when the app dies.
+          reports() {
+            for _ in $(seq 1 80); do
+              curl -fsS -o /dev/null -H 'X-Demo-Report: large' "$1/" || return 0
+            done
+          }
+          up() { for _ in $(seq 1 20); do curl -fsS "$1/healthz" && return 0; sleep 1; done; return 1; }
+          # The unchanged 128Mi limit: a full cache doesn't fit, so it's OOMKilled.
           # shellcheck disable=SC2086
-          docker run --name oom --memory 128m --memory-swap 128m $HARDENED \
-            -e DEMO_ALLOCATE_MI=128 "$IMAGE" || true
+          docker run -d --name oom --memory 128m --memory-swap 128m -p 8083:8080 $HARDENED "$IMAGE"
+          up http://localhost:8083
+          reports http://localhost:8083
+          for _ in $(seq 1 20); do
+            test "$(docker inspect -f '{{.State.Running}}' oom)" = false && break; sleep 1
+          done
           test "$(docker inspect -f '{{.State.OOMKilled}}' oom)" = "true"
-          # The fix, 2x: keeps running.
+          # The fix, 2x: a full cache fits.
           # shellcheck disable=SC2086
-          docker run -d --name fixed --memory 256m --memory-swap 256m -p 8082:8080 $HARDENED \
-            -e DEMO_ALLOCATE_MI=128 "$IMAGE"
-          for i in $(seq 1 20); do curl -fsS http://localhost:8082/healthz && break; sleep 1; done
-          curl -fsS http://localhost:8082/metrics | grep '^demo_app_allocated_bytes'
+          docker run -d --name fixed --memory 256m --memory-swap 256m -p 8082:8080 $HARDENED "$IMAGE"
+          up http://localhost:8082
+          reports http://localhost:8082
+          test "$(docker inspect -f '{{.State.Running}}' fixed)" = "true"
+          curl -fsS http://localhost:8082/metrics | grep -E '^demo_app_report_cache_bytes 1\.4680064e\+08$'
           docker stats --no-stream fixed
       - name: Logs
         if: failure()

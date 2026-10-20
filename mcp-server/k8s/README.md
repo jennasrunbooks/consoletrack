@@ -16,7 +16,7 @@ All six are reads (`readOnlyHint: true`). Each refuses a namespace outside
 | `get_pods(namespace, selector)` | Phase, restarts, each container's state and last termination reason and exit code | 50 pods; container-written termination messages left out |
 | `get_pod_logs(namespace, pod, container, previous, tail)` | Last lines in `untrusted_data`, redacted | `tail` clamped to 1–200, 2,000 chars per line, 256 KiB per request |
 | `get_events(namespace, involved_object)` | Warning events, newest first, in `untrusted_data`, redacted | 50 events; `involved_object` is `name` or `Kind/name` |
-| `get_rollout_history(namespace, deployment)` | The Deployment's ReplicaSets: revision, images, created, replicas | 10 revisions |
+| `get_rollout_history(namespace, deployment)` | The Deployment's ReplicaSets: revision, images and resources per container, created, desired and ready replicas, `current`, and `state` (`current`, `superseded` when a newer revision scaled it to 0, `scaling_down` mid-RollingUpdate), plus the strategy | 10 revisions |
 | `query_prometheus(promql, minutes)` | `minutes=0` instant query, else a range ending now | `PROMETHEUS_MAX_MINUTES` (60), `PROMETHEUS_TIMEOUT_SECONDS` (10), 20 series; at least one namespace matcher, each `namespace="<allowlisted>"` |
 
 `/healthz` is liveness; `/readyz` lists one pod in every allowlisted namespace, so it fails
