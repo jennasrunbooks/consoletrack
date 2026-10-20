@@ -17,9 +17,11 @@ aws:
   bucket: ""
   objectKey: seed.txt
 
+# The app uses ~50 MiB (~25 MiB on kind, where boto3 is never loaded). The limit is sized so the
+# OOM fault's correct fix, 2x the faulted limit, still fits: see faults.oom.
 resources:
-  requests: {cpu: 10m, memory: 64Mi}
-  limits: {cpu: 200m, memory: 128Mi}
+  requests: {cpu: 10m, memory: 128Mi}
+  limits: {cpu: 200m, memory: 256Mi}
 
 probes:
   path: /healthz
@@ -27,12 +29,14 @@ probes:
 # Cluster faults for the baseline scenarios (`make demo`, the break-demo skill). At most one at a
 # time; turning it off again is the fix the agent should find.
 faults:
-  # Memory request and limit drop to oomMemoryLimit and the app allocates allocateMi at startup,
-  # so the container is OOMKilled. oom-memory-bump's 2x (128Mi) fits again, so the auto-fix can
-  # succeed.
+  # Memory request and limit drop to oomMemoryLimit and the app allocates and holds allocateMi at
+  # startup, before it listens: ~150 MiB on kind, ~175 MiB with the S3 client on EKS, so the
+  # container is OOMKilled every start (CrashLoopBackOff). The correct fix, 256Mi, is exactly
+  # oom-memory-bump's 2x (and under its 512Mi ceiling) and leaves ~80 MiB of headroom with
+  # DEMO_ALLOCATE_MI still set.
   oom: false
-  oomMemoryLimit: 64Mi
-  allocateMi: 80
+  oomMemoryLimit: 128Mi
+  allocateMi: 128
   # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
   badImage: false
   badImageTag: does-not-exist
@@ -42,3 +46,17 @@ faults:
 
 serviceMonitor:
   enabled: true
+
+# The traffic generator: the same image with DEMO_MODE=loadgen, calling the demo-app Service at a
+# steady rate and exporting demo_client_requests_total{result="ok|http_error|conn_error|timeout"}.
+# DemoAppHighErrorRate is measured here, on the client's side, because an OOMKilled or never-Ready
+# app serves nothing and exports no metrics of its own. The faults never touch it.
+loadgen:
+  enabled: true
+  rps: 5
+  timeoutSeconds: 1
+  resources:
+    requests: {cpu: 10m, memory: 48Mi}
+    limits: {cpu: 100m, memory: 96Mi}
+  # Shorter than the app's 30s so the alert's 2m rate has enough samples within a minute.
+  scrapeInterval: 15s

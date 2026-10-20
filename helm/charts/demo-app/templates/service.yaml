@@ -24,7 +24,8 @@ spec:
       targetPort: http
 {{- if .Values.serviceMonitor.enabled }}
 ---
-# Request and error metrics for DemoAppHighErrorRate (the observability issue owns the rule).
+# The app's own request, S3 error, and allocation metrics. DemoAppHighErrorRate is built on the
+# traffic generator's client-side metrics instead (loadgen.yaml).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

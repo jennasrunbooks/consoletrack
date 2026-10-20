@@ -63,6 +63,7 @@ backend/app/
 backend/tests/{unit,integration,contract}/
 mcp-server/k8s/            # k8s-mcp
 mcp-server/aws/            # aws-mcp (+ fixtures mode for demo-replay)
+demo-app/                  # the demo workload + traffic generator (DEMO_MODE=loadgen), one image
 frontend/src/api/          # the ONLY place the frontend calls the backend
 terraform/<account>/<global|region>/   # consoletrack/{global,us-east-1}, demo-app/us-east-1
 helm/helmfile.yaml.gotmpl  # every release (tier=addons|app), pinned chart versions, environments
