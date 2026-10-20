@@ -14,6 +14,9 @@ import yaml
 
 COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yaml"
 SERVICES = yaml.safe_load(COMPOSE.read_text())["services"]
+# `make local`'s additions for the kind cluster (docker compose -f ... -f compose/kind.yaml).
+KIND = COMPOSE.parent / "compose" / "kind.yaml"
+KIND_SERVICES = yaml.safe_load(KIND.read_text())["services"]
 # Names that would hold a real credential: each must come from .env or the shell.
 SECRET_NAME = re.compile(r"SECRET|TOKEN|PASSWORD|API_KEY|HASH")
 # The only literal credential: Postgres inside Compose, also in .env.example's DATABASE_URL.
@@ -52,7 +55,26 @@ def test_dependencies_wait_for_health(name: str) -> None:
         assert "healthcheck" in SERVICES[dependency], dependency
 
 
+def test_kind_override_only_joins_networks() -> None:
+    """compose/kind.yaml publishes nothing and adds no settings: only the backend's network."""
+    assert set(KIND_SERVICES) == {"backend"}
+    assert set(KIND_SERVICES["backend"]) == {"networks"}
+    networks = KIND_SERVICES["backend"]["networks"]
+    assert set(networks) == {"default", "kind"}
+    # The name Alertmanager posts to (compose/kind-values.yaml → monitoring.webhookUrl).
+    assert networks["kind"]["aliases"] == ["consoletrack-backend"]
+
+
+def test_kind_services_use_the_external_kind_network() -> None:
+    networks = yaml.safe_load(COMPOSE.read_text())["networks"]
+    assert networks["kind"] == {"external": True}
+    for name, service in SERVICES.items():
+        if "kind" in service.get("networks", []):
+            assert service.get("profiles") == ["kind"], name
+
+
 def test_no_account_ids() -> None:
-    for path in [COMPOSE, *COMPOSE.parent.joinpath("compose").glob("*.conf")]:
+    compose_dir = COMPOSE.parent.joinpath("compose")
+    for path in [COMPOSE, *compose_dir.glob("*.conf"), *compose_dir.glob("*.yaml")]:
         found = set(ACCOUNT_ID.findall(path.read_text())) - {"123456789012"}
         assert not found, path

@@ -1,0 +1,13 @@
+# Added to docker-compose.yaml by `make local` when it runs with the kind cluster (the default):
+#   docker compose -f docker-compose.yaml -f compose/kind.yaml --profile kind ...
+# Kept out of docker-compose.yaml because kind's Docker network exists only once the cluster
+# does, and plain `docker compose up` (CI's local-stack job, LOCAL_KIND=false) must work without it.
+services:
+  backend:
+    # Alertmanager in kind posts alerts to http://consoletrack-backend:8000 (compose/kind-values.yaml):
+    # kind's nodes resolve container names on their network, and pods resolve them through the
+    # node. Still not published beyond 127.0.0.1 on the host.
+    networks:
+      default: {}
+      kind:
+        aliases: [consoletrack-backend]

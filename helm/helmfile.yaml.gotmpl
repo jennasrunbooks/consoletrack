@@ -90,6 +90,9 @@ releases:
       tier: addons
     values:
       - values/kube-prometheus-stack.yaml
+      {{- if eq .Values.target "local" }}
+      - values/kube-prometheus-stack-local.yaml
+      {{- end }}
 
   - name: cloudnative-pg
     namespace: cnpg-system

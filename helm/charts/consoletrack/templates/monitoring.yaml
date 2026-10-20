@@ -95,7 +95,7 @@ spec:
   receivers:
     - name: consoletrack-backend
       webhookConfigs:
-        - url: {{ printf "http://backend.%s.svc.cluster.local:%d/api/v1/alerts/webhook" .Release.Namespace (int .Values.backend.port) | quote }}
+        - url: {{ .Values.monitoring.webhookUrl | default (printf "http://backend.%s.svc.cluster.local:%d/api/v1/alerts/webhook" .Release.Namespace (int .Values.backend.port)) | quote }}
           sendResolved: true
           httpConfig:
             authorization:

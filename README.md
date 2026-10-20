@@ -81,21 +81,36 @@ Full design: [product-spec.md](product-spec.md) · API: [openapi.yaml](openapi.y
 
 Everything except the live AWS intake and Revert runs on your laptop: the UI, API, database, agent loop, cluster faults on kind, and a replay of recorded CloudTrail events.
 
-Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), `make`, and an Anthropic API key.
+Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm 4 with the [helm-diff](https://github.com/databus23/helm-diff) plugin, [Helmfile](https://helmfile.readthedocs.io/), `make`, and an Anthropic API key. Give Docker at least 4 CPUs and 8 GB of memory.
 
 ```bash
 git clone https://github.com/jennasrunbooks/consoletrack.git
 cd consoletrack
 cp .env.example .env
 export ANTHROPIC_API_KEY=...   # or keep it in a password manager: op run --env-file=.env -- make local
-make local                     # Docker Compose + a kind cluster with the demo app
+make local                     # a kind cluster with Prometheus and the demo app, then Docker Compose
 make demo-replay               # replays recorded CloudTrail events into the local queue
 # open http://localhost:8080 (DASHBOARD_PORT)
 ```
 
 The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the database volume.
 
-**What runs today.** `make local` starts the Compose stack from [docker-compose.yaml](docker-compose.yaml): Postgres 16, ElasticMQ (the SQS-compatible queue, with queues named like the real ones), the backend (it runs `alembic upgrade head` on start), and the dashboard, which also routes `/api` to the backend. It builds the images for your machine (amd64 or arm64), waits for every healthcheck, and binds every port to `127.0.0.1` only. Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the kind cluster with kube-prometheus-stack and the demo app (#12), the worker and `make demo-replay` (#9), and `k8s-mcp` and `aws-mcp` (#9, #10).
+**What runs today.** `make local` runs [scripts/local-kind.sh](scripts/local-kind.sh) around the Compose stack:
+
+1. **kind.** It creates the kind cluster `consoletrack`, or reuses it. It builds the demo-app image and loads it into kind. Then it applies `kube-prometheus-stack` and `demo-app` from the Helmfile `local` environment (`helmfile -e local -l name=kube-prometheus-stack -l name=demo-app apply`). The demo app's traffic generator and alert rule come with it.
+2. **Compose.** [docker-compose.yaml](docker-compose.yaml) with [compose/kind.yaml](compose/kind.yaml) starts these services:
+   - Postgres 16.
+   - ElasticMQ, the SQS-compatible queue, with queues named like the real ones.
+   - The backend, which runs `alembic upgrade head` on start.
+   - The dashboard, which also routes `/api` to the backend.
+   - `k8s-mcp`.
+
+   It builds the images for your machine (amd64 or arm64), waits for every healthcheck, and binds every port to `127.0.0.1` only.
+3. **Links.** Alertmanager in kind sends the demo app's alerts to the Compose backend, which joins kind's Docker network as `consoletrack-backend`. The script copies the backend's webhook token into kind and checks the connection from the Alertmanager pod. `k8s-mcp` uses a kubeconfig with its ServiceAccount's token, so the chart's read-only RBAC limits it here as it does on EKS. It queries Prometheus on a NodePort that's reachable only on kind's network.
+
+CloudNativePG, the Gateway API CRDs, and the `consoletrack` release aren't installed in kind, because Compose runs Postgres, the backend, and the dashboard. Every `kubectl`, `helm`, and `helmfile` call names the `kind-consoletrack` context, so your current context is never used. `LOCAL_KIND=false make local` starts the Compose stack alone.
+
+On a fresh machine, expect a few minutes for image builds and kube-prometheus-stack; reruns are faster. Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the worker and `make demo-replay` (#9), and `aws-mcp` (#10 PR 2).
 
 **Logging in.** There are two fixed accounts, `admin` (can act) and `viewer` (read-only). Locally you can skip the setup below: if `.env` sets no `ADMIN_PASSWORD_HASH`, Compose generates an admin password on first start and `make local` prints it, and it generates the `SESSION_SECRET` the same way. Both live in a Docker volume until `make local-down`. Otherwise, run `make hash-password` once per account and paste each output into `.env` as `ADMIN_PASSWORD_HASH` and `VIEWER_PASSWORD_HASH`; it prints an argon2id hash with every `$` doubled, which `.env` needs because make reads it. Start the stack with `make local` rather than a bare `docker compose up`, so the hash reaches Compose already un-doubled. An account with no hash can't log in. The backend also needs a `SESSION_SECRET` of at least 32 bytes and refuses to start without one. Five failed logins for one username, or from one address, within five minutes lock further attempts for five minutes (`429`).
 

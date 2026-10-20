@@ -1,0 +1,13 @@
+# The consoletrack chart's pieces that `make local` applies to kind next to the Compose stack
+# (scripts/local-kind.sh renders them with `helm template --show-only`; nothing else of the chart
+# runs in kind): the k8s-mcp ServiceAccount and its read-only Roles, the other ServiceAccounts,
+# and the AlertmanagerConfig, here pointed at the Compose backend on kind's Docker network
+# (compose/kind.yaml). helm/tests/test_local_kind.py checks the render.
+target: local
+app:
+  intakeMode: replay
+monitoring:
+  # The backend runs in Compose, so there's nothing to scrape and no Grafana dashboard data.
+  serviceMonitor: false
+  dashboard: false
+  webhookUrl: http://consoletrack-backend:8000/api/v1/alerts/webhook

@@ -95,7 +95,14 @@ DEMO_APP_RUN ?= cd demo-app && uv run --locked
 DEMO_APP_IMAGE := ghcr.io/jennasrunbooks/consoletrack-demo-app:local
 DOCKER ?= docker
 KIND ?= kind
-KIND_CLUSTER ?= consoletrack
+# make local's kind cluster. Fixed: compose/kind.yaml and compose/kind-values.yaml name its
+# control-plane container. Not KIND_CLUSTER, which scripts/test-k8s.sh reads for its throwaway
+# cluster (and deletes): exported from here, `make test-k8s` would take this one.
+LOCAL_CLUSTER := consoletrack
+# `make local` with the kind cluster (default), or false for the Compose stack alone.
+LOCAL_KIND ?= true
+# Compose with kind's additions: the backend on kind's network, and k8s-mcp (the `kind` profile).
+COMPOSE_KIND = $(COMPOSE) -f docker-compose.yaml -f compose/kind.yaml --profile kind
 
 # Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
 HELMFILE_STATE := helm/helmfile.yaml.gotmpl
@@ -219,7 +226,8 @@ lint-compose: ## ruff for compose/, and `docker compose config` wherever Docker 
 		echo "make $@: docker isn't installed (the devcontainer has none); skipped docker compose config, CI runs it"; \
 		exit 0; \
 	fi; \
-	$(COMPOSE) config --quiet && echo "make $@: docker-compose.yaml is valid"
+	$(COMPOSE) config --quiet && echo "make $@: docker-compose.yaml is valid" && \
+	$(COMPOSE_KIND) config --quiet && echo "make $@: docker-compose.yaml with compose/kind.yaml is valid"
 
 lint-shell: ## shellcheck every script under scripts/ (pinned, through uvx)
 	$(SHELLCHECK) $$(find scripts -name '*.sh' -type f | sort)
@@ -407,29 +415,37 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 
 ##@ Demo and evaluation
 
-# The kind half (kube-prometheus-stack and demo-app from the Helmfile `local` environment,
-# Alertmanager pointed at the Compose backend) and the worker and MCP services follow once #12,
-# #9, and #10 land; see #15.
-local: env-check-local ## Compose stack, no AWS (Postgres, ElasticMQ, backend, dashboard); loads demo-app into kind if one runs
+# The kind half (scripts/local-kind.sh) goes around Compose: the cluster, add-ons, demo app, and
+# k8s-mcp's kubeconfig before it, the webhook token and AlertmanagerConfig after it (they need
+# the running backend). The worker and aws-mcp join with #9 and #10 PR 2; see #15.
+local: env-check-local ## Compose stack plus the `consoletrack` kind cluster with Prometheus and the demo app, no AWS (LOCAL_KIND=false: Compose only)
+ifeq ($(LOCAL_KIND),true)
+	$(MAKE) --no-print-directory demo-app-image
+	scripts/local-kind.sh cluster
+	$(COMPOSE_KIND) up --build --wait
+	scripts/local-kind.sh alerts
+else
 	$(COMPOSE) up --build --wait
+endif
 	@echo "make $@: dashboard http://localhost:$(or $(DASHBOARD_PORT),8080), API http://localhost:$(or $(BACKEND_PORT),8000)"
 	@if pw=$$($(COMPOSE) exec -T backend cat /run/consoletrack/admin-password 2>/dev/null); then \
 		echo "make $@: log in as admin with the generated local password: $$pw"; \
 	else \
 		echo "make $@: log in as admin with the password for ADMIN_PASSWORD_HASH in $(ENV_FILE)"; \
 	fi
-	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(KIND_CLUSTER); then \
-		$(MAKE) --no-print-directory demo-app-image && \
-		$(KIND) load docker-image $(DEMO_APP_IMAGE) --name $(KIND_CLUSTER); \
-	else \
-		echo "make $@: no kind cluster '$(KIND_CLUSTER)'; skipped loading $(DEMO_APP_IMAGE) into kind"; \
-	fi
+ifeq ($(LOCAL_KIND),true)
+	@echo "make $@: kind context kind-$(LOCAL_CLUSTER); Grafana: kubectl --context kind-$(LOCAL_CLUSTER)" \
+		"-n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80"
+endif
 
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
-	$(COMPOSE) down --volumes --remove-orphans
-	@if command -v kind >/dev/null && kind get clusters 2>/dev/null | grep -qx consoletrack; then \
-		kind delete cluster --name consoletrack; \
+	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(LOCAL_CLUSTER); then \
+		$(COMPOSE_KIND) down --volumes --remove-orphans && \
+		$(KIND) delete cluster --name $(LOCAL_CLUSTER); \
+	else \
+		$(COMPOSE) down --volumes --remove-orphans; \
 	fi
+	rm -f kind-internal.kubeconfig
 
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
 	$(call todo,#9 (scripts/replay-fixtures.py and the worker's replay mode); see #15)

@@ -5,10 +5,12 @@ the chart runs the migration. The backend refuses to start without a `SESSION_SE
 reviewer trying it locally shouldn't have to make one, or hash a password, first. So:
 
 - A value set in the environment (from `.env` or the shell) always wins.
-- Otherwise `SESSION_SECRET` and an admin password are generated once and kept in `STATE_DIR`
-  (a named volume), so restarts keep the same login and sessions. Only the password's hash
-  reaches the app; while the generated hash is in use, the password is also in
-  `STATE_DIR/admin-password` for `make local` to print.
+- Otherwise `SESSION_SECRET`, an admin password, and `ALERT_WEBHOOK_TOKEN` are generated once
+  and kept in `STATE_DIR` (a named volume), so restarts keep the same login and sessions. Only
+  the password's hash reaches the app; while the generated hash is in use, the password is also
+  in `STATE_DIR/admin-password` for `make local` to print.
+- While the generated webhook token is in use, it is also in `STATE_DIR/alert-webhook-token`,
+  which `make local` copies into kind for Alertmanager (scripts/local-kind.sh).
 - The viewer account is never generated: without `VIEWER_PASSWORD_HASH` it can't log in.
 
 `docker compose down --volumes` (`make local-down`) deletes the volume and with it these values.
@@ -39,38 +41,50 @@ def _write_private(path: Path, text: str) -> None:
         f.write(text)
 
 
-def generated_secrets(state_dir: Path) -> dict[str, str]:
-    """The generated values, created on first use and read back afterwards."""
-    path = state_dir / "secrets.json"
-    if path.exists():
-        return json.loads(path.read_text())
+def _new_secrets() -> dict[str, str]:
     password = secrets.token_urlsafe(18)
-    values = {
+    return {
         "SESSION_SECRET": secrets.token_hex(MIN_SECRET_BYTES),
         "ADMIN_PASSWORD_HASH": hash_password(password),
         "admin_password": password,
+        "ALERT_WEBHOOK_TOKEN": secrets.token_urlsafe(32),
     }
-    _write_private(path, json.dumps(values))
+
+
+def generated_secrets(state_dir: Path) -> dict[str, str]:
+    """The generated values, created on first use and read back afterwards.
+
+    A volume from an older version may lack a newer value; only that one is added.
+    """
+    path = state_dir / "secrets.json"
+    values = json.loads(path.read_text()) if path.exists() else {}
+    missing = {k: v for k, v in _new_secrets().items() if k not in values}
+    if missing:
+        values |= missing
+        _write_private(path, json.dumps(values))
     return values
 
 
 def apply_defaults(environ: MutableMapping[str, str], state_dir: Path) -> list[str]:
     """Fill each unset or empty secret from the generated ones; return the names filled.
 
-    Writes `admin-password` while the generated admin hash is in use and removes it otherwise,
-    so `make local` never prints a password that wouldn't log in.
+    Writes `admin-password` and `alert-webhook-token` while the generated value is in use and
+    removes them otherwise, so `make local` never hands out a value the backend wouldn't accept.
     """
     values = generated_secrets(state_dir)
     filled = []
-    for name in ("SESSION_SECRET", "ADMIN_PASSWORD_HASH"):
+    for name in ("SESSION_SECRET", "ADMIN_PASSWORD_HASH", "ALERT_WEBHOOK_TOKEN"):
         if not environ.get(name):
             environ[name] = values[name]
             filled.append(name)
-    password_file = state_dir / "admin-password"
-    if "ADMIN_PASSWORD_HASH" in filled:
-        _write_private(password_file, values["admin_password"] + "\n")
-    else:
-        password_file.unlink(missing_ok=True)
+    for name, file, value in (
+        ("ADMIN_PASSWORD_HASH", "admin-password", values["admin_password"]),
+        ("ALERT_WEBHOOK_TOKEN", "alert-webhook-token", values["ALERT_WEBHOOK_TOKEN"]),
+    ):
+        if name in filled:
+            _write_private(state_dir / file, value + "\n")
+        else:
+            (state_dir / file).unlink(missing_ok=True)
     return filled
 
 

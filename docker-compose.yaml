@@ -8,9 +8,11 @@
 #   password are generated on first start unless .env sets them (backend/app/compose_entrypoint.py).
 # - Images are built for the local machine's architecture (amd64 or arm64).
 #
-# k8s-mcp is in the `kind` profile: it starts only with `--profile kind` (or COMPOSE_PROFILES=kind),
-# so `make local` without a kind cluster is unchanged. The worker (INTAKE_MODE=replay, SQS
-# through ElasticMQ) and aws-mcp (fixtures mode) join this file with #9 and #10 PR 2.
+# `make local` also creates the `consoletrack` kind cluster (scripts/local-kind.sh) and adds
+# compose/kind.yaml and the `kind` profile: k8s-mcp starts, and the backend joins kind's Docker
+# network so Alertmanager can reach it. Plain `docker compose up` (and LOCAL_KIND=false make local)
+# runs without kind. The worker (INTAKE_MODE=replay, SQS through ElasticMQ) and aws-mcp (fixtures
+# mode) join this file with #9 and #10 PR 2.
 name: consoletrack
 
 x-hardening: &hardening
@@ -102,9 +104,8 @@ services:
       retries: 20
 
   # Read-only cluster tools for the triage agent, against the local kind cluster `consoletrack`.
-  # Needs kind's internal kubeconfig (the API server's address on kind's Docker network), written
-  # once per cluster; the file is gitignored (*.kubeconfig):
-  #   kind get kubeconfig --internal --name consoletrack > kind-internal.kubeconfig
+  # `make local` writes kind-internal.kubeconfig (gitignored): kind's internal API server address
+  # and the k8s-mcp ServiceAccount's token, so the chart's read-only RBAC applies here too.
   # Not published on the host: only the worker calls it, over Compose's network.
   k8s-mcp:
     build: ./mcp-server/k8s
@@ -113,8 +114,8 @@ services:
     <<: *hardening
     environment:
       K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-demo}
-      # kube-prometheus-stack in kind, if reachable; empty makes query_prometheus answer an error.
-      PROMETHEUS_URL: ${PROMETHEUS_URL:-}
+      # kube-prometheus-stack's NodePort on kind's network (helm/values/kube-prometheus-stack-local.yaml).
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://consoletrack-control-plane:30090}
       KUBECONFIG: /run/kube/config
     volumes:
       - ./kind-internal.kubeconfig:/run/kube/config:ro
