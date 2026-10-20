@@ -95,8 +95,7 @@ spec:
       targetPort: http
 {{- if .Values.serviceMonitor.enabled }}
 ---
-# demo_client_requests_total, which DemoAppHighErrorRate is built on (the observability issue,
-# #16, owns the rule).
+# demo_client_requests_total, which DemoAppHighErrorRate is built on (prometheusrule.yaml).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

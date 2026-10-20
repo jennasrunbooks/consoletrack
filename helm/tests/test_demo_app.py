@@ -111,3 +111,43 @@ def test_loadgen_is_its_own_scrape_target() -> None:
 
 def test_loadgen_can_be_turned_off() -> None:
     assert set(render(loadgen={"enabled": False})) == {"demo-app"}
+
+
+def rules(**values: object) -> dict[str, dict]:
+    docs = helm_template("demo-app", "demo", "demo-app", values)
+    return {
+        rule["alert"]: rule
+        for d in docs
+        if d["kind"] == "PrometheusRule"
+        for group in d["spec"]["groups"]
+        for rule in group["rules"]
+    }
+
+
+def test_high_error_rate_alert_routes_to_consoletrack() -> None:
+    rule = rules()["DemoAppHighErrorRate"]
+    # namespace is what the consoletrack AlertmanagerConfig routes on (sum() drops it from the
+    # series); workload names the Deployment for the incident.
+    assert rule["labels"] == {
+        "severity": "critical",
+        "namespace": "demo",
+        "workload": "demo-app",
+    }
+    assert rule["for"] == "1m"
+    assert 'namespace="demo"' in rule["expr"]
+    assert "demo_client_requests_total" in rule["expr"]
+
+
+def test_alert_rules_can_be_turned_off() -> None:
+    assert rules(alertRules={"enabled": False}) == {}
+
+
+def test_faults_reach_users() -> None:
+    """A rolling update would keep the old pod serving behind a faulted one that's never Ready."""
+    docs = helm_template("demo-app", "demo", "demo-app", {"faults": {"oom": True}})
+    app = next(
+        d
+        for d in docs
+        if d["kind"] == "Deployment" and d["metadata"]["name"] == "demo-app"
+    )
+    assert app["spec"]["strategy"] == {"type": "Recreate"}

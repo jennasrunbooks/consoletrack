@@ -18,6 +18,12 @@ metadata:
     {{- include "demo-app.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
+  # Recreate, not the default RollingUpdate: with one replica a rolling update keeps the old pod
+  # serving until the new one is Ready, which a faulted pod never is, so a fault would only stall
+  # the rollout and DemoAppHighErrorRate would never fire. The fixes still work: each one rolls
+  # out a pod that starts.
+  strategy:
+    type: Recreate
   # Keep the history short but non-empty: the bad-image fix is a rollout undo.
   revisionHistoryLimit: 5
   selector:

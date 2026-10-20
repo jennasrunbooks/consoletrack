@@ -161,6 +161,9 @@ monitoring:
   alertRules: true
   # AlertmanagerConfig sending every alert to the backend's webhook with the bearer token.
   alertmanagerConfig: true
+  # The webhook's URL; empty = this release's backend Service. `make local` sets the Compose
+  # backend instead (scripts/local-kind.sh), which runs outside the kind cluster.
+  webhookUrl: ""
 
 # Kubernetes group of CI's deploy role (terraform/consoletrack/us-east-1 output
 # deploy_kubernetes_group). It gets a Role in these namespaces and nothing cluster-wide.

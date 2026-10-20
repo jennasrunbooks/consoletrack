@@ -144,6 +144,11 @@ is subverted:
 to a throwaway kind cluster, and checks every allow and deny in the `k8s-mcp` row with
 `kubectl auth can-i`, so the test proves the RBAC that ships.
 
+`make local` applies the same render to its kind cluster. It gives Compose's k8s-mcp a
+kubeconfig that uses a 24-hour token for this ServiceAccount (`kind-internal.kubeconfig`,
+gitignored, rewritten on every run), so the shipped RBAC limits it locally too, not kind's
+admin credentials. Only `.mcp.json` (Accepted gaps) runs with your own context.
+
 ## Runtime triage agent
 
 The agent that runs inside ConsoleTrack (`backend/app/agents/`, in the worker pod) can only
