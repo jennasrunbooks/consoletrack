@@ -7,12 +7,12 @@ from datetime import timedelta
 
 import pytest
 from fastmcp.exceptions import ToolError
-from kubernetes.client import ApiException
+from kubernetes.client import ApiException, V1DeploymentStrategy
 
 from k8s_mcp.prometheus import PrometheusError
 from k8s_mcp.tools import MAX_LOG_LINES, UNTRUSTED_NOTE, K8sTools
 
-from .conftest import NOW, FakeKube, FakePrometheus, warning_event
+from .conftest import NOW, FakeKube, FakePrometheus, replica_set, warning_event
 
 # --- namespace allowlist ------------------------------------------------------------------
 
@@ -302,7 +302,75 @@ def test_get_rollout_history(tools: K8sTools, kube: FakeKube) -> None:
     assert result["revisions"][0]["images"] == {
         "app": "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc123"
     }
-    assert result["revisions"][1]["replicas"] == 0
+    assert result["revisions"][1]["desired_replicas"] == 0
+    assert "not a failure" in result["note"]
+
+
+def states(result: dict) -> list[tuple[int, bool, str, int, int]]:
+    return [
+        (r["revision"], r["current"], r["state"], r["desired_replicas"], r["ready_replicas"])
+        for r in result["revisions"]
+    ]
+
+
+def test_get_rollout_history_recreate(tools: K8sTools, kube: FakeKube) -> None:
+    # The OOM fault under Recreate: revision 3 is scaled up but never Ready, and revisions 1 and
+    # 2 were scaled to 0 before it started. Those are superseded, not failed.
+    dep = kube.deployments[("demo", "demo-app")]
+    dep.spec.strategy = V1DeploymentStrategy(type="Recreate")
+    dep.metadata.annotations["deployment.kubernetes.io/revision"] = "3"
+    image = "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc123"
+    kube.replica_sets = [
+        replica_set(1, image, replicas=0),
+        replica_set(2, image, replicas=0),
+        replica_set(3, image, replicas=1, ready=0),
+    ]
+
+    result = tools.get_rollout_history("demo", "demo-app")
+
+    assert result["strategy"] == "Recreate"
+    assert result["current_revision"] == 3
+    assert states(result) == [
+        (3, True, "current", 1, 0),
+        (2, False, "superseded", 0, 0),
+        (1, False, "superseded", 0, 0),
+    ]
+
+
+def test_get_rollout_history_rolling_update(tools: K8sTools, kube: FakeKube) -> None:
+    # A RollingUpdate in progress: the old revision keeps serving while the new one comes up.
+    dep = kube.deployments[("demo", "demo-app")]
+    dep.spec.strategy = V1DeploymentStrategy(type="RollingUpdate")
+    dep.metadata.annotations["deployment.kubernetes.io/revision"] = "3"
+    image = "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc123"
+    kube.replica_sets = [
+        replica_set(1, image, replicas=0),
+        replica_set(2, image, replicas=1),
+        replica_set(3, image, replicas=1, ready=0),
+    ]
+
+    result = tools.get_rollout_history("demo", "demo-app")
+
+    assert result["strategy"] == "RollingUpdate"
+    assert states(result) == [
+        (3, True, "current", 1, 0),
+        (2, False, "scaling_down", 1, 1),
+        (1, False, "superseded", 0, 0),
+    ]
+
+
+def test_get_rollout_history_without_revision_annotation(tools: K8sTools, kube: FakeKube) -> None:
+    # Before the controller annotates the Deployment, the newest revision is the current one,
+    # and a Deployment without a strategy uses the API default.
+    del kube.deployments[("demo", "demo-app")].metadata.annotations[
+        "deployment.kubernetes.io/revision"
+    ]
+
+    result = tools.get_rollout_history("demo", "demo-app")
+
+    assert result["strategy"] == "RollingUpdate"
+    assert result["current_revision"] == 2
+    assert [r["current"] for r in result["revisions"]] == [True, False]
 
 
 def test_get_rollout_history_not_found(tools: K8sTools) -> None:

@@ -97,8 +97,10 @@ def build_server(
 
     @mcp.tool(annotations=READ_ONLY)
     def get_rollout_history(namespace: str, deployment: str) -> dict[str, Any]:
-        """A Deployment's ReplicaSets with revision, images, and creation time, newest first.
-        Use it to see what changed just before an alert."""
+        """A Deployment's ReplicaSets, newest first: revision, images, creation time, desired
+        and ready replicas, and state (current, superseded, or scaling_down). Use it to see what
+        changed just before an alert. A superseded revision scaled to 0 is normal, not a
+        failure."""
         audit("get_rollout_history", namespace)
         return tools.get_rollout_history(namespace, deployment)
 
