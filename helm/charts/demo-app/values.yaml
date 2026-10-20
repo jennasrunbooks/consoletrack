@@ -27,7 +27,8 @@ probes:
   path: /healthz
 
 # Cluster faults for the baseline scenarios (`make demo`, the break-demo skill). At most one at a
-# time; turning it off again is the fix the agent should find.
+# time; turning it off again is the fix the agent should find. Set them through Helmfile's
+# demoFault state value (README → Faults), which also turns off wait and atomic for that sync.
 faults:
   # Memory request and limit drop to oomMemoryLimit and the app allocates and holds allocateMi at
   # startup, before it listens: ~150 MiB on kind, ~175 MiB with the S3 client on EKS, so the
@@ -45,6 +46,11 @@ faults:
   badProbePath: /not-a-health-check
 
 serviceMonitor:
+  enabled: true
+
+# DemoAppHighErrorRate (templates/prometheusrule.yaml): more than 5% of the traffic generator's
+# requests failing for a minute. Built on loadgen's metrics, so it needs loadgen.enabled.
+alertRules:
   enabled: true
 
 # The traffic generator: the same image with DEMO_MODE=loadgen, calling the demo-app Service at a

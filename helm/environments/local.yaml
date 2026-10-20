@@ -25,6 +25,9 @@ demoBucket: ""
 # Images loaded into kind by the local-run workflow (`kind load docker-image ...:local`).
 imageTag: local
 
+# A demo-app fault (empty, oom, badImage, badProbe), set per run: --state-values-set demoFault=oom.
+demoFault: ""
+
 intakeMode: replay
 # kind's built-in local-path class.
 storageClass: standard

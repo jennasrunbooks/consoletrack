@@ -1,0 +1,32 @@
+{{- /*
+The user-impact alert the baseline faults raise. It's measured on the client's side, from the
+traffic generator (loadgen.yaml): an OOMKilled or never-Ready app serves nothing and exports
+nothing, so a rule on its own counters would never fire. The `namespace` label is required:
+sum() drops it, and the consoletrack AlertmanagerConfig routes on it. #16 adopts the rule for
+observability.
+*/}}
+{{- if .Values.alertRules.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo-app
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo-app.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: demo-app
+      rules:
+        - alert: DemoAppHighErrorRate
+          expr: |
+            sum(rate(demo_client_requests_total{namespace="{{ .Release.Namespace }}", result!="ok"}[2m]))
+              / sum(rate(demo_client_requests_total{namespace="{{ .Release.Namespace }}"}[2m])) > 0.05
+          for: 1m
+          labels:
+            severity: critical
+            namespace: {{ .Release.Namespace }}
+            workload: demo-app
+          annotations:
+            summary: Requests to the demo app are failing
+            description: More than 5% of the traffic generator's requests to demo-app failed over 2 minutes.
+{{- end }}

@@ -110,6 +110,19 @@ The intake indicator shows **Replay**, and Revert and Codify are disabled with "
 
 CloudNativePG, the Gateway API CRDs, and the `consoletrack` release aren't installed in kind, because Compose runs Postgres, the backend, and the dashboard. Every `kubectl`, `helm`, and `helmfile` call names the `kind-consoletrack` context, so your current context is never used. `LOCAL_KIND=false make local` starts the Compose stack alone.
 
+**Break the demo app on kind.** Turn on one fault and watch the alert become an incident. `DemoAppHighErrorRate` fires once more than 5% of the traffic generator's requests have failed for a minute, so give it about 3 minutes. Then turn the fault off again:
+
+```bash
+# On: oom, badImage, or badProbe
+HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
+  -l name=demo-app sync --state-values-set demoFault=oom
+# Off: the same without demoFault (Helmfile resets demo-app to its normal values)
+HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
+  -l name=demo-app sync
+```
+
+Use `demoFault`, not `--set faults.oom=true`. A faulted pod never becomes Ready, and with `demoFault` set, Helmfile skips the wait and the atomic rollback that would otherwise undo the fault after the timeout. `HELM_DRIVER=configmap` is required whenever you run Helmfile outside `make`.
+
 On a fresh machine, expect a few minutes for image builds and kube-prometheus-stack; reruns are faster. Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the worker's change intake, `make demo-replay`, and `aws-mcp` (#9).
 
 **Logging in.** There are two fixed accounts, `admin` (can act) and `viewer` (read-only). Locally you can skip the setup below: if `.env` sets no `ADMIN_PASSWORD_HASH`, Compose generates an admin password on first start and `make local` prints it, and it generates the `SESSION_SECRET` the same way. Both live in a Docker volume until `make local-down`. Otherwise, run `make hash-password` once per account and paste each output into `.env` as `ADMIN_PASSWORD_HASH` and `VIEWER_PASSWORD_HASH`; it prints an argon2id hash with every `$` doubled, which `.env` needs because make reads it. Start the stack with `make local` rather than a bare `docker compose up`, so the hash reaches Compose already un-doubled. An account with no hash can't log in. The backend also needs a `SESSION_SECRET` of at least 32 bytes and refuses to start without one. Five failed logins for one username, or from one address, within five minutes lock further attempts for five minutes (`429`).

@@ -34,6 +34,7 @@ Every key the Helmfile reads. `eks.yaml` and `local.yaml` set each one (most emp
 | `canarySecurityGroupId` | output `canary_security_group_id` | canary CronJob |
 | `demoBucket` | `demo-app/us-east-1` output (bucket name) | demo-app |
 | `imageTag` | the commit SHA in `deploy.yaml` (`--state-values-set imageTag=<sha>`); `local` on kind | consoletrack and demo-app images |
+| `demoFault` | empty; `--state-values-set demoFault=oom` (or `badImage`, `badProbe`) for one run | demo-app's `faults.*`, and turns off wait and atomic for that sync |
 | `intakeMode` | `live` on eks, `replay` on local | worker, backend |
 | `storageClass` | `gp3` on eks (cluster-defaults), `standard` on kind | Postgres volume |
 

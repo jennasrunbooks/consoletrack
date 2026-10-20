@@ -11,6 +11,7 @@ policy, the bucket, the security group, and the `demo:demo-app` Pod Identity ass
 |---|---|
 | ServiceAccount `demo-app` | No Kubernetes token; Pod Identity binds it to `demo-app-role-<suffix>` |
 | Deployment `demo-app` | Same pod security as the consoletrack chart (UID 10001, read-only root, no capabilities). Memory: 128Mi request, 256Mi limit |
+| PrometheusRule `demo-app` (`alertRules.enabled`, default on) | `DemoAppHighErrorRate`, below |
 | Service `demo-app` (:8080), ServiceMonitor | The app's own metrics: `demo_app_requests_total{code}`, `demo_app_s3_errors_total{error}`, `demo_app_allocated_bytes` |
 | ServiceAccount, Deployment, Service, ServiceMonitor `demo-app-loadgen` (`loadgen.enabled`, default on) | The traffic generator (`DEMO_MODE=loadgen`): `GET http://demo-app.demo:8080/` at `loadgen.rps` (5) with a `loadgen.timeoutSeconds` (1s) timeout, exporting `demo_client_requests_total{result="ok\|http_error\|conn_error\|timeout"}`, scraped every 15s. No token, no Pod Identity; the faults never change it |
 
@@ -21,14 +22,19 @@ The image reads `PORT`, `AWS_REGION`, `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, and, wit
 
 `DemoAppHighErrorRate` is measured on the client's side, from the traffic generator: an app that
 is OOMKilled or never Ready serves nothing and exports nothing, so a rule on its own 5xx counter
-would never fire. The rule ships in the consoletrack chart's alert rules with #16:
+would never fire. The rule is `templates/prometheusrule.yaml`, behind `alertRules.enabled`
+(default on); #16 adopts it for observability:
 
 ```text
 DemoAppHighErrorRate:
-  sum(rate(demo_client_requests_total{result!="ok"}[2m]))
-    / sum(rate(demo_client_requests_total[2m])) > 0.05
-  for: 1m, severity: critical
+  sum(rate(demo_client_requests_total{namespace="<ns>", result!="ok"}[2m]))
+    / sum(rate(demo_client_requests_total{namespace="<ns>"}[2m])) > 0.05
+  for: 1m
+  labels: severity=critical, namespace=<ns>, workload=demo-app
 ```
+
+The `namespace` label is required: `sum()` drops it from the series, and the consoletrack
+chart's AlertmanagerConfig only routes alerts from its allowlisted namespaces.
 
 ## Faults
 
@@ -41,5 +47,15 @@ two); turning it off again is the fix.
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
 | `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Fix the probe path |
 
-For example: `helmfile -l name=demo-app apply --set faults.oom=true` (a human, or the
-`break-demo` skill on kind).
+Turn one on through Helmfile's `demoFault` state value, which also skips the wait and atomic
+rollback that would otherwise undo it (a faulted pod never becomes Ready), and turn it off with
+the same sync without it:
+
+```bash
+HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
+  -l name=demo-app sync --state-values-set demoFault=oom    # oom, badImage, or badProbe
+HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
+  -l name=demo-app sync                                     # off
+```
+
+On EKS, a human runs the same with `-e eks` (the `break-demo` skill does it on kind).
