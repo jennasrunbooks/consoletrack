@@ -239,7 +239,7 @@ incidents() {
 		curl -fsS -b "$jar" "$base/api/v1/incidents/$id" | jq '{
 			id, alertname, workload, status, opened_at, resolved_at,
 			root_cause: .analysis.root_cause, confidence: .analysis.confidence,
-			agent_run: (.analysis.agent_run | if . then {model, tool_calls, outcome} else null end),
+			agent_run: (.analysis.agent_run | if . then {model, prompt_version, escalated, tool_calls, outcome} else null end),
 			remediation: (.remediation | if . then {
 				kind, status, mode, policy, gate_reason, decided_by, payload, before, after,
 				steps: [.steps[]? | "\(.step) \(if .ok then "ok" else "FAILED" end): \(.detail)"]

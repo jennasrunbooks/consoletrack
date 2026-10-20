@@ -7,9 +7,9 @@
 - `remediations.decided_at`: when it was approved (the rate limit's clock).
 - `remediations.lease_until`: the backend's claim while it applies.
 
-Revision ID: 0003
-Revises: 0002
-Create Date: 2026-10-20
+Revision ID: 0004
+Revises: 0003
+Create Date: 2026-10-21
 """
 
 from collections.abc import Sequence
@@ -18,8 +18,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision: str = "0003"
-down_revision: str | None = "0002"
+revision: str = "0004"
+down_revision: str | None = "0003"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -248,6 +248,19 @@ class SqlAgentRunRepository:
     def get(self, run_id: int) -> AgentRunRow | None:
         return self.session.get(AgentRunRow, run_id)
 
+    def any_escalated(self, subject_type: SubjectType, subject_id: int) -> bool:
+        return bool(
+            self.session.scalar(
+                select(
+                    exists().where(
+                        AgentRunRow.subject_type == subject_type,
+                        AgentRunRow.subject_id == subject_id,
+                        AgentRunRow.escalated.is_(True),
+                    )
+                )
+            )
+        )
+
 
 class SqlEvidenceRepository:
     def __init__(self, session: Session) -> None:

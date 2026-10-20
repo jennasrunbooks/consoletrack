@@ -117,6 +117,9 @@ class IncidentChangeRepository(Protocol):
 class AgentRunRepository(Protocol):
     def add(self, row: AgentRunRow) -> AgentRunRow: ...
     def get(self, run_id: int) -> AgentRunRow | None: ...
+    def any_escalated(self, subject_type: SubjectType, subject_id: int) -> bool:
+        """Whether the subject already had an escalated run."""
+        ...
 
 
 class EvidenceRepository(Protocol):

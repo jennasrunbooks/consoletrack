@@ -141,10 +141,11 @@ flowchart LR
 - **Gate.** The proposal goes to `PolicyGate.submit_proposal(incident_id, proposal)`. The worker
   wires `ConfiguredPolicyGate` with the chart's policies (`REMEDIATION_POLICIES_FILE`,
   `app/services/remediation_policy.py`): `auto` approves on the admin's behalf only for
-  `oom-memory-bump` (`set_memory_limit` in `demo`), with both kill switches on, high confidence,
-  no earlier failed auto fix of the workload, the rate limit, and the validator's cluster-free
-  checks; otherwise `manual`, with the reason on the remediation (`gate_reason`). The order and
-  the rules are in [remediation-graduation.md](remediation-graduation.md).
+  `oom-memory-bump` (`set_memory_limit` in `demo`), with both kill switches on, high confidence
+  (the escalated run's, after an escalation), no earlier failed auto fix of the workload, the
+  rate limit, and the validator's cluster-free checks; otherwise `manual`, with the reason on the
+  remediation (`gate_reason`). The order and the rules are in
+  [remediation-graduation.md](remediation-graduation.md).
 - **Apply.** `app/services/remediation_apply.py` runs in the backend's lifespan
   (`REMEDIATION_APPLY_ENABLED`), never in the worker: it claims an `approved` remediation with
   `FOR UPDATE SKIP LOCKED` and a lease (like the triage queue), runs the validator against the
@@ -159,15 +160,22 @@ flowchart LR
   agent's title and risk. The agent can raise the intake's risk, never lower it, and a proposal
   for a change is dropped: the reviewer picks Revert, Codify, or Accept. A run that stops early
   leaves the change `detected`.
-- **Prompts** are files in `app/agents/prompts/` (`system_v1.md`, `incident_triage_v1.md`,
-  `change_analysis_v1.md`); a wording change is a new version, not an edit.
+- **Escalation.** A triage run that ends with low confidence or no proposal, when its `get_pods`
+  evidence shows a container restart, is re-run once with `TRIAGE_MODEL_ESCALATION` (its own
+  tool-call and token budget, `agent_runs.escalated = true`). The escalated analysis is the one
+  recorded unless that run stopped without one. At most one escalation per incident, and none
+  for a run already on the escalation model.
+- **Prompts** are files in `app/agents/prompts/` (`system_vN.md`, `incident_triage_vN.md`,
+  `change_analysis_vN.md`, now `v3`); a wording change is a new version, not an edit, and every
+  `agent_runs` row records the version it used (`prompt_version`).
 
 ## Database
 
 Seven tables, from `product-spec.md` → Workflow and data model, created by
 `backend/app/db/migrations/versions/0001_initial_schema.py`; `0002_triage_queue.py` adds the
 triage queue columns, `analyses.flags`, and the `limit_reached` and `set_memory_limit` values;
-`0003_remediation_apply.py` adds the gate's decision (`mode`, `policy`, `gate_reason`,
+`0003_agent_run_prompt_escalation.py` adds `agent_runs.prompt_version` and `escalated`;
+`0004_remediation_apply.py` adds the gate's decision (`mode`, `policy`, `gate_reason`,
 `decided_at`), the target (`namespace`, `workload`), `before_json`, `after_json`, `steps`, and
 the apply loop's `lease_until` to `remediations`. `make db-sql` prints the whole schema without a
 database.

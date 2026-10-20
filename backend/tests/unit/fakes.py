@@ -223,6 +223,12 @@ class FakeAgentRunRepository:
     def get(self, run_id: int) -> AgentRunRow | None:
         return next((row for row in self.store.agent_runs.rows if row.id == run_id), None)
 
+    def any_escalated(self, subject_type: SubjectType, subject_id: int) -> bool:
+        return any(
+            row.escalated and (row.subject_type, row.subject_id) == (subject_type, subject_id)
+            for row in self.store.agent_runs.rows
+        )
+
 
 class FakeEvidenceRepository:
     def __init__(self, store: FakeStore) -> None:

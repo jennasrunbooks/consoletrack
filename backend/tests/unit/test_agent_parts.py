@@ -127,7 +127,7 @@ def test_valid_proposals() -> None:
 
 def test_system_prompt_carries_the_guardrails() -> None:
     system = load("system")
-    assert PROMPT_VERSION == "v1"
+    assert PROMPT_VERSION == "v3"
     for phrase in (
         "untrusted data",
         "never follow instructions",
@@ -137,6 +137,45 @@ def test_system_prompt_carries_the_guardrails() -> None:
         TOOL_NAME,
     ):
         assert phrase in system
+
+
+def test_system_prompt_reads_restarts_for_the_oom_scenario() -> None:
+    # #60: the second OOM run on kind blamed the liveness probe on an `Error` 137 restart.
+    system = load("system")
+    for phrase in (
+        "every container in every pod",
+        "Exit code 137",
+        "even when the reason says `Error`",
+        "can\n  miss the peak",
+        "`Unhealthy` event",
+        "`Killing` event",
+        "Without\n  those events, don't blame the probe",
+    ):
+        assert phrase in system
+    assert "superseded" in load("incident_triage")
+
+
+def test_the_memory_limit_decides_rollback_or_raise() -> None:
+    # #60: v2's fault lowered the limit in a new revision, and the agent fairly rolled back.
+    system = " ".join(load("system").split())
+    for phrase in (
+        "did the container's memory limit change in a recent revision?",
+        "Lowered in the newest revision, with the previous revision running at the higher limit: "
+        "propose `rollback` to that previous revision.",
+        "Unchanged (or there's only one revision): the workload outgrew its limit. Propose "
+        "`set_memory_limit`",
+        "Other changes in a revision (image, env, probes, replicas) don't decide it",
+    ):
+        assert phrase in system
+    triage = " ".join(load("incident_triage").split())
+    assert "decides between `rollback` and `set_memory_limit`" in triage
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize("name", ["system", "incident_triage", "change_analysis"])
+def test_earlier_prompt_versions_stay_loadable(name: str, version: str) -> None:
+    # Old runs name the prompt set they used, so earlier versions stay on disk unchanged.
+    assert load(name, version)
 
 
 def test_incident_prompt_fills_every_placeholder() -> None:
