@@ -265,6 +265,17 @@ def test_remediation_ships_manual(ours: list[dict]) -> None:
     assert oom["bounds"] == {"maxMultiplier": 2, "ceiling": "512Mi"}
 
 
+def test_worker_offers_aws_mcp_except_on_kind(ours: list[dict], config: str) -> None:
+    ((_, _, worker, _),) = [
+        c for c in containers(ours) if c[0]["metadata"]["name"] == "worker" and not c[3]
+    ]
+    env = {e["name"]: e.get("value") for e in worker["env"]}
+    assert env["K8S_MCP_URL"] == "http://k8s-mcp:8080/mcp"
+    # kind runs the agent with k8s-mcp only until aws-mcp ships (#9).
+    expected = "" if config == "local" else "http://aws-mcp:8080/mcp"
+    assert env["AWS_MCP_URL"] == expected
+
+
 def test_exposure(ours: list[dict], config: str) -> None:
     gateways = [d for d in ours if d["kind"] == "Gateway"]
     frontend_cm = [

@@ -115,5 +115,6 @@ def require_webhook_token(
 
 Uow = Annotated[UnitOfWork, Depends(get_uow)]
 Now = Annotated[datetime, Depends(get_now)]
+AppSettings = Annotated[Settings, Depends(get_settings)]
 Viewer = Annotated[User, Depends(require_session)]
 Admin = Annotated[User, Depends(require_admin)]

@@ -84,6 +84,7 @@ class IntakeState(StrEnum):
 
 class RemediationKind(StrEnum):
     cluster_patch = "cluster_patch"
+    set_memory_limit = "set_memory_limit"
     rollback = "rollback"
     revert_workflow = "revert_workflow"
     codify_pr = "codify_pr"
@@ -123,3 +124,4 @@ class AgentRunOutcome(StrEnum):
     failed = "failed"
     timed_out = "timed_out"
     budget_exceeded = "budget_exceeded"
+    limit_reached = "limit_reached"

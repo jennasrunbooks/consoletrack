@@ -135,7 +135,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
-	test-all test-backend test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
+	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
 	local local-down demo demo-replay demo-drift demo-identity revert eval audit-rbac
@@ -461,6 +461,11 @@ demo-identity: env-check-aws ## Remove s3:GetObject from the demo app role as th
 
 revert: env-check-aws ## Plan and apply the demo-app root for CHANGE=<id>, with confirmation (stub)
 	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+
+triage-smoke: env-check-local ## One real Messages API request with the triage prompt, tools, and TRIAGE_MODEL (needs ANTHROPIC_API_KEY)
+	@tools=$$(mktemp) && trap 'rm -f "$$tools"' EXIT && \
+	( $(K8S_MCP_RUN) env K8S_ALLOWED_NAMESPACES=demo python -m k8s_mcp.tool_definitions ) > "$$tools" && \
+	( $(BACKEND_RUN) python -m app.agents.smoke --k8s-tools "$$tools" )
 
 eval: env-check-local ## Agent eval against kind with the real model (stub)
 	$(call todo,the tests + evals workstream; no issue yet)

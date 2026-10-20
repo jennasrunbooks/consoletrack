@@ -6,9 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.db.models import ChangeRow
+from app.agents.schema import SubmitAnalysis
+from app.db.models import AnalysisRow, ChangeRow
 from app.db.repositories import ChangeFilters, UnitOfWork
-from app.enums import ChangeStatus, Risk, Via
+from app.enums import ChangeStatus, Confidence, Risk, SubjectType, Via
 from app.schemas import Change, ChangeCounts, ChangePage
 from app.services import change_state
 from app.services.change_state import ChangeEvent
@@ -16,6 +17,7 @@ from app.services.errors import NotFound
 from app.services.views import change_detail, change_summaries
 
 CLOSED_WINDOW = timedelta(days=7)
+RISK_ORDER = [Risk.low, Risk.medium, Risk.high]
 
 
 @dataclass(frozen=True)
@@ -92,3 +94,60 @@ def accept_change(
     change_state.apply(row, ChangeEvent.accepted, now=now, actor=actor, reason=note)
     uow.commit()
     return change_detail(uow, row)
+
+
+def record_change_analysis(
+    uow: UnitOfWork,
+    change_id: int,
+    *,
+    run_id: int,
+    analysis: SubmitAnalysis | None,
+    stopped: str,
+    now: datetime,
+) -> None:
+    """Store an agent run's result for a change.
+
+    With an analysis: the analysis row, the agent's title and risk on the change, and
+    `detected → awaiting_review`. Without one (a limit, a failure): an analysis row that says
+    why, and the change stays `detected`, where a reviewer can still Accept it. A change that was
+    already reviewed keeps its state.
+    """
+    row = uow.changes.get(change_id, for_update=True)
+    if row is None:
+        raise NotFound("change", change_id)
+    if analysis is None:
+        uow.analyses.add(
+            AnalysisRow(
+                subject_type=SubjectType.change,
+                subject_id=change_id,
+                agent_run_id=run_id,
+                summary=(
+                    f"The agent stopped before submitting an analysis: {stopped}. "
+                    "Review the change from its CloudTrail record."
+                ),
+                confidence=Confidence.low,
+                flags=[],
+            )
+        )
+        uow.commit()
+        return
+    uow.analyses.add(
+        AnalysisRow(
+            subject_type=SubjectType.change,
+            subject_id=change_id,
+            agent_run_id=run_id,
+            summary=analysis.summary,
+            root_cause=analysis.root_cause,
+            risk=analysis.risk,
+            risk_reason=analysis.risk_reason,
+            confidence=analysis.confidence,
+            flags=[flag.value for flag in analysis.flags],
+        )
+    )
+    row.title = analysis.title or row.title
+    # The agent can raise the intake's risk rating, never lower it (e.g. a pipeline-role call
+    # without a gh- session name stays high).
+    row.risk = max(row.risk or Risk.low, analysis.risk, key=RISK_ORDER.index)
+    if row.status is ChangeStatus.detected:
+        change_state.apply(row, ChangeEvent.analysis_written, now=now)
+    uow.commit()

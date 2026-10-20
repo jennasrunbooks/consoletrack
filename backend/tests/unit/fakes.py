@@ -171,6 +171,16 @@ class FakeIncidentRepository:
         rows.sort(key=lambda row: (row.opened_at, row.id), reverse=True)
         return rows[offset : offset + limit], len(rows)
 
+    def next_for_triage(self, now: datetime) -> IncidentRow | None:
+        due = [
+            row
+            for row in self.store.incidents.rows
+            if row.triage_requested_at is not None
+            and row.triage_requested_at <= now
+            and row.status in ACTIVE_INCIDENT_STATUSES
+        ]
+        return min(due, key=lambda row: (row.triage_requested_at, row.id), default=None)
+
 
 class FakeIncidentChangeRepository:
     def __init__(self, store: FakeStore) -> None:

@@ -54,7 +54,7 @@ them (or change both in one PR).
 | Image | Command and port | Probes | Environment |
 |---|---|---|---|
 | `consoletrack-backend` | image default (`uvicorn … :8000`); `alembic upgrade head` in the init container | `GET /healthz`, `GET /readyz` | `DATABASE_URL`, `AWS_REGION`, `INTAKE_MODE`, `TRIAGE_MODEL(_ESCALATION)`, `GRAFANA_URL`, `K8S_ALLOWED_NAMESPACES`, `REMEDIATION_POLICIES_FILE`, `ADMIN_PASSWORD_HASH`, `VIEWER_PASSWORD_HASH`, `SESSION_SECRET`, `ALERT_WEBHOOK_TOKEN` |
-| `consoletrack-backend` as the worker | `python -m app.intake.consumer` | touches `WORKER_HEARTBEAT_FILE` after every poll; unhealthy when it's older than 120 s | the shared settings above plus `CHANGES_QUEUE_URL`, `CHANGES_DLQ_URL`, `TRAIL_NAME`, `K8S_MCP_URL`, `AWS_MCP_URL`, `ANTHROPIC_API_KEY`, `WORKER_HEARTBEAT_FILE` |
+| `consoletrack-backend` as the worker | `python -m app.worker` | touches `WORKER_HEARTBEAT_FILE` after every poll and every 15 s during a triage run; unhealthy when it's older than 120 s | the shared settings above plus `CHANGES_QUEUE_URL`, `CHANGES_DLQ_URL`, `TRAIL_NAME`, `K8S_MCP_URL`, `AWS_MCP_URL`, `ANTHROPIC_API_KEY`, `WORKER_HEARTBEAT_FILE` |
 | `consoletrack-frontend` | image default (nginx :8080) | `GET /healthz` | none |
 | `consoletrack-k8s-mcp` | image default (:8080, `/mcp`) | `GET /healthz`, `GET /readyz` | `K8S_MCP_TRANSPORT=http`, `K8S_MCP_PORT`, `K8S_ALLOWED_NAMESPACES`, `PROMETHEUS_URL` |
 | `consoletrack-aws-mcp` | image default (:8080, `/mcp`) | `GET /healthz`, `GET /readyz` | `AWS_MCP_MODE` (`live`/`fixtures`), `AWS_MCP_PORT`, `AWS_REGION`, `WATCHED_IAM_PATHS`, `EKS_CLUSTER_NAME`, `TF_STATE_BUCKET`, `TF_STATE_KEY` |

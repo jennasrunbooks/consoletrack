@@ -3,6 +3,9 @@
 Each alert in a delivery is handled on its own status, because one grouped delivery can carry
 firing and resolved alerts together. A firing alert opens an incident unless one with the same
 fingerprint is still unresolved; a resolved alert resolves that incident.
+
+Triage never runs inside the webhook request: a new incident is queued
+(`incidents.triage_requested_at`) and the worker picks it up (`app/services/triage.py`).
 """
 
 from __future__ import annotations
@@ -25,7 +28,8 @@ def workload_of(labels: dict[str, str]) -> str | None:
     return next((labels[key] for key in WORKLOAD_LABELS if labels.get(key)), None)
 
 
-def new_incident(alert: AlertmanagerAlert) -> IncidentRow:
+def new_incident(alert: AlertmanagerAlert, *, now: datetime) -> IncidentRow:
+    """A new incident in `open`, queued for the triage worker."""
     labels = alert.labels
     return IncidentRow(
         fingerprint=alert.fingerprint,
@@ -37,6 +41,7 @@ def new_incident(alert: AlertmanagerAlert) -> IncidentRow:
         annotations=dict(alert.annotations),
         opened_at=alert.startsAt,
         status=incident_state.INITIAL,
+        triage_requested_at=now,
     )
 
 
@@ -52,7 +57,7 @@ def process_alertmanager(
             if active is not None:
                 ignored += 1  # re-notification of an open episode
                 continue
-            opened.append(uow.incidents.add(new_incident(alert)).id)
+            opened.append(uow.incidents.add(new_incident(alert, now=now)).id)
         else:
             if active is None:
                 ignored += 1  # already resolved or closed, or never seen

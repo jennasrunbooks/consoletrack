@@ -66,6 +66,7 @@ stateDiagram-v2
   [*] --> open: firing alert (new fingerprint)
   open --> triaging: triage_started
   triaging --> awaiting_review: analysis_written
+  triaging --> awaiting_review: triage_incomplete (limit hit or run failed)
   awaiting_review --> triaging: triage_started (re-run)
   awaiting_review --> remediating: remediation_approved
   awaiting_review --> closed: remediation_rejected (reason required)
@@ -81,10 +82,56 @@ A firing alert reuses the unresolved incident with the same Alertmanager fingerp
 enforces that with a partial unique index (`uq_incidents_active_fingerprint`). After the incident
 is resolved or closed, the next firing opens a new incident.
 
+## Triage agent
+
+`app/agents/` runs in the worker (`python -m app.worker`), never inside an HTTP request.
+
+```mermaid
+flowchart LR
+  am["Alertmanager"] --> webhook["POST /alerts/webhook<br/>incident open, queued"]
+  rerun["POST /incidents/{id}/triage<br/>triaging, queued"] --> queue
+  webhook --> queue[("incidents.triage_requested_at")]
+  queue --> claim["worker: claim<br/>SKIP LOCKED + lease"]
+  claim --> runner["AgentRunner<br/>model ↔ tools, limits"]
+  runner <--> k8s["k8s-mcp"]
+  runner <-.optional.-> aws["aws-mcp"]
+  runner --> record["analysis, evidence,<br/>links, proposed remediation"]
+  record --> gate["PolicyGate<br/>(manual in Phase 1)"]
+```
+
+- **Queue.** `incidents.triage_requested_at` is the queue: the webhook sets it on a new
+  incident, the re-run route on a re-run (with `triage_model` for the escalation model). The
+  worker claims the oldest due one with `FOR UPDATE SKIP LOCKED` and moves the time forward by
+  `TRIAGE_LEASE_SECONDS`, so a run that dies with its worker is picked up again; recording the
+  result clears it. `app/services/triage.py`.
+- **Runner.** `app/agents/runner.py` calls the model through `ModelClient`
+  (`AnthropicClient`, or the scripted fake in tests), offers the MCP tools plus
+  `submit_analysis`, and stops at 12 tool calls (`limit_reached`), 120 s (`timed_out`), the
+  token budget (`budget_exceeded`), or a second transient model error (`failed`). Each tool call
+  is an `evidence` row; each run an `agent_runs` row.
+- **Tools.** `k8s-mcp` is required; `aws-mcp` is optional (`AWS_MCP_URL` empty on kind and
+  Compose), and the task prompt says when AWS evidence isn't available.
+- **Result.** A valid `submit_analysis` becomes an `analyses` row, `incident_changes` links (only
+  to changes that exist), and the proposal as a `proposed` remediation, then `analysis_written`.
+  A run that stops without one records why and moves on with `triage_incomplete`, so a human
+  sees it in `awaiting_review`.
+- **Gate.** The proposal goes to `PolicyGate.submit_proposal(incident_id, proposal)`. Phase 1
+  wires `ManualPolicyGate`, which approves nothing; #34 implements the validator, the policies,
+  and the apply path behind the same interface.
+- **Changes.** `ChangeAnalysis.analyze(change_id)` (`app/agents/changes.py`) is what the intake
+  (#9) calls after recording a change: the same runner with `aws-mcp` only (optional; without it
+  the agent works from the stored CloudTrail record), then `detected → awaiting_review` with the
+  agent's title and risk. The agent can raise the intake's risk, never lower it, and a proposal
+  for a change is dropped: the reviewer picks Revert, Codify, or Accept. A run that stops early
+  leaves the change `detected`.
+- **Prompts** are files in `app/agents/prompts/` (`system_v1.md`, `incident_triage_v1.md`,
+  `change_analysis_v1.md`); a wording change is a new version, not an edit.
+
 ## Database
 
 Seven tables, from `product-spec.md` → Workflow and data model, created by
-`backend/app/db/migrations/versions/0001_initial_schema.py`. `make db-sql` prints the whole
+`backend/app/db/migrations/versions/0001_initial_schema.py`; `0002_triage_queue.py` adds the
+triage queue columns, `analyses.flags`, and the `limit_reached` and `set_memory_limit` values. `make db-sql` prints the whole
 schema without a database.
 
 - Enums are `VARCHAR(32)` plus a named `CHECK` constraint, not native Postgres enum types, so a

@@ -502,8 +502,12 @@ export interface components {
         IncidentStatus: "open" | "triaging" | "awaiting_review" | "remediating" | "resolved" | "closed";
         /** @enum {string} */
         IntakeState: "live" | "delayed" | "down" | "replay";
-        /** @enum {string} */
-        RemediationKind: "cluster_patch" | "rollback" | "revert_workflow" | "codify_pr";
+        /**
+         * @description `set_memory_limit` is the agent's proposal after an OOM kill (raise one container's memory
+         *     limit); the other kinds are `cluster_patch`, `rollback`, `revert_workflow`, `codify_pr`.
+         * @enum {string}
+         */
+        RemediationKind: "cluster_patch" | "set_memory_limit" | "rollback" | "revert_workflow" | "codify_pr";
         /**
          * @description `proposed` → `approved` → `running` → `succeeded` or `failed`; or `proposed` →
          *     `rejected`.
@@ -519,8 +523,13 @@ export interface components {
         SubjectPath: "changes" | "incidents";
         /** @enum {string} */
         Role: "admin" | "viewer";
-        /** @enum {string} */
-        AgentRunOutcome: "running" | "succeeded" | "failed" | "timed_out" | "budget_exceeded";
+        /**
+         * @description `limit_reached`: the run used its tool-call limit without submitting an analysis;
+         *     `timed_out` and `budget_exceeded` are the time and token limits. All three leave the
+         *     subject for a human.
+         * @enum {string}
+         */
+        AgentRunOutcome: "running" | "succeeded" | "failed" | "timed_out" | "budget_exceeded" | "limit_reached";
         LoginRequest: {
             username: string;
             password: string;
@@ -841,7 +850,8 @@ export interface components {
             status: components["schemas"]["RemediationStatus"];
             /**
              * @description Kind-specific. `cluster_patch`: target deployment and the allowlisted patch;
-             *     `rollback`: deployment and target revision; `revert_workflow`: change ID and root;
+             *     `set_memory_limit`: namespace, deployment, container, the new `memory_limit`, and the
+             *     agent's `reason`; `rollback`: deployment and target revision; `revert_workflow`: change ID and root;
              *     `codify_pr`: branch and files.
              */
             payload: {
