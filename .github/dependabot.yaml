@@ -76,6 +76,14 @@ updates:
       - /demo-app
       - /frontend
       - /mcp-server/*
+    ignore:
+      # The Python projects pin requires-python ==3.12.* and the images never download a Python;
+      # moving to 3.13+ is a planned migration (requires-python, uv.lock, tests), not a bump.
+      - dependency-name: python
+        versions: [">=3.13"]
+      # Same for Node: the frontend runs Node 24 everywhere (CI, devcontainer, image).
+      - dependency-name: node
+        versions: [">=25"]
     schedule:
       interval: weekly
       day: monday
