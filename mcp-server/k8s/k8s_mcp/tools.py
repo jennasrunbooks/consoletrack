@@ -345,17 +345,21 @@ def _pod_spec(spec: V1PodSpec) -> dict[str, Any]:
     }
 
 
-def _container(c: V1Container) -> dict[str, Any]:
+def _resources(c: V1Container) -> dict[str, dict[str, str]]:
     resources = c.resources
+    return {
+        "requests": dict(resources.requests or {}) if resources else {},
+        "limits": dict(resources.limits or {}) if resources else {},
+    }
+
+
+def _container(c: V1Container) -> dict[str, Any]:
     return {
         "name": c.name,
         "image": c.image,
         "command": [redact(part) for part in c.command or []],
         "args": [redact(part) for part in c.args or []],
-        "resources": {
-            "requests": dict(resources.requests or {}) if resources else {},
-            "limits": dict(resources.limits or {}) if resources else {},
-        },
+        "resources": _resources(c),
         "ports": [p.container_port for p in c.ports or []],
         "liveness_probe": _probe(c.liveness_probe),
         "readiness_probe": _probe(c.readiness_probe),
@@ -480,6 +484,8 @@ def _rollout_revision(rs: Any, current: int | None) -> dict[str, Any]:
         "desired_replicas": desired,
         "ready_replicas": (rs.status.ready_replicas or 0) if rs.status else 0,
         "images": {c.name: c.image for c in rs.spec.template.spec.containers},
+        # Per container, so a revision that only changed a memory limit shows what changed.
+        "resources": {c.name: _resources(c) for c in rs.spec.template.spec.containers},
         "change_cause": redact(
             (rs.metadata.annotations or {}).get("kubernetes.io/change-cause", "")
         )

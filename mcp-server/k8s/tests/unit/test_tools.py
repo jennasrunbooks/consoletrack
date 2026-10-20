@@ -321,14 +321,21 @@ def test_get_rollout_history_recreate(tools: K8sTools, kube: FakeKube) -> None:
     dep.metadata.annotations["deployment.kubernetes.io/revision"] = "3"
     image = "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc123"
     kube.replica_sets = [
-        replica_set(1, image, replicas=0),
-        replica_set(2, image, replicas=0),
+        replica_set(1, image, replicas=0, memory_limit="256Mi"),
+        replica_set(2, image, replicas=0, memory_limit="256Mi"),
         replica_set(3, image, replicas=1, ready=0),
     ]
 
     result = tools.get_rollout_history("demo", "demo-app")
 
     assert result["strategy"] == "Recreate"
+    # Same image in every revision; only revision 3's memory limit differs.
+    assert [r["resources"]["app"]["limits"]["memory"] for r in result["revisions"]] == [
+        "128Mi",
+        "256Mi",
+        "256Mi",
+    ]
+    assert len({r["images"]["app"] for r in result["revisions"]}) == 1
     assert result["current_revision"] == 3
     assert states(result) == [
         (3, True, "current", 1, 0),
