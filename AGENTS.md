@@ -86,6 +86,7 @@ Run from the repo root unless noted. Prefer `make` targets over ad-hoc commands.
 | Helm checks (no cluster calls) | `make helm-lint` (`helmfile lint` + `template` for eks, eks with alb, and local, then the rendered-manifest checks; part of `make lint`). Without Helmfile, `make helm-test` runs the checks on `helm template` output |
 | Terraform checks (no AWS calls) | `terraform fmt -check -recursive terraform/` and `terraform -chdir=terraform/<account>/<root> validate` |
 | Local stack without AWS | `make demo-replay` |
+| One real-model request with the triage prompt and tools (humans; needs `ANTHROPIC_API_KEY`) | `make triage-smoke` |
 
 If a `make` target doesn't exist yet, add it in the same PR instead of documenting a one-off command.
 

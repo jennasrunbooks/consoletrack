@@ -22,6 +22,10 @@ All six are reads (`readOnlyHint: true`). Each refuses a namespace outside
 `/healthz` is liveness; `/readyz` lists one pod in every allowlisted namespace, so it fails
 if the API server is unreachable or the RBAC is missing.
 
+`python -m k8s_mcp.tool_definitions` prints the tool list as JSON (name, description, input
+schema), as the triage worker receives it, without a cluster. `make triage-smoke` sends it to the
+real Messages API.
+
 ## Configuration
 
 | Variable | Default | Meaning |

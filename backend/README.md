@@ -32,6 +32,7 @@ From the repo root:
 | Contract test | `make test-contract` (part of `make test`) |
 | Integration tests | `make test-integration` (needs Docker, or `CT_TEST_DATABASE_URL`) |
 | Schema as SQL, no database | `make db-sql` |
+| One real Messages API request with the triage agent's prompt, tools, and `TRIAGE_MODEL` (needs `ANTHROPIC_API_KEY`) | `make triage-smoke` |
 | Format | `make fmt` |
 
 From `backend/`: `uv sync`, then `uv run pytest -m "not integration"`, `uv run alembic upgrade head`
