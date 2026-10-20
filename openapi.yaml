@@ -964,7 +964,10 @@ components:
       enum: [live, delayed, down, replay]
     RemediationKind:
       type: string
-      enum: [cluster_patch, rollback, revert_workflow, codify_pr]
+      description: |
+        `set_memory_limit` is the agent's proposal after an OOM kill (raise one container's memory
+        limit); the other kinds are `cluster_patch`, `rollback`, `revert_workflow`, `codify_pr`.
+      enum: [cluster_patch, set_memory_limit, rollback, revert_workflow, codify_pr]
     RemediationStatus:
       type: string
       description: |
@@ -983,7 +986,11 @@ components:
       enum: [admin, viewer]
     AgentRunOutcome:
       type: string
-      enum: [running, succeeded, failed, timed_out, budget_exceeded]
+      description: |
+        `limit_reached`: the run used its tool-call limit without submitting an analysis;
+        `timed_out` and `budget_exceeded` are the time and token limits. All three leave the
+        subject for a human.
+      enum: [running, succeeded, failed, timed_out, budget_exceeded, limit_reached]
 
     # --- Auth -----------------------------------------------------------------------------------
     LoginRequest:
@@ -1732,7 +1739,8 @@ components:
           additionalProperties: true
           description: |
             Kind-specific. `cluster_patch`: target deployment and the allowlisted patch;
-            `rollback`: deployment and target revision; `revert_workflow`: change ID and root;
+            `set_memory_limit`: namespace, deployment, container, the new `memory_limit`, and the
+            agent's `reason`; `rollback`: deployment and target revision; `revert_workflow`: change ID and root;
             `codify_pr`: branch and files.
         decided_by:
           type:

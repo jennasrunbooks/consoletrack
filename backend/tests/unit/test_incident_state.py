@@ -17,6 +17,7 @@ S, E = IncidentStatus, IncidentEvent
 ALLOWED = {
     (S.open, E.triage_started): S.triaging,
     (S.triaging, E.analysis_written): S.awaiting_review,
+    (S.triaging, E.triage_incomplete): S.awaiting_review,
     (S.awaiting_review, E.triage_started): S.triaging,
     (S.awaiting_review, E.remediation_approved): S.remediating,
     (S.awaiting_review, E.remediation_rejected): S.closed,

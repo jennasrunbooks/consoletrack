@@ -178,6 +178,18 @@ class SqlIncidentRepository:
         )
         return _page(self.session, query, offset, limit), _total(self.session, query)
 
+    def next_for_triage(self, now: datetime) -> IncidentRow | None:
+        return self.session.scalar(
+            select(IncidentRow)
+            .where(
+                IncidentRow.triage_requested_at <= now,
+                IncidentRow.status.in_(ACTIVE_INCIDENT_STATUSES),
+            )
+            .order_by(IncidentRow.triage_requested_at, IncidentRow.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+
 
 class SqlIncidentChangeRepository:
     def __init__(self, session: Session) -> None:

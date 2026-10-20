@@ -43,7 +43,7 @@ spec:
             - name: K8S_MCP_URL
               value: {{ printf "http://k8s-mcp:%d/mcp" (int .Values.k8sMcp.port) | quote }}
             - name: AWS_MCP_URL
-              value: {{ printf "http://aws-mcp:%d/mcp" (int .Values.awsMcp.port) | quote }}
+              value: {{ if .Values.worker.awsMcp }}{{ printf "http://aws-mcp:%d/mcp" (int .Values.awsMcp.port) | quote }}{{ else }}""{{ end }}
             - name: WORKER_HEARTBEAT_FILE
               value: {{ $heartbeat | quote }}
             {{- include "consoletrack.secretEnv" (dict "name" "ANTHROPIC_API_KEY" "secret" .Values.secrets.apiKey.name "key" .Values.secrets.apiKey.anthropicApiKey) | nindent 12 }}

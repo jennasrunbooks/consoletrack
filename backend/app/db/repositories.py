@@ -90,6 +90,11 @@ class IncidentRepository(Protocol):
         """Newest first by opened_at; returns (page, total matching)."""
         ...
 
+    def next_for_triage(self, now: datetime) -> IncidentRow | None:
+        """The active incident whose `triage_requested_at` is oldest and not after `now`, locked
+        (`FOR UPDATE SKIP LOCKED`, so two workers never claim the same one)."""
+        ...
+
 
 class IncidentChangeRepository(Protocol):
     def add(self, row: IncidentChangeRow) -> IncidentChangeRow: ...

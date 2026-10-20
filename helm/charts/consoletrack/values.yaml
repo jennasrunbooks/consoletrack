@@ -84,7 +84,12 @@ backend:
 
 worker:
   replicas: 1
-  command: [python, -m, app.intake.consumer]
+  # The triage loop today; the change intake (#9) joins the same process.
+  command: [python, -m, app.worker]
+  # Offer aws-mcp's tools to the triage agent (AWS_MCP_URL). false leaves AWS_MCP_URL empty: the
+  # agent runs with k8s-mcp only and is told AWS evidence isn't available. The local (kind)
+  # environment sets false until aws-mcp ships with #9, so every local run is the same.
+  awsMcp: true
   # The worker has no HTTP server. It touches this file after every poll (20 s long poll), and
   # both probes fail once it's older than heartbeatMaxAgeSeconds.
   heartbeatFile: /tmp/worker-heartbeat

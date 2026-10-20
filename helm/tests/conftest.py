@@ -47,6 +47,7 @@ _LOCAL = {
     "image": {"tag": "local"},
     "app": {"intakeMode": "replay"},
     "awsMcp": {"mode": "fixtures"},
+    "worker": {"awsMcp": False},
     "postgres": {"storage": {"storageClass": "standard"}},
 }
 
