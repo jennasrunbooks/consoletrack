@@ -72,7 +72,9 @@ cluster_up() {
 	# -l selectors are ORed. Waits for both to be ready (helmDefaults).
 	local verb=(sync)
 	if helm plugin list 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -qx diff; then
-		verb=(apply --suppress-diff)
+		# A fresh cluster has no Prometheus CRDs yet, so helm-diff can't render a release that isn't
+		# installed; diff only the ones that are.
+		verb=(apply --suppress-diff --skip-diff-on-install)
 	else
 		echo "local-kind: helm-diff isn't installed, so every rerun upgrades kube-prometheus-stack;" \
 			"install it for fast reruns (README → Try it without AWS)"
