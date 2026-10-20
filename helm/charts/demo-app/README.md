@@ -40,6 +40,8 @@ chart's AlertmanagerConfig only routes alerts from its allowlisted namespaces.
 
 Values toggles for the cluster-only baseline scenarios. Turn on at most one (the chart refuses
 two); turning it off again is the fix.
+The Deployment uses the `Recreate` strategy, so the old pod stops first and a fault takes the app
+down (with a rolling update the old pod would keep serving behind the faulted one).
 
 | Value | Effect | Expected fix |
 |---|---|---|

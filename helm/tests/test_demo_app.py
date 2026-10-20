@@ -140,3 +140,14 @@ def test_high_error_rate_alert_routes_to_consoletrack() -> None:
 
 def test_alert_rules_can_be_turned_off() -> None:
     assert rules(alertRules={"enabled": False}) == {}
+
+
+def test_faults_reach_users() -> None:
+    """A rolling update would keep the old pod serving behind a faulted one that's never Ready."""
+    docs = helm_template("demo-app", "demo", "demo-app", {"faults": {"oom": True}})
+    app = next(
+        d
+        for d in docs
+        if d["kind"] == "Deployment" and d["metadata"]["name"] == "demo-app"
+    )
+    assert app["spec"]["strategy"] == {"type": "Recreate"}
