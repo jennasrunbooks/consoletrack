@@ -1,6 +1,6 @@
 # ConsoleTrack: Product Spec
 
-Last updated Oct 19, 2026
+Last updated Oct 20, 2026
 
 ## Summary
 
@@ -39,7 +39,7 @@ The project is ConsoleTrack: it keeps track of every console change, documents i
 
 ## Scope
 
-Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every criterion of the course rubric as revised on Oct 16 (see Rubric mapping), plus the core cloud loop (change intake, two cloud scenarios, gated revert). Phase 2 targets the Nov 16 fallback deadline and the post-course version. The Oct 22 check (see Plan) decides whether the cloud loop is part of the Oct 26 submission or finished for Nov 16.
+Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every criterion of the course rubric as revised on Oct 16 (see Rubric mapping), plus the core cloud loop (change intake, two cloud scenarios, gated revert). Phase 2 targets the Nov 16 fallback deadline and the post-course version. The Oct 22 check (see Plan) decides the submission date: Oct 26 if the thin end-to-end slice works on kind, otherwise Nov 16.
 
 | Phase | Feature | Why it's in this phase |
 | --- | --- | --- |
@@ -54,9 +54,9 @@ Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every criterion
 | 2 (Nov 16) | Codify: agent drafts an HCL pull request adopting the change; CI plan must show no diff | Turns a good console change into code |
 | 2 (Nov 16) | Drift confirmation with a targeted `terraform plan -refresh-only` job | Exact attribute-level diff instead of request parameters |
 | 2 (Nov 16) | Scenarios: demo app's Pod Identity association or role trust policy changed; KMS key policy edited | Harder identity failures |
-| 2 (Nov 16) | Slack notifications; analytics (changes by principal, time to document, drift reverted vs codified) | Team visibility |
+| Later | Slack notifications; analytics (changes by principal, time to document, drift reverted vs codified) | Team visibility; moved behind Codify and the eval harness, which show more |
 | 2 (Nov 16) | Auto-remediation for the cluster OOM scenario | Shows the graduated autonomy path |
-| Later (after Nov 16) | Eval harness: `make eval` runs each scenario N times and reports attribution accuracy, time to triage, and cost per triage | Turns a demo of the agent into a measured agent |
+| 2 (Nov 16) | Eval harness: `make eval` runs each scenario N times and reports attribution accuracy, time to triage, and cost per triage | Turns a demo of the agent into a measured agent; moved up from Later |
 | Later | Network-path incidents (security groups, ALB target health, DNS, IP exhaustion) | Next domain, built on the same change intake |
 | Later | Production hardening path (a NAT gateway per AZ, fck-nat as a cheaper NAT instance under `/ct/`, Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD); watching more regions through EventBridge forwarding; Argo CD out-of-sync events as a change source; multi-account via an organization trail; headless Claude Code runner; commit tracing; security criterion artifacts | Beyond the course |
 
@@ -385,7 +385,7 @@ ConsoleTrack must be able to tell "nothing changed" apart from "intake is broken
 
 The agent can only read, and that is enforced by IAM and Kubernetes RBAC on two separate MCP servers, not by the prompt. Anything that changes the cluster or AWS goes through the policy gate (a human approval, or auto mode for the one graduated cluster fix) and is applied by the backend under its own identity.
 
-**Runtime.** A worker in the backend calls the Claude Messages API with the Anthropic Python SDK, connects to the `k8s-mcp` and `aws-mcp` servers as an MCP client (FastMCP, streamable HTTP inside the cluster), and offers its tools to the model. The run ends when the model calls a `submit_analysis` tool whose JSON schema is the structured result, so no free-text parsing is needed. Limits per run: 12 tool calls, 120 seconds, a token budget, and one automatic retry.
+**Runtime.** A worker in the backend calls the Claude Messages API with the Anthropic Python SDK, connects to the `k8s-mcp` and `aws-mcp` servers as an MCP client (FastMCP, streamable HTTP inside the cluster), and offers its tools to the model. The run ends when the model calls a `submit_analysis` tool whose JSON schema is the structured result, so no free-text parsing is needed. Limits per run: 12 tool calls, 120 seconds, a token budget, and one automatic retry. Triage never runs inside the webhook request: a new incident is queued in the database and a worker claims the oldest one (`FOR UPDATE SKIP LOCKED`, with a 5-minute lease so a crashed run is picked up again). `aws-mcp` is optional: without it (on kind until `aws-mcp` ships) the agent gets only the `k8s-mcp` tools and records the `aws_evidence_unavailable` flag. A run that ends with low confidence is retried once with the escalation model, and `make triage-smoke` checks the real request against the API with one call.
 
 **MCP tools (k8s-mcp, read-only).**
 
@@ -433,10 +433,10 @@ remediation:
   autoEnabled: false          # global kill switch, also toggled from the dashboard
   policies:
     - name: oom-memory-bump
-      match: {alertname: KubePodOOMKilled, namespace: demo}
-      mode: auto              # manual | auto
+      match: {kind: set_memory_limit, namespace: demo}
+      mode: auto              # manual | auto; ships manual, the OOM auto-fix issue (#34) sets auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
-      bounds: {maxMultiplier: 2, ceiling: 1Gi}
+      bounds: {maxMultiplier: 2, ceiling: 512Mi}
       minConfidence: high
       rateLimit: {perWorkload: 1, window: 1h}
       verify: {waitForResolved: 10m, onFailure: rollback}
@@ -451,7 +451,7 @@ remediation:
 2. The backend runs a server-side dry run of the patch before applying it.
 3. Rate limit per workload, and the global kill switch, are checked first.
 4. After applying, the backend waits for the `resolved` webhook. If it doesn't arrive in time, it rolls back and reopens the incident for a human.
-5. The remediation row records `decided_by = policy:oom-memory-bump`, and the dashboard (plus Slack in P1) shows it as auto-applied.
+5. The remediation row records `decided_by = policy:oom-memory-bump`, and the dashboard shows it as auto-applied.
 
 **Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally.
 
@@ -495,7 +495,7 @@ Integration tests live in `backend/tests/integration/` behind a pytest marker so
 
 `aws-mcp` tools are unit-tested against moto. The change-flow integration test feeds recorded CloudTrail events into a local SQS-compatible queue (ElasticMQ container) and checks that a change record, Terraform address, and analysis come out, with no AWS account needed.
 
-**Local run.** `docker compose up` starts Postgres, backend, worker, `k8s-mcp`, and the frontend. `make demo-local` adds a kind cluster with kube-prometheus-stack and the `demo-app` chart, with Alertmanager pointed at the Compose backend.
+**Local run.** `make local` starts Postgres, ElasticMQ, the backend, and the dashboard in Docker Compose, plus `k8s-mcp` and the triage worker, and a `consoletrack` kind cluster with kube-prometheus-stack and the `demo-app` chart (the OOM, bad-image, and bad-probe faults, and the traffic generator behind `DemoAppHighErrorRate`), with Alertmanager pointed at the Compose backend. `k8s-mcp` uses its own ServiceAccount token, so the chart's read-only RBAC applies locally too. `LOCAL_KIND=false make local` runs Compose alone, and `make local-down` removes both.
 
 **GitHub Actions.**
 
@@ -531,6 +531,7 @@ backend/
   tests/unit/  tests/integration/  tests/contract/
 mcp-server/k8s/          # k8s-mcp (FastMCP), Dockerfile
 mcp-server/aws/          # aws-mcp (FastMCP, boto3), Dockerfile, IAM policy notes
+demo-app/                 # the demo workload's source: /healthz, /metrics, startup allocation, optional S3 read, loadgen mode
 .mcp.json
 terraform/
   consoletrack/           # the ConsoleTrack hub account
@@ -544,6 +545,7 @@ helm/
     consoletrack/         # backend, worker, frontend, MCP servers, canary CronJob, Gateway API routes, RBAC, alert rules, dashboards, policies
     demo-app/             # the demo workload in the demo namespace; faults (oom, bad-image, bad-probe) are values toggles
     gateway-api-crds/     # pinned upstream Gateway API CRDs wrapped as a chart, so Helmfile manages them too
+    cluster-defaults/     # cluster-wide objects the deploy role can't create: gp3 StorageClass, ALB GatewayClass (tier=addons)
   values/                 # values for third-party releases (kube-prometheus-stack, cloudnative-pg, LBC, ExternalDNS)
   environments/           # eks.yaml (default), local.yaml (kind); values.generated.yaml from .env (gitignored)
 scripts/                  # bootstrap-state.sh, preflight.sh, teardown-verify.sh, wait-for.sh
@@ -611,7 +613,7 @@ The course rubric was revised on Oct 16, 2026: 12 criteria worth 24 points, with
 | Deployment | 2 | 2 | EKS via Terraform and Helmfile; a recorded demo and screenshots of the deployment; a live URL during the first days of review |
 | CI/CD | 3 | 2 (3 stretch) | `ci.yaml` tests every PR; `deploy.yaml` deploys `main` to EKS automatically. Stretch: Helmfile `dev` deployed automatically, `prod` behind the `consoletrack-deploy` approval |
 | Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki; a redaction test; `docs/observability.md` |
-| Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (demo app 5xx ratio) → Alertmanager → the backend's webhook |
+| Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (failed-request ratio seen by the demo traffic generator, so it fires even when the app is down) → Alertmanager → the backend's webhook |
 | On-call agent | 2 | 2 | An alert opens an incident, the agent diagnoses an OOM kill, the backend applies the validated memory-limit fix in auto mode, verifies it, and resolves the incident; `docs/remediation-graduation.md` |
 | **Total** | **24** | **23** | |
 
@@ -619,43 +621,41 @@ No longer graded but kept, because they make the build reliable: the OpenAPI con
 
 ## Plan
 
-Phase 1 is built by Oct 25 for the Monday, Oct 26 submission (6 pm local). The go/no-go check on Oct 22 follows the revised rubric: `make local` starts the full stack with one command, the dashboard shows data from the backend and database, and the on-call agent fixes the OOM scenario after an alert with no human step. If that holds, ConsoleTrack is submitted on Oct 26, with the cloud loop (console change → change record → Revert on EKS) as the showcase. If the cloud loop isn't working by then, it's still submitted on Oct 26 on the local criteria, and the cloud loop is finished for Nov 16. Phase 2 runs to Nov 16 either way.
+**Build order: a thin end-to-end slice first, then breadth.** Before anything else, one rough but working slice on kind: a single cluster fault (the demo app's OOM) → the user-impact alert → Alertmanager webhook → incident → the worker's Claude triage through `k8s-mcp` → evidence and analysis saved → visible in the dashboard, all started with `make local`. That slice alone shows the core of the project. Breadth comes after it, in this order: `aws-mcp`, the two cloud scenarios, then the gated Revert. The OOM auto-fix is built in parallel, since it extends the same slice.
+
+**Submission date, decided at the Oct 22 check.** If the slice works on kind by Oct 22, ConsoleTrack is submitted on Monday, Oct 26 (6 pm local): the local run and the documentation carry most of the rubric points, and Oct 23–25 add as much breadth as is working. If the slice doesn't work by Oct 22, the submission moves to Nov 16 and this spec is updated that day. Phase 2 (Codify, the eval harness, more scenarios) runs to Nov 16 either way.
 
 | Workstream | Dates |
 | --- | --- |
 | Contract + skeleton, backend + database, auth | Oct 13 – Oct 17 (done) |
-| AWS `global` and platform roots | Oct 16 – Oct 19 |
-| Frontend shell and change log | Oct 17 – Oct 20 |
-| Local run: Compose, one command | Oct 19 – Oct 20 |
-| Helm charts, `make up` on EKS | Oct 19 – Oct 20 |
-| Agent loop + `k8s-mcp` | Oct 19 – Oct 21 |
-| Change intake, `aws-mcp`, demo-app root | Oct 19 – Oct 21 |
-| On-call auto-fix (OOM) | Oct 20 – Oct 21 |
-| Observability + alert on user impact | Oct 20 – Oct 22 |
-| Cloud scenarios + Revert | Oct 21 – Oct 22 |
-| **Go/no-go check** | **Oct 22** |
-| Frontend detail, CI/CD dev and prod (stretch), demo recording, README, rubric check | Oct 23 – Oct 25 |
-| **Submit (Zoomcamp)** | **Oct 26, 6 pm** |
+| AWS `global` and platform roots, change intake | Oct 16 – Oct 19 (done; platform destroyed while idle) |
+| Frontend shell, change log, browser tests | Oct 17 – Oct 19 (done) |
+| Local run (Compose), Helm charts, `k8s-mcp`, demo app + traffic generator | Oct 19 (done) |
+| **Thin slice:** kind half of `make local`, triage worker, incidents view with evidence | Oct 20 – Oct 21 |
+| On-call auto-fix (OOM), in parallel | Oct 20 – Oct 22 |
+| **Go/no-go check: the slice works on kind** | **Oct 22** |
+| Breadth, in order: `aws-mcp` → the two cloud scenarios → gated Revert (EKS, `make up`) | Oct 23 – Oct 25 |
+| Observability, CI/CD dev and prod (stretch), demo recording, README, rubric check | Oct 23 – Oct 25 |
+| **Submit (Zoomcamp)**, if the check passed | **Oct 26, 6 pm** |
 | Peer reviews (three projects) | After submission, on the course platform's dates |
-| Phase 2: codify PRs | Oct 27 – Nov 4 |
-| Phase 2: more scenarios, next remediation kinds to graduate | Nov 3 – Nov 8 |
-| Phase 2: Slack, analytics | Nov 9 – Nov 12 |
-| **Fallback deadline** | **Nov 16** |
+| Phase 2: Codify PRs | Oct 27 – Nov 4 |
+| Phase 2: eval harness (`make eval`), more scenarios, next remediation kinds to graduate | Nov 3 – Nov 12 |
+| **Submission if the check didn't pass; end of Phase 2** | **Nov 16** |
 
-The local run and the on-call auto-fix moved forward when the rubric changed: together with the documentation criteria they carry most of the points, and they work on kind without AWS. Each phase still ends with a blog-ready milestone: the Oct 26 demo, and the Nov 16 codify-and-scenarios release.
+The slice comes first because it shows the core of the project and runs on kind without AWS; together with the documentation criteria, the local run carries most of the rubric points. Each phase still ends with a blog-ready milestone: the Oct 26 demo, and the Nov 16 Codify-and-evals release.
 
 ## Open decisions and risks
 
 **Decisions to confirm.**
 
-- [ ] Submission deadline: Monday, Oct 26, 6 pm local time (decided).
+- [ ] Submission: Monday, Oct 26, 6 pm local time if the thin slice works on kind at the Oct 22 check, otherwise Nov 16 (decided at the check).
 - [ ] Region: fixed to us-east-1 for IAM events (decided).
 - [ ] Frontend: React + Vite SPA served by nginx (chosen for simplicity) vs Next.js as in the earlier sketch.
-- [ ] Slack: moved to Phase 2 (decided).
+- [ ] Slack and analytics: moved to Later, behind Codify and the eval harness (decided).
 - [ ] Public repo, which peer review needs and which also gives free arm64 Actions runners.
 
 * [ ] Project name: ConsoleTrack (decided).
-* [ ] Whether the cloud loop is in the Oct 26 submission or finished for Nov 16, decided at the Oct 22 check.
+* [ ] Whether the breadth items (aws-mcp, the cloud scenarios, Revert) are in the Oct 26 submission or finished for Nov 16, decided by what works on Oct 25.
 * [ ] Which AWS services the EventBridge rule watches in Phase 1 (proposed: IAM, EC2 security groups, S3 bucket policy).
 * [ ] Which change types count as high risk by default (proposed: IAM policy or trust changes, security group ingress from 0.0.0.0/0, bucket policy or public access changes).
 
@@ -670,4 +670,4 @@ The local run and the on-call auto-fix moved forward when the rubric changed: to
 | Spot reclaim during the review window or a recording | Medium | Node group allows t4g.medium and t4g.large; switch to on-demand for demo day |
 | Memory pressure from the Prometheus stack on 8 GiB total | Medium | Short retention, exporters trimmed, resource requests set; add a third node if pods go Pending |
 | `terraform destroy` hangs on load balancer or ENI cleanup | Medium | `make down` runs `helmfile destroy` (Gateway included) before Terraform |
-| Schedule slip | High | The revised rubric is met by the local stack and docs alone, so Oct 26 holds; the Oct 22 check decides only whether the cloud loop ships then or on Nov 16 |
+| Schedule slip | High | The thin slice comes first and alone decides the date: working on kind by Oct 22 means Oct 26, with whatever breadth works by Oct 25; otherwise the submission moves to Nov 16 |
