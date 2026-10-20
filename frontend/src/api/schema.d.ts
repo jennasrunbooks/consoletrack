@@ -801,6 +801,10 @@ export interface components {
             /** Format: int64 */
             id: number;
             model: string;
+            /** @description The prompt set the run used (`v2`); null for runs recorded before it was stored. */
+            prompt_version: string | null;
+            /** @description Whether this was the worker's one automatic re-run with `TRIAGE_MODEL_ESCALATION` after a low-confidence result or no proposal on an incident with container restarts. */
+            escalated: boolean;
             /** Format: date-time */
             started_at: string;
             /** Format: date-time */

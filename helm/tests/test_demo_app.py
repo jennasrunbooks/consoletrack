@@ -1,8 +1,9 @@
-"""The demo-app chart's fault and traffic-generator wiring (#51).
+"""The demo-app chart's fault and traffic-generator wiring (#51, #60).
 
-The OOM fault has to fit the oom-memory-bump policy in the consoletrack chart: the faulted pod is
-OOMKilled, and the correct fix (back to the normal limit) is within the policy's bounds, so the
-policy gate and #17's validator accept it.
+The OOM fault has to fit the oom-memory-bump policy in the consoletrack chart: under the fault's
+traffic the app outgrows its unchanged limit and is OOMKilled, and the correct fix (2x the limit)
+is within the policy's bounds, so the policy gate and #17's validator accept it. The fault lives
+in the traffic generator, so the app's Deployment has no new revision to roll back to.
 """
 
 from __future__ import annotations
@@ -37,52 +38,69 @@ def env(container: dict) -> dict[str, str]:
 
 def test_normal_sizing() -> None:
     app = render()["demo-app"]
-    assert app["resources"]["limits"]["memory"] == "256Mi"
-    assert app["resources"]["requests"]["memory"] == "128Mi"
-    assert "DEMO_ALLOCATE_MI" not in env(app)
-
-
-def test_oom_fault() -> None:
-    app = render(faults={"oom": True})["demo-app"]
     assert app["resources"]["limits"]["memory"] == "128Mi"
-    assert app["resources"]["requests"]["memory"] == "128Mi"
-    assert env(app)["DEMO_ALLOCATE_MI"] == "128"
+    assert app["resources"]["requests"]["memory"] == "64Mi"
+    assert env(app)["DEMO_REPORT_MI"] == "2"
+    assert env(app)["DEMO_REPORT_CACHE_MI"] == "140"
+    assert "LOADGEN_REPORT" not in env(render()["demo-app-loadgen"])
+
+
+def test_oom_fault_leaves_the_app_alone() -> None:
+    # No new demo-app revision: the limit, env, and everything else stay as they were.
+    assert render(faults={"oom": True})["demo-app"] == render()["demo-app"]
+    assert (
+        env(render(faults={"oom": True})["demo-app-loadgen"])["LOADGEN_REPORT"]
+        == "large"
+    )
 
 
 def test_oom_fix_fits_the_policy_bounds() -> None:
+    values = yaml.safe_load((CHARTS / "demo-app" / "values.yaml").read_text())
     policies = yaml.safe_load((CHARTS / "consoletrack" / "values.yaml").read_text())
     (oom,) = [
         p for p in policies["remediation"]["policies"] if p["name"] == "oom-memory-bump"
     ]
     bounds = oom["bounds"]
-    faulted = render(faults={"oom": True})["demo-app"]["resources"]["limits"]["memory"]
-    fixed = render()["demo-app"]["resources"]["limits"]["memory"]
-    # The allocation alone reaches the faulted limit, so the OOM doesn't depend on the baseline.
-    allocated = (
-        int(env(render(faults={"oom": True})["demo-app"])["DEMO_ALLOCATE_MI"]) * 2**20
+    limit = mem(
+        render(faults={"oom": True})["demo-app"]["resources"]["limits"]["memory"]
     )
-    assert allocated >= mem(faulted)
-    assert mem(fixed) <= bounds["maxMultiplier"] * mem(faulted)
-    assert mem(fixed) <= mem(bounds["ceiling"])
-    # The app's ~50 MiB on EKS (boto3 loaded) still fits next to the allocation once fixed.
-    assert mem(fixed) - allocated >= 64 * 2**20
+    cache = values["reportCache"]["capMi"] * 2**20
+    fixed = 2 * limit  # set_memory_limit to 256Mi
+    # A full cache plus the app on kind (~25 MiB) passes the limit, so the fault OOMs.
+    assert cache + 25 * 2**20 > limit
+    # It fills before the app's first scrape: well under 30s at loadgen.rps.
+    per_second = (
+        values["loadgen"]["rps"] * values["reportCache"]["perRequestMi"] * 2**20
+    )
+    assert (limit - 25 * 2**20) / per_second < 15
+    assert fixed <= bounds["maxMultiplier"] * limit
+    assert fixed <= mem(bounds["ceiling"])
+    # The app's ~50 MiB on EKS (boto3 loaded) and a full cache fit in the fix with room to spare.
+    assert fixed - cache - 50 * 2**20 >= 64 * 2**20
+
+
+LOADGEN_ENV = {
+    "DEMO_MODE": "loadgen",
+    "PORT": "8080",
+    "LOADGEN_TARGET": "http://demo-app.demo:8080/",
+    "LOADGEN_RPS": "5",
+    "LOADGEN_TIMEOUT_SECONDS": "1",
+}
 
 
 @pytest.mark.parametrize(
     "faults", [{}, {"oom": True}, {"badImage": True}, {"badProbe": True}]
 )
-def test_loadgen_ignores_the_faults(faults: dict) -> None:
+def test_loadgen_ignores_the_app_faults(faults: dict) -> None:
     lg = render(faults=faults)["demo-app-loadgen"]
     assert lg["image"] == "ghcr.io/jennasrunbooks/consoletrack-demo-app:0.1.0"
     assert lg["livenessProbe"]["httpGet"]["path"] == "/healthz"
     assert lg["resources"] == render()["demo-app-loadgen"]["resources"]
-    assert env(lg) == {
-        "DEMO_MODE": "loadgen",
-        "PORT": "8080",
-        "LOADGEN_TARGET": "http://demo-app.demo:8080/",
-        "LOADGEN_RPS": "5",
-        "LOADGEN_TIMEOUT_SECONDS": "1",
-    }
+    # The OOM fault's header is the only difference.
+    expected = (
+        {**LOADGEN_ENV, "LOADGEN_REPORT": "large"} if faults.get("oom") else LOADGEN_ENV
+    )
+    assert env(lg) == expected
 
 
 def test_loadgen_is_its_own_scrape_target() -> None:

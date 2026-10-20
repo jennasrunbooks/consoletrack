@@ -1609,13 +1609,32 @@ components:
       type: object
       description: One triage run, for the "Confidence · 4 tool calls · model · 11 s" line.
       required:
-        [id, model, started_at, finished_at, tool_calls, input_tokens, output_tokens, outcome]
+        - id
+        - model
+        - prompt_version
+        - escalated
+        - started_at
+        - finished_at
+        - tool_calls
+        - input_tokens
+        - output_tokens
+        - outcome
       properties:
         id:
           type: integer
           format: int64
         model:
           type: string
+        prompt_version:
+          description: The prompt set the run used (`v2`); null for runs recorded before it was stored.
+          type:
+            - string
+            - "null"
+        escalated:
+          description: >-
+            Whether this was the worker's one automatic re-run with `TRIAGE_MODEL_ESCALATION`
+            after a low-confidence result or no proposal on an incident with container restarts.
+          type: boolean
         started_at:
           type: string
           format: date-time

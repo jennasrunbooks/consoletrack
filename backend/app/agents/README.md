@@ -8,12 +8,12 @@ The triage agent loop (#10). It only reads: its tools are the MCP servers' read-
 | File | What's there |
 | --- | --- |
 | `schema.py` | The `submit_analysis` tool and its Pydantic model (`SCHEMA_VERSION`), and the three proposal kinds |
-| `prompts/` | Versioned prompt files: `system_v1.md`, `incident_triage_v1.md`, `change_analysis_v1.md` |
+| `prompts/` | Versioned prompt sets (`PROMPT_VERSION`, now `v3`; recorded on every `agent_runs` row): `system_vN.md`, `incident_triage_vN.md`, `change_analysis_vN.md` |
 | `model.py` | `ModelClient` protocol, `AnthropicClient`, and the transient/permanent error split |
 | `tools.py` | `ToolProvider`, the MCP client (`McpToolProvider`), `Toolbox`, `open_toolbox` (k8s-mcp required, aws-mcp optional) |
 | `runner.py` | The loop: limits, evidence rows, the `agent_runs` row |
 | `redact.py` | The backend's redaction pass (same rules as k8s-mcp's) |
-| `triage.py` | Incident triage end to end: claim, run, record, gate |
+| `triage.py` | Incident triage end to end: claim, run, at most one escalation, record, gate |
 | `changes.py` | Change analysis for the intake (#9): `ChangeAnalysis.analyze(change_id)` |
 | `smoke.py` | `make triage-smoke`: one real request with the real prompt, k8s-mcp's tool definitions, and `TRIAGE_MODEL`; passes when `submit_analysis` comes back and validates |
 

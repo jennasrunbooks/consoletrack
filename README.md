@@ -105,13 +105,13 @@ make local-incidents           # status: resolved
 
 | `FAULT` | What breaks | The agent should propose |
 | --- | --- | --- |
-| `oom` | The memory limit drops to 128Mi and the app allocates more: OOMKilled, CrashLoopBackOff | `set_memory_limit` to 256Mi (tested on kind) |
+| `oom` | The traffic generator asks for large reports; the app's report cache outgrows its unchanged 128Mi limit: OOMKilled under traffic, CrashLoopBackOff | `set_memory_limit` to 256Mi |
 | `badImage` | An image tag that doesn't exist: ImagePullBackOff | `rollback` to the previous revision |
 | `badProbe` | Probes on a path the app doesn't serve: never Ready | `rollback` to the previous revision |
 
 Proposals wait for a human: every policy ships `manual`. The dashboard's Incidents page, where you'd approve one, is still to come; until then `make local-incidents` shows incidents from the API. Each triage is one agent run on `TRIAGE_MODEL`, Haiku by default. On kind it took 8 tool calls and about 35k input tokens, a few cents.
 
-`make local-fault` runs Helmfile's `demoFault` state value on the `demo-app` release. A faulted pod never becomes Ready, so `demoFault` also turns off Helmfile's wait and atomic rollback for that sync, which would otherwise undo the fault after the timeout. Don't use `--set faults.oom=true` for this. Run Helmfile outside `make` only with `HELM_DRIVER=configmap`.
+`make local-fault` runs Helmfile's `demoFault` state value on the `demo-app` release. A faulted pod may never become Ready, so `demoFault` also turns off Helmfile's wait and atomic rollback for that sync, which would otherwise undo the fault after the timeout. Don't use `--set faults.oom=true` for this. Run Helmfile outside `make` only with `HELM_DRIVER=configmap`.
 
 **Timings on a laptop (Apple silicon, first run).** The kind cluster was ready in about 20s. Compose was healthy about 12s after the images were built. kube-prometheus-stack takes a few minutes on the first pull, and reruns reuse the cluster. After `FAULT=oom`, the incident opened about 4 minutes later: a 2-minute rate window, 1 minute `for`, and Alertmanager's 30s group wait. Triage finished about 20s after that.
 

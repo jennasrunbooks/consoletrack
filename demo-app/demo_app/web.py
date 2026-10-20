@@ -5,16 +5,16 @@ logs the triage agent reads)."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 
 log = logging.getLogger(__name__)
 
-# A route returns (status, content type, body).
+# A route gets the request headers and returns (status, content type, body).
 Response = tuple[int, str, bytes]
-Route = Callable[[], Response]
+Route = Callable[[Mapping[str, str]], Response]
 
 TEXT = "text/plain; charset=utf-8"
 
@@ -27,8 +27,8 @@ def make_server(
     port: int, routes: dict[str, Route], registry: CollectorRegistry, host: str = "0.0.0.0"
 ) -> ThreadingHTTPServer:
     routes = {
-        "/healthz": lambda: text(200, "ok\n"),
-        "/metrics": lambda: (200, CONTENT_TYPE_LATEST, generate_latest(registry)),
+        "/healthz": lambda _: text(200, "ok\n"),
+        "/metrics": lambda _: (200, CONTENT_TYPE_LATEST, generate_latest(registry)),
         **routes,
     }
 
@@ -43,7 +43,7 @@ def make_server(
                 status, ctype, body = text(404, "not found\n")
             else:
                 try:
-                    status, ctype, body = route()
+                    status, ctype, body = route(self.headers)
                 except Exception:
                     log.exception("unhandled error serving %s", self.path)
                     status, ctype, body = text(500, "internal error\n")

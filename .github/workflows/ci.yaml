@@ -1,30 +1,3 @@
-# PROPOSED: a human needs to move this to .github/workflows/ci.yaml, replacing the current file.
-# (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
-#
-# This is an exact copy of the current .github/workflows/ci.yaml (as of #46) plus two new jobs.
-# Neither is meant to be a required check yet, so the ruleset needs no change.
-# - `k8s-mcp-kind` (#10, k8s-mcp PR), at the end: `make test-k8s` against a throwaway kind
-#   cluster with the chart's real k8s-mcp RBAC.
-# - `demo-app-image` (#51), after `frontend-image`: builds the demo app image (amd64, no push),
-#   runs the server and the traffic generator hardened as in the cluster (read-only root, no
-#   capabilities), checks the loadgen's /metrics, and checks the OOM fault's sizing with Docker's
-#   memory limit: 128 MiB allocated is killed under 128m and runs under 256m. Pushing to GHCR
-#   belongs to deploy.yaml. `lint` and `test` need no change: `make lint` and `make test` now
-#   include lint-demo-app and test-demo-app, which use uv (already set up in both jobs).
-#
-# CI for every PR and push to main. Required checks (main ruleset): lint, test, terraform-fmt.
-# Not required: frontend-image and demo-app-image (amd64 builds), e2e (Playwright in Chromium).
-# `test` runs with SKIP_E2E=1 so the browser tests run once, in `e2e`.
-#
-# Changes from the current .github/workflows/ci.yaml (#13, frontend PR 1):
-# - `lint` and `test` set up Node 24, because `make lint` now runs lint-frontend (ESLint, tsc,
-#   and the openapi.yaml → schema.d.ts check) and `make test` runs test-frontend (Vitest).
-# - New `frontend-image` job builds the dashboard image and checks /healthz. It is not meant to
-#   be a required check.
-# - New `e2e` job runs the Playwright browser tests (`make test-e2e`) in Chromium installed by
-#   Playwright, and uploads the HTML report and traces when it fails. `test` sets SKIP_E2E=1 so
-#   the browser tests run once, in `e2e`. Add `e2e` to the ruleset's required checks if wanted.
-# Job names `lint`, `test`, and `terraform-fmt` are unchanged, so the ruleset needs no change.
 name: ci
 
 on:
@@ -186,19 +159,31 @@ jobs:
           echo "$metrics" | grep '^demo_client_requests_total'
           echo "$metrics" | grep -Eq '^demo_client_requests_total\{result="ok"\} [1-9]'
           echo "$metrics" | grep -Eq '^demo_client_requests_total\{result="http_error"\} 0'
-      - name: OOM fault sizing (128 MiB held)
+      - name: OOM fault sizing (report cache, 140 MiB cap)
         run: |
-          # The faulted limit: killed at startup.
+          # 80 large reports at 2 MiB each fill the 140 MiB cache; stops when the app dies.
+          reports() {
+            for _ in $(seq 1 80); do
+              curl -fsS -o /dev/null -H 'X-Demo-Report: large' "$1/" || return 0
+            done
+          }
+          up() { for _ in $(seq 1 20); do curl -fsS "$1/healthz" && return 0; sleep 1; done; return 1; }
+          # The unchanged 128Mi limit: a full cache doesn't fit, so it's OOMKilled.
           # shellcheck disable=SC2086
-          docker run --name oom --memory 128m --memory-swap 128m $HARDENED \
-            -e DEMO_ALLOCATE_MI=128 "$IMAGE" || true
+          docker run -d --name oom --memory 128m --memory-swap 128m -p 8083:8080 $HARDENED "$IMAGE"
+          up http://localhost:8083
+          reports http://localhost:8083
+          for _ in $(seq 1 20); do
+            test "$(docker inspect -f '{{.State.Running}}' oom)" = false && break; sleep 1
+          done
           test "$(docker inspect -f '{{.State.OOMKilled}}' oom)" = "true"
-          # The fix, 2x: keeps running.
+          # The fix, 2x: a full cache fits.
           # shellcheck disable=SC2086
-          docker run -d --name fixed --memory 256m --memory-swap 256m -p 8082:8080 $HARDENED \
-            -e DEMO_ALLOCATE_MI=128 "$IMAGE"
-          for i in $(seq 1 20); do curl -fsS http://localhost:8082/healthz && break; sleep 1; done
-          curl -fsS http://localhost:8082/metrics | grep '^demo_app_allocated_bytes'
+          docker run -d --name fixed --memory 256m --memory-swap 256m -p 8082:8080 $HARDENED "$IMAGE"
+          up http://localhost:8082
+          reports http://localhost:8082
+          test "$(docker inspect -f '{{.State.Running}}' fixed)" = "true"
+          curl -fsS http://localhost:8082/metrics | grep -E '^demo_app_report_cache_bytes 1\.4680064e\+08$'
           docker stats --no-stream fixed
       - name: Logs
         if: failure()
@@ -269,3 +254,68 @@ jobs:
         with:
           install_only: true
       - run: make test-k8s
+
+  # Not a required check (yet): `make local` end to end on a fresh runner, the kind half of #15.
+  # scripts/local-kind.sh creates the kind cluster, applies kube-prometheus-stack and demo-app,
+  # starts Compose with k8s-mcp, and checks that Alertmanager reaches the Compose backend. Then an
+  # alert posted to Alertmanager has to arrive as an incident. No secrets: `make local` only
+  # checks that ANTHROPIC_API_KEY is set, and nothing here calls the model.
+  local-kind:
+    name: local-kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: "v4.3.1"
+      - uses: helmfile/helmfile-action@614b4cd063ada10b87f668f6ffd35485bce0cac5 # v2.4.8
+        with:
+          helm-version: "v4.3.1"
+          helmfile-version: "v1.8.2"
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          install_only: true
+      - run: make local
+        env:
+          ANTHROPIC_API_KEY: unused-in-ci
+      - name: k8s-mcp's ServiceAccount stays read-only
+        run: |
+          sa=system:serviceaccount:consoletrack:k8s-mcp
+          kc() { kubectl --context kind-consoletrack "$@"; }
+          test "$(kc auth can-i list pods -n demo --as "$sa")" = yes
+          test "$(kc auth can-i get secrets -n demo --as "$sa")" = no
+          test "$(kc auth can-i patch deployments -n demo --as "$sa")" = no
+      - name: An alert from kind becomes an incident
+        run: |
+          kc() { kubectl --context kind-consoletrack "$@"; }
+          pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
+          kc -n monitoring exec "$pod" -c alertmanager -- wget -qO- \
+            --header 'Content-Type: application/json' \
+            --post-data '[{"labels":{"alertname":"LocalKindProbe","namespace":"demo","severity":"info"}}]' \
+            http://127.0.0.1:9093/api/v2/alerts
+          # localhost, not 127.0.0.1: curl keeps the Secure session cookie over HTTP only there.
+          base=http://localhost:8080
+          pw=$(docker compose exec -T backend cat /run/consoletrack/admin-password)
+          echo "::add-mask::$pw"
+          jq -n --arg p "$pw" '{username: "admin", password: $p}' \
+            | curl -fsS -c jar -H 'Content-Type: application/json' --data @- "$base/api/v1/auth/login"
+          # The route's groupWait is 30s.
+          for _ in $(seq 1 24); do
+            if curl -fsS -b jar "$base/api/v1/incidents?namespace=demo" \
+              | jq -e '.items | any(.alertname == "LocalKindProbe")' >/dev/null; then
+              echo "incident opened"; exit 0
+            fi
+            sleep 5
+          done
+          echo "no LocalKindProbe incident after 120s" >&2; exit 1
+      - name: Logs
+        if: failure()
+        run: |
+          docker compose -f docker-compose.yaml -f compose/kind.yaml --profile kind logs --no-color
+          kubectl --context kind-consoletrack get pods -A
+          kubectl --context kind-consoletrack -n monitoring logs -l app.kubernetes.io/name=alertmanager -c alertmanager --tail=100
+      - if: always()
+        run: make local-down
