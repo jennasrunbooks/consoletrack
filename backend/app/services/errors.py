@@ -18,6 +18,10 @@ class MissingReason(ValueError):
     """A decision that needs a note or reason (Accept, Reject) arrived without one (HTTP 422)."""
 
 
+class InvalidModel(ValueError):
+    """A triage model override that isn't TRIAGE_MODEL or TRIAGE_MODEL_ESCALATION (HTTP 422)."""
+
+
 class NotFound(Exception):
     """No such change or incident (HTTP 404)."""
 

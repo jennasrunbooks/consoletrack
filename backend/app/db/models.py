@@ -128,6 +128,11 @@ class IncidentRow(TimestampMixin, Base):
         Index("ix_incidents_status_opened_at", "status", "opened_at"),
         # A re-firing alert reuses the unresolved incident with its fingerprint.
         Index(
+            "ix_incidents_triage_requested_at",
+            "triage_requested_at",
+            postgresql_where=text("triage_requested_at IS NOT NULL"),
+        ),
+        Index(
             "uq_incidents_active_fingerprint",
             "fingerprint",
             unique=True,
@@ -154,6 +159,11 @@ class IncidentRow(TimestampMixin, Base):
     decided_by: Mapped[str | None] = mapped_column(String(256))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reason: Mapped[str | None] = mapped_column(Text)
+    # The triage queue: the worker claims an incident once this time has passed, and pushes it
+    # forward by a lease while the run lasts, so a crashed worker's claim expires. Null = no
+    # triage pending. `triage_model` is the re-run's model override (null = TRIAGE_MODEL).
+    triage_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    triage_model: Mapped[str | None] = mapped_column(String(128))
 
 
 class IncidentChangeRow(TimestampMixin, Base):
@@ -219,6 +229,10 @@ class AnalysisRow(TimestampMixin, Base):
     risk: Mapped[Risk | None] = mapped_column(enum_column(Risk, "risk"))
     risk_reason: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[Confidence] = mapped_column(enum_column(Confidence, "confidence"))
+    # The agent's flags from submit_analysis (app/agents/schema.py), e.g. stateful_workload.
+    flags: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
     # Editable by an admin (PUT /incidents/{id}/postmortem).
     postmortem_md: Mapped[str | None] = mapped_column(Text)
 

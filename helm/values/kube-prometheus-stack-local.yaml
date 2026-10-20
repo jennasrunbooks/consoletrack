@@ -1,0 +1,16 @@
+# kube-prometheus-stack on kind (helm/environments/local.yaml), on top of
+# kube-prometheus-stack.yaml.
+
+# Docker Desktop's VM doesn't mount / as shared, and node-exporter's host root mount then fails
+# to start ("path / is mounted on / but it is not a shared or slave mount").
+prometheus-node-exporter:
+  hostRootFsMount:
+    enabled: false
+
+prometheus:
+  # k8s-mcp runs in Compose (`make local`) and reaches Prometheus on kind's Docker network at
+  # http://consoletrack-control-plane:30090. kind publishes no port on the host, so this stays
+  # off the host's network.
+  service:
+    type: NodePort
+    nodePort: 30090

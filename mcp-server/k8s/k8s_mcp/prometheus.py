@@ -50,8 +50,9 @@ class HttpPrometheus:
         )
 
     def _get(self, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        # Prometheus stops evaluating at the same limit the client stops waiting.
-        params = {**params, "timeout": f"{self._timeout}s"}
+        # Prometheus stops evaluating at the same limit the client stops waiting. Plain seconds
+        # (`10`, `2.5`): its duration format rejects a fraction with a unit (`10.0s`).
+        params = {**params, "timeout": f"{self._timeout:g}"}
         try:
             response = self._http.get(path, params=params)
         except httpx.TimeoutException as exc:

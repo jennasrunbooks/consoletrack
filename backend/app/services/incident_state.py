@@ -5,6 +5,7 @@ and it records decision, decided_by, decided_at, and reason on the two terminal 
 
     open            ──triage_started───────▶ triaging
     triaging        ──analysis_written─────▶ awaiting_review
+    triaging        ──triage_incomplete────▶ awaiting_review (the run stopped without one)
     awaiting_review ──triage_started───────▶ triaging        (re-run)
     awaiting_review ──remediation_approved─▶ remediating
     awaiting_review ──remediation_rejected─▶ closed          (reason required)
@@ -28,6 +29,8 @@ ALERTMANAGER = "alertmanager"
 class IncidentEvent(StrEnum):
     triage_started = "triage_started"
     analysis_written = "analysis_written"
+    # The agent run hit a limit or failed: the incident waits for a human without an analysis.
+    triage_incomplete = "triage_incomplete"
     remediation_approved = "remediation_approved"
     remediation_rejected = "remediation_rejected"
     alert_resolved = "alert_resolved"
@@ -40,6 +43,7 @@ TRANSITIONS: dict[tuple[IncidentStatus, IncidentEvent], IncidentStatus] = {
     # Re-run triage, e.g. with the escalation model.
     (S.awaiting_review, E.triage_started): S.triaging,
     (S.triaging, E.analysis_written): S.awaiting_review,
+    (S.triaging, E.triage_incomplete): S.awaiting_review,
     (S.awaiting_review, E.remediation_approved): S.remediating,
     (S.awaiting_review, E.remediation_rejected): S.closed,
     # A resolved notification ends the episode from any unresolved state.

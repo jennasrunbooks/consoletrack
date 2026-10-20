@@ -52,6 +52,25 @@ class Settings(BaseSettings):
     triage_model: str = "claude-haiku-5-5"
     triage_model_escalation: str = "claude-sonnet-5-5"
 
+    # The triage agent's MCP servers (streamable HTTP, e.g. http://k8s-mcp:8080/mcp). Empty
+    # AWS_MCP_URL (kind, Compose) means no AWS tools: the agent is told AWS evidence isn't
+    # available. ANTHROPIC_API_KEY is read by the Anthropic SDK itself, never by this class.
+    k8s_mcp_url: str | None = None
+    aws_mcp_url: str | None = None
+    # Per-run limits (product-spec.md → Triage agent and guardrails → Runtime).
+    triage_max_tool_calls: int = 12
+    triage_timeout_seconds: float = 120
+    # Input plus output tokens over every model call of one run.
+    triage_token_budget: int = 200_000
+    triage_max_output_tokens: int = 8_192
+    # How long a claimed incident stays the worker's before another worker may claim it again
+    # (a crashed run). Longer than the run's own timeout.
+    triage_lease_seconds: int = 300
+    mcp_call_timeout_seconds: float = 30
+    worker_poll_seconds: float = 5
+    # Touched after every poll; the worker's probes check its age (helm worker.yaml).
+    worker_heartbeat_file: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

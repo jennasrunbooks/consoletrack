@@ -8,9 +8,11 @@
 #   password are generated on first start unless .env sets them (backend/app/compose_entrypoint.py).
 # - Images are built for the local machine's architecture (amd64 or arm64).
 #
-# k8s-mcp is in the `kind` profile: it starts only with `--profile kind` (or COMPOSE_PROFILES=kind),
-# so `make local` without a kind cluster is unchanged. The worker (INTAKE_MODE=replay, SQS
-# through ElasticMQ) and aws-mcp (fixtures mode) join this file with #9 and #10 PR 2.
+# `make local` also creates the `consoletrack` kind cluster (scripts/local-kind.sh) and adds
+# compose/kind.yaml and the `kind` profile: k8s-mcp and the triage worker start, and the backend
+# joins kind's Docker network so Alertmanager can reach it. Plain `docker compose up` (and
+# LOCAL_KIND=false make local) runs without kind. The change intake (INTAKE_MODE=replay, SQS
+# through ElasticMQ) and aws-mcp (fixtures mode) join with #9.
 name: consoletrack
 
 x-hardening: &hardening
@@ -102,9 +104,8 @@ services:
       retries: 20
 
   # Read-only cluster tools for the triage agent, against the local kind cluster `consoletrack`.
-  # Needs kind's internal kubeconfig (the API server's address on kind's Docker network), written
-  # once per cluster; the file is gitignored (*.kubeconfig):
-  #   kind get kubeconfig --internal --name consoletrack > kind-internal.kubeconfig
+  # `make local` writes kind-internal.kubeconfig (gitignored): kind's internal API server address
+  # and the k8s-mcp ServiceAccount's token, so the chart's read-only RBAC applies here too.
   # Not published on the host: only the worker calls it, over Compose's network.
   k8s-mcp:
     build: ./mcp-server/k8s
@@ -113,8 +114,8 @@ services:
     <<: *hardening
     environment:
       K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-demo}
-      # kube-prometheus-stack in kind, if reachable; empty makes query_prometheus answer an error.
-      PROMETHEUS_URL: ${PROMETHEUS_URL:-}
+      # kube-prometheus-stack's NodePort on kind's network (helm/values/kube-prometheus-stack-local.yaml).
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://consoletrack-control-plane:30090}
       KUBECONFIG: /run/kube/config
     volumes:
       - ./kind-internal.kubeconfig:/run/kube/config:ro
@@ -125,6 +126,35 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+
+  # Triage worker (#10): claims queued incidents and runs the agent against k8s-mcp with the real
+  # model, so it needs ANTHROPIC_API_KEY from the shell. AWS_MCP_URL is empty: no AWS tools here,
+  # and the agent is told so. The backend runs the migrations, so the worker waits for it.
+  worker:
+    build: ./backend
+    image: consoletrack-backend:local
+    profiles: [kind]
+    <<: *hardening
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://consoletrack:consoletrack@postgres:5432/consoletrack
+      K8S_MCP_URL: http://k8s-mcp:8080/mcp
+      AWS_MCP_URL: ""
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-haiku-5-5}
+      TRIAGE_MODEL_ESCALATION: ${TRIAGE_MODEL_ESCALATION:-claude-sonnet-5-5}
+      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+    depends_on:
+      backend:
+        condition: service_healthy
+      k8s-mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 120)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
 
 networks:
   # kind's own Docker network, created by `kind create cluster`; only the kind profile uses it.

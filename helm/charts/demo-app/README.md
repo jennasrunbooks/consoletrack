@@ -11,6 +11,7 @@ policy, the bucket, the security group, and the `demo:demo-app` Pod Identity ass
 |---|---|
 | ServiceAccount `demo-app` | No Kubernetes token; Pod Identity binds it to `demo-app-role-<suffix>` |
 | Deployment `demo-app` | Same pod security as the consoletrack chart (UID 10001, read-only root, no capabilities). Memory: 128Mi request, 256Mi limit |
+| PrometheusRule `demo-app` (`alertRules.enabled`, default on) | `DemoAppHighErrorRate`, below |
 | Service `demo-app` (:8080), ServiceMonitor | The app's own metrics: `demo_app_requests_total{code}`, `demo_app_s3_errors_total{error}`, `demo_app_allocated_bytes` |
 | ServiceAccount, Deployment, Service, ServiceMonitor `demo-app-loadgen` (`loadgen.enabled`, default on) | The traffic generator (`DEMO_MODE=loadgen`): `GET http://demo-app.demo:8080/` at `loadgen.rps` (5) with a `loadgen.timeoutSeconds` (1s) timeout, exporting `demo_client_requests_total{result="ok\|http_error\|conn_error\|timeout"}`, scraped every 15s. No token, no Pod Identity; the faults never change it |
 
@@ -21,25 +22,42 @@ The image reads `PORT`, `AWS_REGION`, `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, and, wit
 
 `DemoAppHighErrorRate` is measured on the client's side, from the traffic generator: an app that
 is OOMKilled or never Ready serves nothing and exports nothing, so a rule on its own 5xx counter
-would never fire. The rule ships in the consoletrack chart's alert rules with #16:
+would never fire. The rule is `templates/prometheusrule.yaml`, behind `alertRules.enabled`
+(default on); #16 adopts it for observability:
 
 ```text
 DemoAppHighErrorRate:
-  sum(rate(demo_client_requests_total{result!="ok"}[2m]))
-    / sum(rate(demo_client_requests_total[2m])) > 0.05
-  for: 1m, severity: critical
+  sum(rate(demo_client_requests_total{namespace="<ns>", result!="ok"}[2m]))
+    / sum(rate(demo_client_requests_total{namespace="<ns>"}[2m])) > 0.05
+  for: 1m
+  labels: severity=critical, namespace=<ns>, workload=demo-app
 ```
+
+The `namespace` label is required: `sum()` drops it from the series, and the consoletrack
+chart's AlertmanagerConfig only routes alerts from its allowlisted namespaces.
 
 ## Faults
 
 Values toggles for the cluster-only baseline scenarios. Turn on at most one (the chart refuses
 two); turning it off again is the fix.
+The Deployment uses the `Recreate` strategy, so the old pod stops first and a fault takes the app
+down (with a rolling update the old pod would keep serving behind the faulted one).
 
 | Value | Effect | Expected fix |
 |---|---|---|
 | `faults.oom` | Memory request and limit both drop to `oomMemoryLimit` (128Mi; normally 128Mi request, 256Mi limit) and the app allocates and holds `allocateMi` (128) before it listens: ~150 MiB used on kind, ~175 MiB on EKS (boto3 loaded), so it's OOMKilled on every start | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling, ~80 MiB headroom) |
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
-| `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Fix the probe path |
+| `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Rollout undo (the agent's `rollback`); fixing the probe path also works |
 
-For example: `helmfile -l name=demo-app apply --set faults.oom=true` (a human, or the
-`break-demo` skill on kind).
+On kind, run `make local-fault FAULT=oom|badImage|badProbe|off` (README → Try it without AWS).
+It sets Helmfile's `demoFault` state value, which also skips the wait and atomic rollback that
+would otherwise undo the fault, because a faulted pod never becomes Ready. Syncing without
+`demoFault` turns the fault off. The raw commands, for EKS with `-e eks`:
+
+```bash
+HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
+  -l name=demo-app sync --state-values-set demoFault=oom    # oom, badImage, or badProbe
+HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
+  -l name=demo-app sync                                     # off
+```
+

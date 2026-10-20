@@ -38,6 +38,11 @@ exports this; anything else running helmfile must too. */}}
 {{- $alb := eq .Values.exposure "alb" }}
 {{- $dns := ne .Values.domain "" }}
 {{- $cidrs := .Values.allowedCidrs }}
+{{- /* One demo-app fault for the baseline scenarios: --state-values-set demoFault=oom|badImage|badProbe. */}}
+{{- $fault := .Values.demoFault }}
+{{- if not (has $fault (list "" "oom" "badImage" "badProbe")) }}
+{{- fail (printf "demoFault must be empty, oom, badImage, or badProbe, not %q" $fault) }}
+{{- end }}
 {{- if kindIs "string" $cidrs }}{{ $cidrs = splitList "," $cidrs | compact }}{{ end }}
 
 repositories:
@@ -90,6 +95,9 @@ releases:
       tier: addons
     values:
       - values/kube-prometheus-stack.yaml
+      {{- if eq .Values.target "local" }}
+      - values/kube-prometheus-stack-local.yaml
+      {{- end }}
 
   - name: cloudnative-pg
     namespace: cnpg-system
@@ -136,12 +144,22 @@ releases:
       tier: app
     needs:
       - monitoring/kube-prometheus-stack
+    {{- if $fault }}
+    # A faulted demo-app never becomes Ready: waiting would time out, and atomic would then roll
+    # the fault back.
+    wait: false
+    atomic: false
+    {{- end }}
     values:
       - image:
           tag: {{ .Values.imageTag | quote }}
         aws:
           region: {{ .Values.awsRegion | quote }}
           bucket: {{ .Values.demoBucket | quote }}
+        faults:
+          oom: {{ eq $fault "oom" }}
+          badImage: {{ eq $fault "badImage" }}
+          badProbe: {{ eq $fault "badProbe" }}
 
   - name: consoletrack
     namespace: consoletrack
@@ -183,6 +201,9 @@ releases:
           grafanaUrl: {{ .Values.grafanaUrl | quote }}
         awsMcp:
           mode: {{ if eq .Values.target "local" }}fixtures{{ else }}live{{ end }}
+        worker:
+          # No AWS tools for the triage agent on kind until aws-mcp ships (#9).
+          awsMcp: {{ ne .Values.target "local" }}
         postgres:
           storage:
             storageClass: {{ .Values.storageClass }}

@@ -53,6 +53,17 @@ On `eks` the `consoletrack` chart refuses to render without the Terraform output
 certificate, and `ALLOWED_CIDRS`, so a half-configured deploy fails before it reaches the
 cluster.
 
+`make local` uses the `local` environment for two releases only:
+`helmfile -e local -l name=kube-prometheus-stack -l name=demo-app apply` (`sync` without helm-diff), run by
+`scripts/local-kind.sh`. Docker Compose runs Postgres, the backend, and the dashboard, so the
+`consoletrack` release, CloudNativePG, and the Gateway API CRDs stay out of kind. From the
+`consoletrack` chart, the script applies only the k8s-mcp RBAC, the ServiceAccounts, and the
+AlertmanagerConfig. It renders them with `compose/kind-values.yaml`, which sets
+`monitoring.webhookUrl` to the Compose backend. On `local`, kube-prometheus-stack also reads
+`values/kube-prometheus-stack-local.yaml`, which has two settings:
+- node-exporter without the host root mount, which Docker Desktop's VM can't provide.
+- Prometheus on NodePort 30090, for Compose's k8s-mcp on kind's Docker network.
+
 ## Secrets
 
 No values file, template, or environment holds a secret. The charts reference existing Secrets

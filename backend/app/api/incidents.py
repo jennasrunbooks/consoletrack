@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path, Query
 
-from app.api.deps import Admin, Uow, Viewer
+from app.api.deps import Admin, AppSettings, Now, Uow, Viewer
 from app.api.errors import NotImplementedYet, error_responses
 from app.db.repositories import IncidentFilters
 from app.enums import IncidentStatus
@@ -19,13 +19,13 @@ from app.schemas import (
     RejectRemediationRequest,
     TriageRequest,
 )
-from app.services import incidents
+from app.services import incidents, triage
 
 router = APIRouter(prefix="/api/v1/incidents", tags=["incidents"])
 
 IncidentId = Annotated[int, Path(ge=1, json_schema_extra={"format": "int64"})]
 WRITE_ERRORS = error_responses(400, 401, 403, 404, 409, 422)
-AGENT_ISSUE = "#10 (triage agent loop and policy gate)"
+GATE_ISSUE = "#34 (validator, policy gate, and apply)"
 
 
 @router.get(
@@ -68,9 +68,17 @@ def get_incident(id: IncidentId, uow: Uow, _: Viewer) -> Incident:
     response_model=Incident,
     responses=WRITE_ERRORS,
 )
-def triage_incident(id: IncidentId, _: Admin, body: TriageRequest | None = None) -> Incident:
+def triage_incident(
+    id: IncidentId,
+    uow: Uow,
+    now: Now,
+    settings: AppSettings,
+    _: Admin,
+    body: TriageRequest | None = None,
+) -> Incident:
     """Re-run triage, optionally with another model. Requires admin."""
-    raise NotImplementedYet("POST /api/v1/incidents/{id}/triage", AGENT_ISSUE)
+    model = body.model if body is not None else None
+    return triage.rerun_triage(uow, id, model=model, settings=settings, now=now)
 
 
 @router.post(
@@ -83,7 +91,7 @@ def approve_remediation(
     id: IncidentId, _: Admin, body: ApproveRemediationRequest | None = None
 ) -> Incident:
     """Approve the proposed remediation. Requires admin."""
-    raise NotImplementedYet("POST /api/v1/incidents/{id}/remediation/approve", AGENT_ISSUE)
+    raise NotImplementedYet("POST /api/v1/incidents/{id}/remediation/approve", GATE_ISSUE)
 
 
 @router.post(
@@ -94,7 +102,7 @@ def approve_remediation(
 )
 def reject_remediation(id: IncidentId, body: RejectRemediationRequest, _: Admin) -> Incident:
     """Reject the proposed remediation and close the incident. Requires admin."""
-    raise NotImplementedYet("POST /api/v1/incidents/{id}/remediation/reject", AGENT_ISSUE)
+    raise NotImplementedYet("POST /api/v1/incidents/{id}/remediation/reject", GATE_ISSUE)
 
 
 @router.put(

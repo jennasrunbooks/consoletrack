@@ -22,6 +22,10 @@ All six are reads (`readOnlyHint: true`). Each refuses a namespace outside
 `/healthz` is liveness; `/readyz` lists one pod in every allowlisted namespace, so it fails
 if the API server is unreachable or the RBAC is missing.
 
+`python -m k8s_mcp.tool_definitions` prints the tool list as JSON (name, description, input
+schema), as the triage worker receives it, without a cluster. `make triage-smoke` sends it to the
+real Messages API.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -75,13 +79,13 @@ file that uses its token (`kubectl -n consoletrack create token k8s-mcp`).
 
 ## Docker Compose
 
-`docker-compose.yaml` has a `k8s-mcp` service in the `kind` profile, so plain `make local` doesn't
-start it. With the `consoletrack` kind cluster running:
-
-```bash
-kind get kubeconfig --internal --name consoletrack > kind-internal.kubeconfig   # gitignored
-COMPOSE_PROFILES=kind make local
-```
+`docker-compose.yaml` has a `k8s-mcp` service in the `kind` profile, which `make local` turns on
+along with the kind cluster (`scripts/local-kind.sh`). Before Compose starts, the script applies
+the chart's k8s-mcp RBAC to kind. It then writes `kind-internal.kubeconfig` (gitignored). That
+file holds kind's internal API server address and a 24-hour token for the `consoletrack:k8s-mcp`
+ServiceAccount (`kubectl create token`), not kind's admin credentials. Every `make local` writes
+a fresh one. `PROMETHEUS_URL` defaults to kube-prometheus-stack's NodePort on kind's network,
+`http://consoletrack-control-plane:30090`.
 
 It joins kind's Docker network to reach the API server and isn't published on the host.
 

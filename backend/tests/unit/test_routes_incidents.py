@@ -165,7 +165,6 @@ def test_evidence_rejects_unknown_subject_path(viewer: TestClient) -> None:
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
-        ("post", "triage", {"model": None}),
         ("post", "remediation/approve", None),
         ("post", "remediation/reject", {"reason": "wrong pod"}),
         ("put", "postmortem", {"postmortem_md": "# Postmortem"}),

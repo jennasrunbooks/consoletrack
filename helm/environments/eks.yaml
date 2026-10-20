@@ -29,5 +29,8 @@ demoBucket: ""
 # deploy.yaml passes the commit SHA (--state-values-set imageTag=<sha>).
 imageTag: ""
 
+# A demo-app fault (empty, oom, badImage, badProbe), set per run: --state-values-set demoFault=oom.
+demoFault: ""
+
 intakeMode: live
 storageClass: gp3
