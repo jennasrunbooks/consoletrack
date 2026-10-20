@@ -118,8 +118,14 @@ flowchart LR
 - **Gate.** The proposal goes to `PolicyGate.submit_proposal(incident_id, proposal)`. Phase 1
   wires `ManualPolicyGate`, which approves nothing; #34 implements the validator, the policies,
   and the apply path behind the same interface.
-- **Prompts** are files in `app/agents/prompts/` (`system_v1.md`, `incident_triage_v1.md`); a
-  wording change is a new version, not an edit.
+- **Changes.** `ChangeAnalysis.analyze(change_id)` (`app/agents/changes.py`) is what the intake
+  (#9) calls after recording a change: the same runner with `aws-mcp` only (optional; without it
+  the agent works from the stored CloudTrail record), then `detected → awaiting_review` with the
+  agent's title and risk. The agent can raise the intake's risk, never lower it, and a proposal
+  for a change is dropped: the reviewer picks Revert, Codify, or Accept. A run that stops early
+  leaves the change `detected`.
+- **Prompts** are files in `app/agents/prompts/` (`system_v1.md`, `incident_triage_v1.md`,
+  `change_analysis_v1.md`); a wording change is a new version, not an edit.
 
 ## Database
 

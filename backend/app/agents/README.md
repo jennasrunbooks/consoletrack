@@ -1,18 +1,20 @@
 # app/agents
 
 The triage agent loop (#10). It only reads: its tools are the MCP servers' read-only tools plus
-`submit_analysis`, and it moves incidents only through `app/services/triage.py` and the
-incident state machine. Proposals stop at the policy gate (`app/services/policy_gate.py`).
+`submit_analysis`, and it moves incidents and changes only through `app/services/triage.py`,
+`app/services/changes.py`, and the two state machines. Proposals stop at the policy gate
+(`app/services/policy_gate.py`).
 
 | File | What's there |
 | --- | --- |
 | `schema.py` | The `submit_analysis` tool and its Pydantic model (`SCHEMA_VERSION`), and the three proposal kinds |
-| `prompts/` | Versioned prompt files: `system_v1.md`, `incident_triage_v1.md` |
+| `prompts/` | Versioned prompt files: `system_v1.md`, `incident_triage_v1.md`, `change_analysis_v1.md` |
 | `model.py` | `ModelClient` protocol, `AnthropicClient`, and the transient/permanent error split |
 | `tools.py` | `ToolProvider`, the MCP client (`McpToolProvider`), `Toolbox`, `open_toolbox` (k8s-mcp required, aws-mcp optional) |
 | `runner.py` | The loop: limits, evidence rows, the `agent_runs` row |
 | `redact.py` | The backend's redaction pass (same rules as k8s-mcp's) |
 | `triage.py` | Incident triage end to end: claim, run, record, gate |
+| `changes.py` | Change analysis for the intake (#9): `ChangeAnalysis.analyze(change_id)` |
 
 Tests use `tests/unit/agent_fakes.py`: a scripted `FakeModelClient` and in-process k8s-mcp and
 aws-mcp fakes. No test calls the Anthropic API or needs `ANTHROPIC_API_KEY`.

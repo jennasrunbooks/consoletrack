@@ -18,12 +18,11 @@ from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 
 from app.agents.prompts import render
-from app.agents.runner import AgentRunner, RunResult
+from app.agents.runner import AgentRunner
 from app.agents.schema import SubmitAnalysis
 from app.agents.tools import Toolbox, ToolsUnavailable
-from app.db.models import AgentRunRow
 from app.db.repositories import UnitOfWork
-from app.enums import AgentRunOutcome, SubjectType
+from app.enums import SubjectType
 from app.services import triage
 from app.services.policy_gate import GateDecision, PolicyGate
 from app.services.triage import TriageClaim
@@ -99,7 +98,12 @@ class IncidentTriage:
                 )
         except ToolsUnavailable as exc:
             log.error("triage incident=%s: tools unavailable: %s", claim.incident_id, exc)
-            result = self._failed_run(claim.incident_id, model, f"tools unavailable: {exc}")
+            result = self._runner.failed_start(
+                subject_type=SubjectType.incident,
+                subject_id=claim.incident_id,
+                model=model,
+                detail=f"tools unavailable: {exc}",
+            )
         with self._uow_factory() as uow:
             remediation = triage.record_triage(
                 uow,
@@ -126,31 +130,3 @@ class IncidentTriage:
             decision.policy,
         )
         return decision
-
-    def _failed_run(self, incident_id: int, model: str, detail: str) -> RunResult:
-        """A run row for a run that couldn't start, so the incident shows why."""
-        now = self._clock()
-        with self._uow_factory() as uow:
-            row = uow.agent_runs.add(
-                AgentRunRow(
-                    subject_type=SubjectType.incident,
-                    subject_id=incident_id,
-                    model=model,
-                    started_at=now,
-                    finished_at=now,
-                    input_tokens=0,
-                    output_tokens=0,
-                    outcome=AgentRunOutcome.failed,
-                )
-            )
-            uow.commit()
-            run_id = row.id
-        return RunResult(
-            run_id=run_id,
-            outcome=AgentRunOutcome.failed,
-            analysis=None,
-            detail=detail,
-            tool_calls=0,
-            input_tokens=0,
-            output_tokens=0,
-        )

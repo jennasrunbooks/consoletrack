@@ -146,6 +146,36 @@ class AgentRunner:
             output_tokens=run.output_tokens,
         )
 
+    def failed_start(
+        self, *, subject_type: SubjectType, subject_id: int, model: str, detail: str
+    ) -> RunResult:
+        """Record a run that couldn't start (no tools), so the subject shows why."""
+        now = self._clock()
+        with self._uow_factory() as uow:
+            row = uow.agent_runs.add(
+                AgentRunRow(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    model=model,
+                    started_at=now,
+                    finished_at=now,
+                    input_tokens=0,
+                    output_tokens=0,
+                    outcome=AgentRunOutcome.failed,
+                )
+            )
+            uow.commit()
+            run_id = row.id
+        return RunResult(
+            run_id=run_id,
+            outcome=AgentRunOutcome.failed,
+            analysis=None,
+            detail=detail,
+            tool_calls=0,
+            input_tokens=0,
+            output_tokens=0,
+        )
+
 
 class _Run:
     """One run's state. Each database write is its own short unit of work."""

@@ -43,12 +43,13 @@ async def test_loop_survives_errors_and_touches_the_heartbeat(tmp_path: Path) ->
     assert heartbeat.exists()
 
 
-def test_build_triage_needs_a_database() -> None:
+def test_build_agents_needs_a_database() -> None:
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
-        worker.build_triage(Settings(database_url=None))
+        worker.build_agents(Settings(database_url=None))
 
 
-def test_build_triage_wires_the_manual_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_agents_wires_the_manual_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
-    triage = worker.build_triage(Settings(database_url="postgresql+psycopg://u:p@127.0.0.1:1/db"))
-    assert type(triage._gate).__name__ == "ManualPolicyGate"
+    agents = worker.build_agents(Settings(database_url="postgresql+psycopg://u:p@127.0.0.1:1/db"))
+    assert type(agents.triage._gate).__name__ == "ManualPolicyGate"
+    assert agents.changes is not None

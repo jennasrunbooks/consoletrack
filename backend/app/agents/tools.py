@@ -123,18 +123,35 @@ class Toolbox:
 
 @asynccontextmanager
 async def open_toolbox(settings: Settings) -> AsyncIterator[Toolbox]:
-    """Connect to k8s-mcp (required) and aws-mcp (optional) for one run."""
+    """Incident triage: k8s-mcp (required) and aws-mcp (optional) for one run."""
     if not settings.k8s_mcp_url:
         raise ToolsUnavailable("K8S_MCP_URL is not set")
+    async with _toolbox(settings, include_k8s=True) as toolbox:
+        yield toolbox
+
+
+@asynccontextmanager
+async def open_aws_toolbox(settings: Settings) -> AsyncIterator[Toolbox]:
+    """Change analysis: aws-mcp only, and optional. Without it the agent works from the
+    change record alone."""
+    async with _toolbox(settings, include_k8s=False) as toolbox:
+        yield toolbox
+
+
+@asynccontextmanager
+async def _toolbox(settings: Settings, *, include_k8s: bool) -> AsyncIterator[Toolbox]:
     timeout = settings.mcp_call_timeout_seconds
     async with AsyncExitStack() as stack:
-        try:
-            k8s = await stack.enter_async_context(
-                McpToolProvider(K8S_MCP, settings.k8s_mcp_url, timeout=timeout)
-            )
-        except Exception as exc:
-            raise ToolsUnavailable(f"{K8S_MCP} unreachable: {type(exc).__name__}") from exc
-        providers: list[ToolProvider] = [k8s]
+        providers: list[ToolProvider] = []
+        if include_k8s:
+            try:
+                providers.append(
+                    await stack.enter_async_context(
+                        McpToolProvider(K8S_MCP, settings.k8s_mcp_url, timeout=timeout)
+                    )
+                )
+            except Exception as exc:
+                raise ToolsUnavailable(f"{K8S_MCP} unreachable: {type(exc).__name__}") from exc
         if settings.aws_mcp_url:
             try:
                 providers.append(
@@ -144,5 +161,5 @@ async def open_toolbox(settings: Settings) -> AsyncIterator[Toolbox]:
                 )
             except Exception as exc:
                 log.warning("aws-mcp unreachable, continuing without AWS tools: %s", exc)
-        toolbox = Toolbox(providers, aws_available=len(providers) > 1)
+        toolbox = Toolbox(providers, aws_available=any(p.name == AWS_MCP for p in providers))
         yield await toolbox.load()
