@@ -63,6 +63,8 @@ spec:
             {{- if $f.oom }}
             - name: DEMO_ALLOCATE_MI
               value: {{ $f.allocateMi | quote }}
+            - name: DEMO_ALLOCATE_DELAY_SECONDS
+              value: {{ $f.allocateDelaySeconds | quote }}
             {{- end }}
           livenessProbe:
             httpGet:

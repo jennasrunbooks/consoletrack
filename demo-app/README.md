@@ -7,11 +7,13 @@ The workload the scenarios break, and the traffic generator that notices: one Py
 
 | `DEMO_MODE` | Serves on `PORT` (8080) | Settings |
 | --- | --- | --- |
-| `server` (default) | `GET /` (the work), `/healthz`, `/metrics` | `DEMO_ALLOCATE_MI`, `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, `AWS_REGION` |
+| `server` (default) | `GET /` (the work), `/healthz`, `/metrics` | `DEMO_ALLOCATE_MI`, `DEMO_ALLOCATE_DELAY_SECONDS` (3), `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, `AWS_REGION` |
 | `loadgen` | `/healthz`, `/metrics` | `LOADGEN_TARGET` (`http://demo-app.demo:8080/`), `LOADGEN_RPS` (5), `LOADGEN_TIMEOUT_SECONDS` (1) |
 
 **Server.** `DEMO_ALLOCATE_MI` allocates that many MiB at startup, writes to every page so it is
-resident, and holds it, before the server listens: that makes the OOM fault deterministic. With
+resident, and holds it, before the server listens: that makes the OOM fault deterministic. It
+waits `DEMO_ALLOCATE_DELAY_SECONDS` (3) first, because a container killed within about a second
+of starting can be reported as `Error` (exit 137) instead of `OOMKilled`. With
 `DEMO_BUCKET` set, every `GET /` reads `s3://$DEMO_BUCKET/$DEMO_OBJECT_KEY` through the SDK's
 default credential chain (Pod Identity on EKS) and answers 503 with the error code
 (`AccessDenied`, `NoCredentialsError`) when it can't, logging it for the triage agent; `/healthz`

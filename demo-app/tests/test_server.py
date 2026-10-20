@@ -35,18 +35,57 @@ def test_allocate_is_resident() -> None:
     del buf
 
 
+def no_sleep(_: float) -> None:
+    pass
+
+
 def test_allocation_is_held_and_reported() -> None:
-    app, httpd = server.build(Config(port=0, allocate_mi=4), host="127.0.0.1")
+    app, httpd = server.build(Config(port=0, allocate_mi=4), host="127.0.0.1", sleep=no_sleep)
     assert app.held is not None and len(app.held) == 4 * MIB
     with serving(httpd) as url:
         _, metrics = get(f"{url}/metrics")
     assert "demo_app_allocated_bytes 4.194304e+06" in metrics
 
 
+def test_waits_then_allocates_then_listens(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Allocating a few seconds in makes the kubelet report OOMKilled, not Error; listening last
+    # means the faulted pod is never Ready.
+    order: list[tuple] = []
+    real_allocate, real_make_server = server.allocate, server.make_server
+
+    def allocate(mib: int) -> bytearray:
+        order.append(("allocate", mib))
+        return real_allocate(mib)
+
+    def make_server(*args: object):
+        order.append(("listen",))
+        return real_make_server(*args)
+
+    monkeypatch.setattr(server, "allocate", allocate)
+    monkeypatch.setattr(server, "make_server", make_server)
+    _, httpd = server.build(
+        Config(port=0, allocate_mi=1, allocate_delay_seconds=2.5),
+        host="127.0.0.1",
+        sleep=lambda seconds: order.append(("wait", seconds)),
+    )
+    httpd.server_close()
+    assert order == [("wait", 2.5), ("allocate", 1), ("listen",)]
+
+
+def test_default_delay_is_three_seconds() -> None:
+    waits: list[float] = []
+    _, httpd = server.build(Config(port=0, allocate_mi=1), host="127.0.0.1", sleep=waits.append)
+    httpd.server_close()
+    assert waits == [3.0]
+
+
 def test_no_allocation_by_default() -> None:
-    app, httpd = server.build(Config(port=0), host="127.0.0.1")
+    waits: list[float] = []
+    app, httpd = server.build(Config(port=0), host="127.0.0.1", sleep=waits.append)
     httpd.server_close()
     assert app.held is None
+    # No fault, no wait: a normal start listens straight away.
+    assert waits == []
 
 
 def test_serves_without_aws_when_bucket_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:

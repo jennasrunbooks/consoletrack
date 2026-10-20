@@ -40,6 +40,7 @@ def test_normal_sizing() -> None:
     assert app["resources"]["limits"]["memory"] == "256Mi"
     assert app["resources"]["requests"]["memory"] == "128Mi"
     assert "DEMO_ALLOCATE_MI" not in env(app)
+    assert "DEMO_ALLOCATE_DELAY_SECONDS" not in env(app)
 
 
 def test_oom_fault() -> None:
@@ -47,6 +48,12 @@ def test_oom_fault() -> None:
     assert app["resources"]["limits"]["memory"] == "128Mi"
     assert app["resources"]["requests"]["memory"] == "128Mi"
     assert env(app)["DEMO_ALLOCATE_MI"] == "128"
+    assert env(app)["DEMO_ALLOCATE_DELAY_SECONDS"] == "3"
+
+
+def test_oom_fault_delay_is_a_value() -> None:
+    app = render(faults={"oom": True, "allocateDelaySeconds": 5})["demo-app"]
+    assert env(app)["DEMO_ALLOCATE_DELAY_SECONDS"] == "5"
 
 
 def test_oom_fix_fits_the_policy_bounds() -> None:

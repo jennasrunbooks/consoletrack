@@ -13,8 +13,10 @@ MODES = ("server", "loadgen")
 class Config:
     mode: str = "server"
     port: int = 8080
-    # Server: MiB to allocate, touch, and hold at startup (the OOM fault).
+    # Server: MiB to allocate, touch, and hold at startup (the OOM fault), after waiting
+    # allocate_delay_seconds. Only used when allocate_mi is set.
     allocate_mi: int = 0
+    allocate_delay_seconds: float = 3.0
     # Server: the object GET / reads. An empty bucket means no S3 read and no AWS calls (kind).
     bucket: str = ""
     object_key: str = "seed.txt"
@@ -49,6 +51,7 @@ def load(env: Mapping[str, str] | None = None) -> Config:
         mode=mode,
         port=_number(env, "PORT", int, 8080, 1),
         allocate_mi=_number(env, "DEMO_ALLOCATE_MI", int, 0, 0),
+        allocate_delay_seconds=_number(env, "DEMO_ALLOCATE_DELAY_SECONDS", float, 3.0, 0),
         bucket=env.get("DEMO_BUCKET", "").strip(),
         object_key=env.get("DEMO_OBJECT_KEY", "").strip() or "seed.txt",
         region=env.get("AWS_REGION", "").strip(),

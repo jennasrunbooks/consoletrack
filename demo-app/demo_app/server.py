@@ -8,6 +8,7 @@ chain (Pod Identity on EKS) and answers 503 when it can't: the identity scenario
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 
 from prometheus_client import CollectorRegistry, Counter, Gauge
@@ -96,10 +97,28 @@ class App:
         return response
 
 
-def build(config: Config, *, reader: Reader | None = None, host: str = "0.0.0.0"):
-    """Allocate first, then listen: with the OOM fault the container dies before it is Ready."""
-    held = allocate(config.allocate_mi) if config.allocate_mi else None
-    if held is not None:
+def build(
+    config: Config,
+    *,
+    reader: Reader | None = None,
+    host: str = "0.0.0.0",
+    sleep: Callable[[float], None] = time.sleep,
+):
+    """Wait, allocate, then listen: with the OOM fault the container dies before it is Ready.
+
+    The wait comes first because a process killed within about a second of starting can be
+    reported as `Error` (exit 137) instead of `OOMKilled`: the kernel kill races containerd's OOM
+    report. A few seconds in, the kubelet reports `OOMKilled` every time.
+    """
+    held = None
+    if config.allocate_mi:
+        log.info(
+            "allocating %d MiB in %gs (DEMO_ALLOCATE_MI)",
+            config.allocate_mi,
+            config.allocate_delay_seconds,
+        )
+        sleep(config.allocate_delay_seconds)
+        held = allocate(config.allocate_mi)
         log.info("allocated and holding %d MiB", config.allocate_mi)
     if reader is None and config.bucket:
         reader = s3_reader(config.bucket, config.object_key, config.region)

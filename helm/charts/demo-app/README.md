@@ -16,7 +16,7 @@ policy, the bucket, the security group, and the `demo:demo-app` Pod Identity ass
 | ServiceAccount, Deployment, Service, ServiceMonitor `demo-app-loadgen` (`loadgen.enabled`, default on) | The traffic generator (`DEMO_MODE=loadgen`): `GET http://demo-app.demo:8080/` at `loadgen.rps` (5) with a `loadgen.timeoutSeconds` (1s) timeout, exporting `demo_client_requests_total{result="ok\|http_error\|conn_error\|timeout"}`, scraped every 15s. No token, no Pod Identity; the faults never change it |
 
 The image reads `PORT`, `AWS_REGION`, `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, and, with the OOM fault,
-`DEMO_ALLOCATE_MI`. An empty `DEMO_BUCKET` (kind) means no S3 read and no AWS calls.
+`DEMO_ALLOCATE_MI` and `DEMO_ALLOCATE_DELAY_SECONDS`. An empty `DEMO_BUCKET` (kind) means no S3 read and no AWS calls.
 
 ## The user-impact alert
 
@@ -45,7 +45,7 @@ down (with a rolling update the old pod would keep serving behind the faulted on
 
 | Value | Effect | Expected fix |
 |---|---|---|
-| `faults.oom` | Memory request and limit both drop to `oomMemoryLimit` (128Mi; normally 128Mi request, 256Mi limit) and the app allocates and holds `allocateMi` (128) before it listens: ~150 MiB used on kind, ~175 MiB on EKS (boto3 loaded), so it's OOMKilled on every start | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling, ~80 MiB headroom) |
+| `faults.oom` | Memory request and limit both drop to `oomMemoryLimit` (128Mi; normally 128Mi request, 256Mi limit) and the app waits `allocateDelaySeconds` (3), then allocates and holds `allocateMi` (128) before it listens: ~150 MiB used on kind, ~175 MiB on EKS (boto3 loaded), so it's OOMKilled on every start | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling, ~80 MiB headroom) |
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
 | `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Rollout undo (the agent's `rollback`); fixing the probe path also works |
 
