@@ -10,6 +10,10 @@
 #   scripts/local-kind.sh alerts    after it: the backend's webhook token and the
 #                                   AlertmanagerConfig, then a check that Alertmanager reaches
 #                                   the Compose backend
+#   scripts/local-kind.sh fault oom|badImage|badProbe|off
+#                                   turn one demo-app fault on, or all off (`make local-fault`)
+#   scripts/local-kind.sh incidents the incidents, with the agent's root cause and proposal, from
+#                                   the local API (`make local-incidents`)
 #
 # Only kube-prometheus-stack and demo-app are installed. Compose provides Postgres (so no
 # CloudNativePG), the backend and dashboard (so no consoletrack release, Gateway API CRDs, or
@@ -161,8 +165,59 @@ alerts() {
 	fi
 }
 
+# demoFault also turns off Helmfile's wait and atomic for this sync (helm/helmfile.yaml.gotmpl): a
+# faulted pod never becomes Ready, and the rollback after the timeout would undo the fault. `off`
+# syncs without it, which resets demo-app to its normal values.
+fault() {
+	local args=()
+	case "${1:-}" in
+	oom | badImage | badProbe) args=(--state-values-set "demoFault=$1") ;;
+	off) ;;
+	*) die "usage: make local-fault FAULT=oom|badImage|badProbe|off" ;;
+	esac
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-fault\` (HELM_DRIVER=configmap)"
+	# ${args[@]+...}: an empty array under set -u fails in macOS's bash 3.2.
+	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
+		-l name=demo-app sync ${args[@]+"${args[@]}"}
+	if [ "$1" = off ]; then
+		echo "local-kind: fault off; the alert resolves and its incident follows in about 3 minutes"
+	else
+		echo "local-kind: $1 on; expect an incident in about 4 minutes (make local-incidents)"
+	fi
+}
+
+# Until the dashboard's Incidents page lands: log in as admin with the generated local password
+# (never printed) and show each incident with the agent's analysis and proposal.
+incidents() {
+	local pw jar base id
+	for tool in curl jq; do
+		command -v "$tool" >/dev/null || die "$tool is not installed"
+	done
+	pw=$($compose exec -T backend cat /run/consoletrack/admin-password 2>/dev/null) ||
+		die "no generated admin password (ADMIN_PASSWORD_HASH is set); log in to the dashboard instead"
+	base=http://localhost:${DASHBOARD_PORT:-8080}
+	jar=$(mktemp)
+	jq -n --arg p "$pw" '{username: "admin", password: $p}' |
+		curl -fsS -c "$jar" -o /dev/null -H 'Content-Type: application/json' --data @- \
+			"$base/api/v1/auth/login" || {
+		rm -f "$jar"
+		die "login failed at $base"
+	}
+	for id in $(curl -fsS -b "$jar" "$base/api/v1/incidents?page_size=100" | jq -r '.items[].id'); do
+		curl -fsS -b "$jar" "$base/api/v1/incidents/$id" | jq '{
+			id, alertname, workload, status, opened_at, resolved_at,
+			root_cause: .analysis.root_cause, confidence: .analysis.confidence,
+			agent_run: (.analysis.agent_run | if . then {model, tool_calls, outcome} else null end),
+			proposal: (.remediation | if . then {kind, status, payload} else null end)
+		}'
+	done
+	rm -f "$jar"
+}
+
 case "${1:-}" in
 cluster) cluster_up ;;
 alerts) alerts ;;
-*) die "usage: $0 cluster|alerts" ;;
+fault) fault "${2:-}" ;;
+incidents) incidents ;;
+*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents" ;;
 esac

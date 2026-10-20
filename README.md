@@ -81,7 +81,7 @@ Full design: [product-spec.md](product-spec.md) · API: [openapi.yaml](openapi.y
 
 Everything except the live AWS intake and Revert runs on your laptop: the UI, API, database, agent loop, cluster faults on kind, and a replay of recorded CloudTrail events.
 
-Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm 4, [Helmfile](https://helmfile.readthedocs.io/), `make`, and an Anthropic API key. Give Docker at least 4 CPUs and 8 GB of memory.
+Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm 4, [Helmfile](https://helmfile.readthedocs.io/), `make`, `curl`, `jq`, and an Anthropic API key. Give Docker at least 4 CPUs and 8 GB of memory. The helm-diff plugin isn't needed locally.
 
 ```bash
 git clone https://github.com/jennasrunbooks/consoletrack.git
@@ -89,11 +89,43 @@ cd consoletrack
 cp .env.example .env
 export ANTHROPIC_API_KEY=...   # or keep it in a password manager: op run --env-file=.env -- make local
 make local                     # a kind cluster with Prometheus and the demo app, then Docker Compose
-make demo-replay               # replays recorded CloudTrail events into the local queue
-# open http://localhost:8080 (DASHBOARD_PORT)
+# open http://localhost:8080 (DASHBOARD_PORT) and log in as admin with the password make local prints
 ```
 
-The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the database volume.
+The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, the replayed CloudTrail change flow, is still a stub (#9).
+
+**Run a fault scenario.** This is the on-call loop end to end on kind. A fault breaks the demo app, and the traffic generator's requests start failing. `DemoAppHighErrorRate` fires and Alertmanager posts it to the backend, which opens an incident. The triage worker then investigates through `k8s-mcp` and the Claude API, and proposes a fix for a human to approve.
+
+```bash
+make local-fault FAULT=oom     # or badImage, badProbe; one at a time
+make local-incidents           # after ~4 minutes: the incident, the agent's root cause, and its proposal
+make local-fault FAULT=off     # the alert resolves, and the incident with it, ~3 minutes later
+make local-incidents           # status: resolved
+```
+
+| `FAULT` | What breaks | The agent should propose |
+| --- | --- | --- |
+| `oom` | The memory limit drops to 128Mi and the app allocates more: OOMKilled, CrashLoopBackOff | `set_memory_limit` to 256Mi (tested on kind) |
+| `badImage` | An image tag that doesn't exist: ImagePullBackOff | `rollback` to the previous revision |
+| `badProbe` | Probes on a path the app doesn't serve: never Ready | `rollback` to the previous revision |
+
+Proposals wait for a human: every policy ships `manual`. The dashboard's Incidents page, where you'd approve one, is still to come; until then `make local-incidents` shows incidents from the API. Each triage is one agent run on `TRIAGE_MODEL`, Haiku by default. On kind it took 8 tool calls and about 35k input tokens, a few cents.
+
+`make local-fault` runs Helmfile's `demoFault` state value on the `demo-app` release. A faulted pod never becomes Ready, so `demoFault` also turns off Helmfile's wait and atomic rollback for that sync, which would otherwise undo the fault after the timeout. Don't use `--set faults.oom=true` for this. Run Helmfile outside `make` only with `HELM_DRIVER=configmap`.
+
+**Timings on a laptop (Apple silicon, first run).** The kind cluster was ready in about 20s. Compose was healthy about 12s after the images were built. kube-prometheus-stack takes a few minutes on the first pull, and reruns reuse the cluster. After `FAULT=oom`, the incident opened about 4 minutes later: a 2-minute rate window, 1 minute `for`, and Alertmanager's 30s group wait. Triage finished about 20s after that.
+
+**If no incident appears.** Check each step of the path in order. Port-forward Prometheus and Alertmanager first:
+
+```bash
+kubectl --context kind-consoletrack -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090 &
+kubectl --context kind-consoletrack -n monitoring port-forward svc/kube-prometheus-stack-alertmanager 9093 &
+```
+
+1. http://localhost:9090/alerts: `DemoAppHighErrorRate` in the `demo-app` group should be pending, then firing. If it stays inactive, query `sum by (result) (rate(demo_client_requests_total[2m]))`. Only `ok` means the fault isn't serving errors: is only the faulted pod running (`kubectl --context kind-consoletrack -n demo get pods`)?
+2. http://localhost:9093: the alert should be routed to `consoletrack/consoletrack/consoletrack-backend`.
+3. `docker compose logs backend | grep alerts/webhook` should show `202 Accepted`. A `401` means the webhook token is out of sync; rerun `make local`.
+4. `docker compose logs worker` shows the triage run.
 
 **What runs today.** `make local` runs [scripts/local-kind.sh](scripts/local-kind.sh) around the Compose stack:
 
@@ -110,20 +142,7 @@ The intake indicator shows **Replay**, and Revert and Codify are disabled with "
 
 CloudNativePG, the Gateway API CRDs, and the `consoletrack` release aren't installed in kind, because Compose runs Postgres, the backend, and the dashboard. Every `kubectl`, `helm`, and `helmfile` call names the `kind-consoletrack` context, so your current context is never used. `LOCAL_KIND=false make local` starts the Compose stack alone.
 
-**Break the demo app on kind.** Turn on one fault and watch the alert become an incident. `DemoAppHighErrorRate` fires once more than 5% of the traffic generator's requests have failed for a minute, so give it about 3 minutes. Then turn the fault off again:
-
-```bash
-# On: oom, badImage, or badProbe
-HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
-  -l name=demo-app sync --state-values-set demoFault=oom
-# Off: the same without demoFault (Helmfile resets demo-app to its normal values)
-HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
-  -l name=demo-app sync
-```
-
-Use `demoFault`, not `--set faults.oom=true`. A faulted pod never becomes Ready, and with `demoFault` set, Helmfile skips the wait and the atomic rollback that would otherwise undo the fault after the timeout. `HELM_DRIVER=configmap` is required whenever you run Helmfile outside `make`.
-
-On a fresh machine, expect a few minutes for image builds and kube-prometheus-stack; reruns are faster. Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the worker's change intake, `make demo-replay`, and `aws-mcp` (#9).
+Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the worker's change intake, `make demo-replay`, and `aws-mcp` (#9).
 
 **Logging in.** There are two fixed accounts, `admin` (can act) and `viewer` (read-only). Locally you can skip the setup below: if `.env` sets no `ADMIN_PASSWORD_HASH`, Compose generates an admin password on first start and `make local` prints it, and it generates the `SESSION_SECRET` the same way. Both live in a Docker volume until `make local-down`. Otherwise, run `make hash-password` once per account and paste each output into `.env` as `ADMIN_PASSWORD_HASH` and `VIEWER_PASSWORD_HASH`; it prints an argon2id hash with every `$` doubled, which `.env` needs because make reads it. Start the stack with `make local` rather than a bare `docker compose up`, so the hash reaches Compose already un-doubled. An account with no hash can't log in. The backend also needs a `SESSION_SECRET` of at least 32 bytes and refuses to start without one. Five failed logins for one username, or from one address, within five minutes lock further attempts for five minutes (`429`).
 

@@ -47,11 +47,12 @@ down (with a rolling update the old pod would keep serving behind the faulted on
 |---|---|---|
 | `faults.oom` | Memory request and limit both drop to `oomMemoryLimit` (128Mi; normally 128Mi request, 256Mi limit) and the app allocates and holds `allocateMi` (128) before it listens: ~150 MiB used on kind, ~175 MiB on EKS (boto3 loaded), so it's OOMKilled on every start | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling, ~80 MiB headroom) |
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
-| `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Fix the probe path |
+| `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Rollout undo (the agent's `rollback`); fixing the probe path also works |
 
-Turn one on through Helmfile's `demoFault` state value, which also skips the wait and atomic
-rollback that would otherwise undo it (a faulted pod never becomes Ready), and turn it off with
-the same sync without it:
+On kind, run `make local-fault FAULT=oom|badImage|badProbe|off` (README → Try it without AWS).
+It sets Helmfile's `demoFault` state value, which also skips the wait and atomic rollback that
+would otherwise undo the fault, because a faulted pod never becomes Ready. Syncing without
+`demoFault` turns the fault off. The raw commands, for EKS with `-e eks`:
 
 ```bash
 HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-context kind-consoletrack \
@@ -60,4 +61,3 @@ HELM_DRIVER=configmap helmfile -f helm/helmfile.yaml.gotmpl -e local --kube-cont
   -l name=demo-app sync                                     # off
 ```
 
-On EKS, a human runs the same with `-e eks` (the `break-demo` skill does it on kind).

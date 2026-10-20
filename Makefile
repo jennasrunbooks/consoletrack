@@ -138,7 +138,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -437,6 +437,12 @@ ifeq ($(LOCAL_KIND),true)
 	@echo "make $@: kind context kind-$(LOCAL_CLUSTER); Grafana: kubectl --context kind-$(LOCAL_CLUSTER)" \
 		"-n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80"
 endif
+
+local-fault: ## Turn a demo-app fault on in kind (FAULT=oom|badImage|badProbe), or off (FAULT=off)
+	scripts/local-kind.sh fault $(FAULT)
+
+local-incidents: ## Local incidents with the agent's root cause and proposal (until the dashboard's Incidents page)
+	scripts/local-kind.sh incidents
 
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
 	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(LOCAL_CLUSTER); then \
