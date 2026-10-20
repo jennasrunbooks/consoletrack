@@ -10,7 +10,7 @@ import pytest
 
 from app.agents.model import ModelError
 from app.agents.schema import TOOL_NAME
-from app.agents.smoke import CANNED, NUDGE, build_request, report, run_smoke
+from app.agents.smoke import CANNED, NUDGE, build_request, key_hint, report, run_smoke
 from app.settings import Settings
 from tests.unit.agent_fakes import FakeModelClient, call, submit, turn
 
@@ -96,3 +96,31 @@ async def test_an_api_rejection_shows_the_api_message() -> None:
     result = await run_smoke(FakeModelClient([error]), K8S_TOOLS, SETTINGS)
     assert not result.ok
     assert "unsupported keyword" in result.message
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        (None, "is empty"),
+        ('"sk-ant-api03-abc"', "wrapped in quotes"),
+        ("sk-ant-api03-abc\r", "whitespace"),
+        ("op-session-abc", "doesn't start with sk-ant-"),
+        ("sk-ant-api03-abc", "looks well-formed"),
+    ],
+)
+def test_key_hint_describes_the_shape_never_the_value(key: str | None, expected: str) -> None:
+    hint = key_hint(key)
+    assert expected in hint
+    assert "api03-abc" not in hint
+
+
+async def test_an_auth_error_adds_the_key_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", '"sk-ant-api03-secretvalue"')
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    error = ModelError("Anthropic API error 401")
+    error.__cause__ = anthropic.AuthenticationError(
+        "invalid x-api-key", response=httpx2.Response(401, request=request), body=None
+    )
+    result = await run_smoke(FakeModelClient([error]), K8S_TOOLS, SETTINGS)
+    assert "wrapped in quotes" in result.message
+    assert "secretvalue" not in result.message

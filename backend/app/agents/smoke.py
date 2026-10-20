@@ -15,12 +15,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import anthropic
 from pydantic import ValidationError
 
 from app.agents.model import AnthropicClient, ModelClient, ModelError, ModelTurn
@@ -121,6 +123,27 @@ NUDGE = (
 )
 
 
+def key_hint(key: str | None) -> str:
+    """What's wrong with the key's shape, never its value. Make keeps quotes from .env
+    (`KEY="sk-ant-..."`) as part of the value, which Compose and most shells would strip."""
+    if not key:
+        return "ANTHROPIC_API_KEY is empty"
+    problems = []
+    if key[0] in "'\"" or key[-1] in "'\"":
+        problems.append("it is wrapped in quotes (write KEY=value in .env, no quotes)")
+    if key != key.strip():
+        problems.append("it has leading or trailing whitespace (or a CR from a Windows file)")
+    if not key.strip().strip("'\"").startswith("sk-ant-"):
+        problems.append("it doesn't start with sk-ant-")
+    shape = f"ANTHROPIC_API_KEY is {len(key)} characters"
+    if problems:
+        return f"{shape}; {'; '.join(problems)}"
+    return (
+        f"{shape} and looks well-formed: the key itself is wrong, revoked, or from another "
+        "workspace; or a shell export is overriding the one in .env (the shell wins)"
+    )
+
+
 def build_request(k8s_tools: list[dict[str, Any]], settings: Settings) -> dict[str, Any]:
     """The request the runner would send after one round of tool calls."""
     tool_names = {tool["name"] for tool in k8s_tools}
@@ -172,6 +195,8 @@ async def run_smoke(
     except ModelError as exc:
         cause = exc.__cause__
         detail = f": {cause}" if cause is not None else ""
+        if isinstance(cause, anthropic.AuthenticationError):
+            detail += f"\n  {key_hint(os.environ.get('ANTHROPIC_API_KEY'))}"
         return SmokeResult(False, f"the API rejected the request ({exc}){detail}")
     submits = [call for call in turn.tool_calls if call.name == TOOL_NAME]
     if not submits:
