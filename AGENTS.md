@@ -109,9 +109,15 @@ and the `main` ruleset. Don't try to work around a block — report it.
    touch it are rejected. Put the proposed file in `docs/proposed-workflows/<name>.yaml` and say in
    the PR that a human needs to move it.
 5. **Never commit to `main`.** Work on a branch, open a PR, and wait for review. Never merge your own
-   PR, change rulesets, environments, or repo settings.
+   PR, change rulesets, environments, or repo settings. **Keep your branch up to date by merging, never
+   rebasing:** when `main` moves or the PR shows conflicts, run `git fetch origin && git merge origin/main`,
+   resolve the conflicts, run `make lint` and `make test`, commit, and `git push` (a normal push). PRs are
+   squash-merged, so merge commits never reach `main`. Rebasing a pushed branch needs a force push, which
+   the guard hook blocks; if you've already rebased locally, go back to the pushed branch first
+   (`git switch -C <branch> origin/<branch>`) and merge instead.
 6. **The MCP servers stay read-only.** Any new `k8s-mcp` or `aws-mcp` tool must be a read/list/describe
-   call, must be added to the tool table in `product-spec.md`, and must come with the matching
+   call, must be listed in the PR description for Jenna to add to the tool table in `product-spec.md`
+   (agents don't edit the spec; it's exported from her doc), and must come with the matching
    least-privilege IAM or RBAC change in the same PR.
 7. **The triage agent never applies anything.** Cluster remediation goes through the policy gate
    (manual by default); AWS-side changes always go through Revert or Codify with human approval.

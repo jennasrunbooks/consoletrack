@@ -1,5 +1,19 @@
+# PROPOSED: a human needs to move this to .github/workflows/ci.yaml, replacing the current file.
+# (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
+#
+# This is an exact copy of the current .github/workflows/ci.yaml (as of #46) plus two new jobs.
+# Neither is meant to be a required check yet, so the ruleset needs no change.
+# - `k8s-mcp-kind` (#10, k8s-mcp PR), at the end: `make test-k8s` against a throwaway kind
+#   cluster with the chart's real k8s-mcp RBAC.
+# - `demo-app-image` (#51), after `frontend-image`: builds the demo app image (amd64, no push),
+#   runs the server and the traffic generator hardened as in the cluster (read-only root, no
+#   capabilities), checks the loadgen's /metrics, and checks the OOM fault's sizing with Docker's
+#   memory limit: 128 MiB allocated is killed under 128m and runs under 256m. Pushing to GHCR
+#   belongs to deploy.yaml. `lint` and `test` need no change: `make lint` and `make test` now
+#   include lint-demo-app and test-demo-app, which use uv (already set up in both jobs).
+#
 # CI for every PR and push to main. Required checks (main ruleset): lint, test, terraform-fmt.
-# Not required: frontend-image (amd64 build + /healthz), e2e (Playwright in Chromium).
+# Not required: frontend-image and demo-app-image (amd64 builds), e2e (Playwright in Chromium).
 # `test` runs with SKIP_E2E=1 so the browser tests run once, in `e2e`.
 #
 # Changes from the current .github/workflows/ci.yaml (#13, frontend PR 1):
@@ -139,6 +153,57 @@ jobs:
           curl -fsS http://localhost:8080/changes | grep -q '<div id="root">'
           test "$(docker inspect -f '{{.Config.User}}' consoletrack-frontend:ci)" = "101"
 
+  # Not a required check: builds the demo app image (amd64, no push) and runs both modes the way
+  # helm/charts/demo-app does. The arm64 build and push belong to the deploy pipeline.
+  demo-app-image:
+    name: demo-app-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      IMAGE: consoletrack-demo-app:ci
+      HARDENED: --read-only --cap-drop ALL --security-opt no-new-privileges:true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t "$IMAGE" demo-app/
+      - name: Image size, user, and base
+        run: |
+          test "$(docker inspect -f '{{.Config.User}}' "$IMAGE")" = "10001"
+          docker image inspect -f 'size: {{.Size}} bytes' "$IMAGE"
+          grep -m1 '^FROM python' demo-app/Dockerfile
+      - name: Server and traffic generator, no AWS (DEMO_BUCKET empty)
+        run: |
+          docker network create demo
+          # shellcheck disable=SC2086 # HARDENED is a list of flags
+          docker run -d --name demo-app --network demo $HARDENED "$IMAGE"
+          # shellcheck disable=SC2086
+          docker run -d --name loadgen --network demo -p 8081:8080 $HARDENED \
+            -e DEMO_MODE=loadgen -e LOADGEN_TARGET=http://demo-app:8080/ "$IMAGE"
+          for i in $(seq 1 20); do curl -fsS http://localhost:8081/healthz && break; sleep 1; done
+          sleep 3
+          metrics=$(curl -fsS http://localhost:8081/metrics)
+          echo "$metrics" | grep '^demo_client_requests_total'
+          echo "$metrics" | grep -Eq '^demo_client_requests_total\{result="ok"\} [1-9]'
+          echo "$metrics" | grep -Eq '^demo_client_requests_total\{result="http_error"\} 0'
+      - name: OOM fault sizing (128 MiB held)
+        run: |
+          # The faulted limit: killed at startup.
+          # shellcheck disable=SC2086
+          docker run --name oom --memory 128m --memory-swap 128m $HARDENED \
+            -e DEMO_ALLOCATE_MI=128 "$IMAGE" || true
+          test "$(docker inspect -f '{{.State.OOMKilled}}' oom)" = "true"
+          # The fix, 2x: keeps running.
+          # shellcheck disable=SC2086
+          docker run -d --name fixed --memory 256m --memory-swap 256m -p 8082:8080 $HARDENED \
+            -e DEMO_ALLOCATE_MI=128 "$IMAGE"
+          for i in $(seq 1 20); do curl -fsS http://localhost:8082/healthz && break; sleep 1; done
+          curl -fsS http://localhost:8082/metrics | grep '^demo_app_allocated_bytes'
+          docker stats --no-stream fixed
+      - name: Logs
+        if: failure()
+        run: for c in demo-app loadgen oom fixed; do docker logs "$c" || true; done
+
   # Required check (add it to the ruleset): Postgres through Testcontainers, no secrets.
   integration:
     name: integration
@@ -181,3 +246,26 @@ jobs:
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down --volumes
+
+  # Not a required check (yet): k8s-mcp's tools against a real API server with the RBAC the
+  # consoletrack chart ships (`kubectl auth can-i` denies Secrets, ConfigMaps, exec, and writes).
+  # scripts/test-k8s.sh renders the RBAC with helm and creates and deletes the kind cluster
+  # itself; kind-action only installs kind and kubectl.
+  k8s-mcp-kind:
+    name: k8s-mcp-kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: "v4.3.1"
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          install_only: true
+      - run: make test-k8s
