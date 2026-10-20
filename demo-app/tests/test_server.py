@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -35,69 +36,59 @@ def test_allocate_is_resident() -> None:
     del buf
 
 
-def no_sleep(_: float) -> None:
-    pass
+def get_with(url: str, headers: dict[str, str]) -> int:
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=5) as resp:
+        return resp.status
 
 
-def test_allocation_is_held_and_reported() -> None:
-    app, httpd = server.build(Config(port=0, allocate_mi=4), host="127.0.0.1", sleep=no_sleep)
-    assert app.held is not None and len(app.held) == 4 * MIB
+def cache_bytes(metrics: str) -> float:
+    (line,) = [m for m in metrics.splitlines() if m.startswith("demo_app_report_cache_bytes ")]
+    return float(line.split()[1])
+
+
+def test_large_reports_are_cached() -> None:
+    app, httpd = server.build(Config(port=0, report_mi=1, report_cache_mi=8), host="127.0.0.1")
     with serving(httpd) as url:
+        for _ in range(3):
+            assert get_with(f"{url}/", {"X-Demo-Report": "large"}) == 200
         _, metrics = get(f"{url}/metrics")
-    assert "demo_app_allocated_bytes 4.194304e+06" in metrics
+    assert len(app.cache.reports) == 3
+    assert cache_bytes(metrics) == 3 * MIB
 
 
-def test_waits_then_allocates_then_listens(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The kill comes a few seconds after start; listening last means the faulted pod is never
-    # Ready.
-    order: list[tuple] = []
-    real_allocate, real_make_server = server.allocate, server.make_server
-
-    def allocate(mib: int) -> bytearray:
-        order.append(("allocate", mib))
-        return real_allocate(mib)
-
-    def make_server(*args: object):
-        order.append(("listen",))
-        return real_make_server(*args)
-
-    monkeypatch.setattr(server, "allocate", allocate)
-    monkeypatch.setattr(server, "make_server", make_server)
-    _, httpd = server.build(
-        Config(port=0, allocate_mi=1, allocate_delay_seconds=2.5),
-        host="127.0.0.1",
-        sleep=lambda seconds: order.append(("wait", seconds)),
-    )
+def test_the_cache_is_bounded() -> None:
+    # Bounded, so a large enough limit holds it: 256Mi is the scenario's fix.
+    app, httpd = server.build(Config(port=0, report_mi=2, report_cache_mi=7), host="127.0.0.1")
     httpd.server_close()
-    assert order == [("wait", 2.5), ("allocate", 1), ("listen",)]
+    for _ in range(10):
+        app.work({"X-Demo-Report": "large"})
+    assert len(app.cache.reports) == 3  # 7 // 2
+    assert app.registry.get_sample_value("demo_app_report_cache_bytes") == 6 * MIB
 
 
-def test_the_startup_log_does_not_give_the_size_away(caplog: pytest.LogCaptureFixture) -> None:
-    # The triage agent reads the faulted container's log; the size would hand it the answer.
-    caplog.set_level("INFO", logger="demo_app.server")
-    _, httpd = server.build(
-        Config(port=0, allocate_mi=1, allocate_delay_seconds=3), host="127.0.0.1", sleep=no_sleep
-    )
+@pytest.mark.parametrize("headers", [{}, {"X-Demo-Report": "small"}, {"X-Other": "large"}])
+def test_other_requests_cache_nothing(headers: dict[str, str]) -> None:
+    app, httpd = server.build(Config(port=0), host="127.0.0.1")
     httpd.server_close()
-    first = caplog.messages[0]
-    assert first == "allocating memory in 3s"
-    assert "MiB" not in first and "DEMO_ALLOCATE_MI" not in first
+    assert app.work(headers)[0] == 200
+    assert len(app.cache.reports) == 0
 
 
-def test_default_delay_is_three_seconds() -> None:
-    waits: list[float] = []
-    _, httpd = server.build(Config(port=0, allocate_mi=1), host="127.0.0.1", sleep=waits.append)
+def test_default_sizing_outgrows_128mi() -> None:
+    # The scenario's numbers: ~25-50 MiB of app plus a full cache passes a 128Mi limit and fits
+    # in 256Mi with more than 64 MiB to spare.
+    cfg = Config()
+    assert (cfg.report_mi, cfg.report_cache_mi) == (2, 140)
+    assert 25 + cfg.report_cache_mi > 128
+    assert 256 - (50 + cfg.report_cache_mi) >= 64
+
+
+def test_no_cache_means_no_allocation() -> None:
+    app, httpd = server.build(Config(port=0, report_cache_mi=0), host="127.0.0.1")
     httpd.server_close()
-    assert waits == [3.0]
-
-
-def test_no_allocation_by_default() -> None:
-    waits: list[float] = []
-    app, httpd = server.build(Config(port=0), host="127.0.0.1", sleep=waits.append)
-    httpd.server_close()
-    assert app.held is None
-    # No fault, no wait: a normal start listens straight away.
-    assert waits == []
+    app.work({"X-Demo-Report": "large"})
+    assert len(app.cache.reports) == 0
 
 
 def test_serves_without_aws_when_bucket_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,7 +171,7 @@ def test_bucket_builds_a_boto3_client(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     httpd.server_close()
     assert built == [("s3", "us-east-1")]
-    assert app.work()[0] == 200
+    assert app.work({})[0] == 200
 
 
 def test_unknown_path_is_404() -> None:

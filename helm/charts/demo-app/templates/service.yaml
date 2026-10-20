@@ -24,7 +24,7 @@ spec:
       targetPort: http
 {{- if .Values.serviceMonitor.enabled }}
 ---
-# The app's own request, S3 error, and allocation metrics. DemoAppHighErrorRate is built on the
+# The app's own request, S3 error, and report cache metrics. DemoAppHighErrorRate is built on the
 # traffic generator's client-side metrics instead (loadgen.yaml).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

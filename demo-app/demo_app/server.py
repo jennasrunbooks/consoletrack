@@ -3,13 +3,19 @@
 With `DEMO_BUCKET` set, every `GET /` reads one S3 object through the SDK's default credential
 chain (Pod Identity on EKS) and answers 503 when it can't: the identity scenario. With it empty
 (kind), boto3 is never imported, so there are no AWS calls at all.
+
+A `GET /` with `X-Demo-Report: large` also builds a report and keeps it in an in-memory cache,
+`report_mi` MiB each, oldest evicted past `report_cache_mi`. The cache is bounded, but its bound
+is above a 128Mi limit: the OOM scenario, driven by the traffic generator asking for reports, so
+the app's own Deployment never changes (the app outgrew its limit; nothing rolled out).
 """
 
 from __future__ import annotations
 
 import logging
-import time
-from collections.abc import Callable
+import threading
+from collections import deque
+from collections.abc import Callable, Mapping
 
 from prometheus_client import CollectorRegistry, Counter, Gauge
 
@@ -25,12 +31,12 @@ PAGE = 4096
 Reader = Callable[[], bytes]
 
 
-def allocate(mib: int) -> bytearray:
-    """Allocate `mib` MiB and write to every page so it is resident, not just reserved.
+REPORT_HEADER = "X-Demo-Report"
 
-    The caller keeps the result for the life of the process: that held memory is what makes the
-    OOM fault deterministic.
-    """
+
+def allocate(mib: int) -> bytearray:
+    """Allocate `mib` MiB and write to every page so it is resident, not just reserved: memory
+    that is only reserved wouldn't count against the container's limit."""
     buf = bytearray(mib * MIB)
     for i in range(0, len(buf), PAGE):
         buf[i] = 1
@@ -61,26 +67,46 @@ def _error_code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+class ReportCache:
+    """Reports held in memory, oldest evicted once they'd pass `cap_mi`."""
+
+    def __init__(self, report_mi: int, cap_mi: int, registry: CollectorRegistry) -> None:
+        self.report_mi = report_mi
+        self.max_reports = cap_mi // report_mi
+        self.reports: deque[bytearray] = deque()
+        self.lock = threading.Lock()
+        self.size = Gauge(
+            "demo_app_report_cache_bytes", "Bytes held in the report cache", registry=registry
+        )
+
+    def add(self) -> None:
+        if self.max_reports == 0:
+            return
+        report = allocate(self.report_mi)
+        with self.lock:
+            self.reports.append(report)
+            while len(self.reports) > self.max_reports:
+                self.reports.popleft()
+            self.size.set(sum(len(r) for r in self.reports))
+
+
 class App:
     def __init__(
-        self, reader: Reader | None, registry: CollectorRegistry, held: bytearray | None = None
+        self, reader: Reader | None, registry: CollectorRegistry, cache: ReportCache
     ) -> None:
         self.reader = reader
         self.registry = registry
-        self.held = held
+        self.cache = cache
         self.requests = Counter(
             "demo_app_requests", "GET / requests by status code", ["code"], registry=registry
         )
         self.s3_errors = Counter(
             "demo_app_s3_errors", "Failed S3 reads by error code", ["error"], registry=registry
         )
-        Gauge(
-            "demo_app_allocated_bytes",
-            "Memory allocated and held at startup (DEMO_ALLOCATE_MI)",
-            registry=registry,
-        ).set(len(held) if held is not None else 0)
 
-    def work(self) -> Response:
+    def work(self, headers: Mapping[str, str]) -> Response:
+        if headers.get(REPORT_HEADER, "").strip().lower() == "large":
+            self.cache.add()
         if self.reader is None:
             response = text(200, "ok\n")
         else:
@@ -97,30 +123,10 @@ class App:
         return response
 
 
-def build(
-    config: Config,
-    *,
-    reader: Reader | None = None,
-    host: str = "0.0.0.0",
-    sleep: Callable[[float], None] = time.sleep,
-):
-    """Wait, allocate, then listen: with the OOM fault the container dies before it is Ready.
-
-    The wait only sets when the kill comes: a few seconds after start, not at once. It doesn't
-    make the reported reason reliable. On kind the last termination has read `Error` (exit 137)
-    before settling to `OOMKilled`, and once the other way round, so triage treats exit 137 soon
-    after start as a likely OOM whatever the reason says (prompts/system_v2.md).
-    """
-    held = None
-    if config.allocate_mi:
-        # No size here: the faulted container dies before it logs anything else, so this line is
-        # all the triage agent reads, and it has to find the cause from the limit, the exit code,
-        # and the timing (env values are redacted for the same reason).
-        log.info("allocating memory in %gs", config.allocate_delay_seconds)
-        sleep(config.allocate_delay_seconds)
-        held = allocate(config.allocate_mi)
-        log.info("allocated and holding %d MiB", config.allocate_mi)
+def build(config: Config, *, reader: Reader | None = None, host: str = "0.0.0.0"):
     if reader is None and config.bucket:
         reader = s3_reader(config.bucket, config.object_key, config.region)
-    app = App(reader, CollectorRegistry(), held)
-    return app, make_server(config.port, {"/": app.work}, app.registry, host)
+    registry = CollectorRegistry()
+    cache = ReportCache(config.report_mi, config.report_cache_mi, registry)
+    app = App(reader, registry, cache)
+    return app, make_server(config.port, {"/": app.work}, registry, host)

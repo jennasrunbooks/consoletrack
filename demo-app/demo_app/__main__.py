@@ -23,7 +23,13 @@ def main() -> int:
     if cfg.mode == "loadgen":
         gen, httpd = loadgen.build(cfg)
         threading.Thread(target=gen.run, name="loadgen-scheduler", daemon=True).start()
-        log.info("loadgen: %s at %g rps, timeout %gs", cfg.target, cfg.rps, cfg.timeout_seconds)
+        log.info(
+            "loadgen: %s at %g rps, timeout %gs, report %s",
+            cfg.target,
+            cfg.rps,
+            cfg.timeout_seconds,
+            cfg.report or "none",
+        )
     else:
         _, httpd = server.build(cfg)
         log.info("serving on :%d, S3 read %s", cfg.port, "on" if cfg.bucket else "off")
