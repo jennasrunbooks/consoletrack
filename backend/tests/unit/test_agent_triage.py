@@ -482,11 +482,15 @@ async def test_low_confidence_on_a_restart_escalates_once(
         (escalated.id, 1),
         (escalated.id, 2),
     ]
-    # The escalated run's analysis wins: one analysis row, its proposal at the gate.
-    (analysis,) = store.analyses.rows
+    # The escalated run's analysis wins: it's the latest row, and its proposal is at the gate.
+    # The first run's analysis is kept before it, with no proposal of its own.
+    kept, analysis = store.analyses.rows
+    assert (kept.agent_run_id, kept.confidence) == (first.id, Confidence.low)
+    assert kept.summary.startswith("demo-app restarts")
     assert analysis.agent_run_id == escalated.id
     assert analysis.confidence is Confidence.high
     assert [p.memory_limit for _, p in gate.proposals] == ["256Mi"]
+    assert len(store.remediations.rows) == 1  # none from the first run
     assert incident.status is IncidentStatus.awaiting_review
 
     run = viewer.get(f"/api/v1/incidents/{incident.id}").json()["analysis"]["agent_run"]

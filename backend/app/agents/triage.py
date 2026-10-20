@@ -11,7 +11,8 @@ answers `manual`.
 One escalation (#60): when a run ends with low confidence or no proposal while its evidence shows
 a container restart, the worker re-runs once with `TRIAGE_MODEL_ESCALATION`, with its own
 tool-call and token budget. Both runs are `agent_runs` rows; the escalated run's analysis is the
-one recorded, unless it stopped without one. At most one escalation per incident.
+incident's (its links and proposal count), unless it stopped without one. The first run's
+analysis is kept too, as an earlier row with no proposal. At most one escalation per incident.
 """
 
 from __future__ import annotations
@@ -183,6 +184,11 @@ class IncidentTriage:
         # The escalated analysis wins; a run that stopped without one leaves the first's.
         if result.analysis is None and first.analysis is not None:
             return first
+        if first.analysis is not None:
+            with self._uow_factory() as uow:
+                triage.record_superseded_analysis(
+                    uow, incident_id, run_id=first.run_id, analysis=first.analysis
+                )
         return result
 
     def _submit(self, incident_id: int, analysis: SubmitAnalysis) -> GateDecision | None:
