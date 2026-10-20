@@ -95,7 +95,6 @@
       "Edit(./**/CLAUDE.md)",
       "Edit(./**/CLAUDE.local.md)",
       "Edit(product-spec.md)",
-      "Write(product-spec.md)",
       "Bash(terraform apply*)",
       "Bash(terraform * apply*)",
       "Bash(terraform destroy*)",
