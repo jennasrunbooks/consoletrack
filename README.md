@@ -81,7 +81,7 @@ Full design: [product-spec.md](product-spec.md) · API: [openapi.yaml](openapi.y
 
 Everything except the live AWS intake and Revert runs on your laptop: the UI, API, database, agent loop, cluster faults on kind, and a replay of recorded CloudTrail events.
 
-Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm 4, [Helmfile](https://helmfile.readthedocs.io/), `make`, `curl`, `jq`, and an Anthropic API key. Give Docker at least 4 CPUs and 8 GB of memory. The helm-diff plugin isn't needed locally.
+Prerequisites: Docker, [kind](https://kind.sigs.k8s.io/), kubectl, Helm 4, [Helmfile](https://helmfile.readthedocs.io/), `make`, `curl`, `jq`, and an Anthropic API key. Give Docker at least 4 CPUs and 8 GB of memory. The [helm-diff](https://github.com/databus23/helm-diff) plugin is optional but makes reruns fast: with it, `make local` skips releases that haven't changed. Without it, every rerun upgrades kube-prometheus-stack and waits a few minutes for it to be Ready again.
 
 ```bash
 git clone https://github.com/jennasrunbooks/consoletrack.git
@@ -129,7 +129,7 @@ kubectl --context kind-consoletrack -n monitoring port-forward svc/kube-promethe
 
 **What runs today.** `make local` runs [scripts/local-kind.sh](scripts/local-kind.sh) around the Compose stack:
 
-1. **kind.** It creates the kind cluster `consoletrack`, or reuses it. It builds the demo-app image and loads it into kind. Then it installs `kube-prometheus-stack` and `demo-app` from the Helmfile `local` environment (`helmfile -e local -l name=kube-prometheus-stack -l name=demo-app sync`, so the helm-diff plugin isn't needed). The demo app's traffic generator and alert rule come with it.
+1. **kind.** It creates the kind cluster `consoletrack`, or reuses it. It builds the demo-app image and loads it into kind. Then it installs `kube-prometheus-stack` and `demo-app` from the Helmfile `local` environment (`helmfile -e local -l name=kube-prometheus-stack -l name=demo-app apply`, or `sync` without helm-diff). The demo app's traffic generator and alert rule come with it.
 2. **Compose.** [docker-compose.yaml](docker-compose.yaml) with [compose/kind.yaml](compose/kind.yaml) starts these services:
    - Postgres 16.
    - ElasticMQ, the SQS-compatible queue, with queues named like the real ones.

@@ -23,9 +23,10 @@
 # cluster, say) is never touched. kind adds that context to your kubeconfig as usual, which is
 # also what .mcp.json uses. Re-running is safe; `make local-down` deletes the cluster.
 #
-# Needs docker, kind, kubectl, helm, and helmfile; the script checks them. Not helm-diff: it uses
-# `helmfile sync`, which needs no diff on a throwaway local cluster (`make addons` and
-# `make deploy` use `apply`, which does).
+# Needs docker, kind, kubectl, helm, and helmfile; the script checks them. helm-diff is optional
+# but makes reruns fast: with it the releases go through `helmfile apply`, which skips unchanged
+# ones; without it, `helmfile sync` upgrades kube-prometheus-stack every run (its hook Jobs, then
+# waiting for every pod to be Ready again, a few minutes).
 # Run it through make, which exports HELM_DRIVER=configmap and DEMO_APP_IMAGE.
 set -euo pipefail
 
@@ -69,9 +70,16 @@ cluster_up() {
 
 	# demo-app needs kube-prometheus-stack (its ServiceMonitor and PrometheusRule CRDs). Several
 	# -l selectors are ORed. Waits for both to be ready (helmDefaults).
-	echo "local-kind: syncing kube-prometheus-stack and demo-app (helmfile -e local)"
+	local verb=(sync)
+	if helm plugin list 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -qx diff; then
+		verb=(apply --suppress-diff)
+	else
+		echo "local-kind: helm-diff isn't installed, so every rerun upgrades kube-prometheus-stack;" \
+			"install it for fast reruns (README → Try it without AWS)"
+	fi
+	echo "local-kind: helmfile -e local ${verb[0]}: kube-prometheus-stack and demo-app"
 	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
-		-l name=kube-prometheus-stack -l name=demo-app sync
+		-l name=kube-prometheus-stack -l name=demo-app "${verb[@]}"
 
 	# The consoletrack chart's ServiceAccounts and k8s-mcp's read-only Roles in `demo`, rendered
 	# from the chart that ships to EKS. Each object names its own namespace.

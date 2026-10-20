@@ -54,7 +54,7 @@ certificate, and `ALLOWED_CIDRS`, so a half-configured deploy fails before it re
 cluster.
 
 `make local` uses the `local` environment for two releases only:
-`helmfile -e local -l name=kube-prometheus-stack -l name=demo-app sync` (no helm-diff needed), run by
+`helmfile -e local -l name=kube-prometheus-stack -l name=demo-app apply` (`sync` without helm-diff), run by
 `scripts/local-kind.sh`. Docker Compose runs Postgres, the backend, and the dashboard, so the
 `consoletrack` release, CloudNativePG, and the Gateway API CRDs stay out of kind. From the
 `consoletrack` chart, the script applies only the k8s-mcp RBAC, the ServiceAccounts, and the
