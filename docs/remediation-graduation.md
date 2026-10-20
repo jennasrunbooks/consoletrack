@@ -26,7 +26,7 @@ agent ──submit_analysis──▶ proposed ──gate──▶ manual: waits 
 | --- | --- | --- |
 | 0 | None: every proposal waits for an admin | Shipped with the agent loop (#57) |
 | 1 | `set_memory_limit` in `demo` (policy `oom-memory-bump`) | This issue (#34) |
-| Later candidates | `rollback` (rollout undo) after a bad image; probe fixes | Not started; each needs every criterion below |
+| Later candidates | `rollback` (rollout undo) after a bad image or a lowered limit; probe fixes | The agent already proposes `rollback` (prompt v3, #60), but it stays manual and the backend can't apply it yet: approving answers `501`. Each needs every criterion below |
 | Never in Phase 1 | `revert_workflow`, `codify_pr`, anything that changes AWS | See [Why AWS-side fixes stay manual](#why-aws-side-fixes-stay-manual) |
 
 ## Graduation criteria
@@ -61,6 +61,15 @@ policy reverts to manual.** `oom-memory-bump` ships as `mode: auto` before the e
 has run, which is an exception to criterion 5 for the course timeline. It's acceptable because
 the kill switch and the automatic rollback are in place.
 
+### Which OOMs reach `set_memory_limit`
+
+Since prompt v3 (#60) the agent picks the kind from the rollout history. When the workload
+outgrew a limit that didn't change (the demo fault: traffic fills a report cache past the
+unchanged 128Mi limit, with no new revision), it proposes `set_memory_limit`, and this policy
+can apply it. When the newest revision *lowered* the limit, it proposes `rollback` to the
+previous revision instead. That one goes to the `default` policy, so an admin undoes the revision
+by hand or rejects the proposal.
+
 ## The gate's checks
 
 `backend/app/services/policy_gate.py`, in this order. The first that fails sends the proposal to
@@ -70,7 +79,8 @@ a human, with the reason stored as `remediations.gate_reason`:
 2. the kind isn't AWS-side (config validation already refuses that; checked again here);
 3. the kill switch: `remediation.autoEnabled` in the policies file **and** `AUTOFIX_ENABLED`;
 4. the incident is still `awaiting_review`;
-5. the agent's confidence is at least the policy's `minConfidence` (`high`);
+5. the agent's confidence is at least the policy's `minConfidence` (`high`). After an escalation
+   (#60) that's the escalated run's analysis, the incident's latest;
 6. no earlier auto fix of this workload failed;
 7. the rate limit: at most `rateLimit.perWorkload` (1) auto fixes per workload per
    `rateLimit.window` (1h);
