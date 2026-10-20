@@ -1,0 +1,116 @@
+{{- if .Values.loadgen.enabled }}
+{{- $lg := .Values.loadgen }}
+# The traffic generator. The image tag and probes ignore .Values.faults on purpose: it has to keep
+# measuring while the app is broken.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: demo-app-loadgen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo-app.loadgenLabels" . | nindent 4 }}
+# No Kubernetes token and no Pod Identity association: it only calls the demo-app Service.
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-app-loadgen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo-app.loadgenLabels" . | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      {{- include "demo-app.loadgenSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "demo-app.loadgenLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: demo-app-loadgen
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: loadgen
+          image: {{ printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+          env:
+            - name: DEMO_MODE
+              value: loadgen
+            - name: PORT
+              value: {{ .Values.port | quote }}
+            - name: LOADGEN_TARGET
+              value: {{ printf "http://demo-app.%s:%v/" .Release.Namespace .Values.port | quote }}
+            - name: LOADGEN_RPS
+              value: {{ $lg.rps | quote }}
+            - name: LOADGEN_TIMEOUT_SECONDS
+              value: {{ $lg.timeoutSeconds | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+            {{- toYaml $lg.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-app-loadgen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo-app.loadgenLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "demo-app.loadgenSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http
+{{- if .Values.serviceMonitor.enabled }}
+---
+# demo_client_requests_total, which DemoAppHighErrorRate is built on (the observability issue,
+# #16, owns the rule).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: demo-app-loadgen
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo-app.loadgenLabels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "demo-app.loadgenSelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $lg.scrapeInterval }}
+{{- end }}
+{{- end }}
