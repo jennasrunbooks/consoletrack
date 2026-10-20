@@ -6,7 +6,7 @@ in memory for unit tests (spec: SQL behavior is tested only against real Postgre
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, Self
@@ -20,7 +20,15 @@ from app.db.models import (
     IncidentRow,
     RemediationRow,
 )
-from app.enums import ChangeStatus, Confidence, IncidentStatus, Risk, SubjectType, Via
+from app.enums import (
+    ChangeStatus,
+    Confidence,
+    IncidentStatus,
+    RemediationKind,
+    Risk,
+    SubjectType,
+    Via,
+)
 
 
 @dataclass(frozen=True)
@@ -127,7 +135,21 @@ class AnalysisRepository(Protocol):
 
 class RemediationRepository(Protocol):
     def add(self, row: RemediationRow) -> RemediationRow: ...
-    def latest_for(self, subject_type: SubjectType, subject_id: int) -> RemediationRow | None: ...
+    def get(self, remediation_id: int, *, for_update: bool = False) -> RemediationRow | None: ...
+    def latest_for(
+        self, subject_type: SubjectType, subject_id: int, *, for_update: bool = False
+    ) -> RemediationRow | None: ...
+    def auto_for_workload(self, namespace: str, workload: str) -> list[RemediationRow]:
+        """Every `auto` remediation of that workload, oldest first (the gate's rate limit and
+        block list)."""
+        ...
+
+    def next_to_apply(
+        self, now: datetime, kinds: Collection[RemediationKind]
+    ) -> RemediationRow | None:
+        """The oldest of `kinds` that is `approved`, or `running` with a lease that expired
+        before `now`, locked (`FOR UPDATE SKIP LOCKED`, so two backends never take the same)."""
+        ...
 
 
 class UnitOfWork(Protocol):

@@ -71,6 +71,27 @@ class Settings(BaseSettings):
     # Touched after every poll; the worker's probes check its age (helm worker.yaml).
     worker_heartbeat_file: str | None = None
 
+    # Remediation (product-spec.md → Remediation modes; docs/remediation-graduation.md).
+    # The chart's remediation-policies ConfigMap. Unset = no policies: every proposal is manual.
+    remediation_policies_file: str | None = None
+    # The kill switch, next to the file's autoEnabled: auto needs both. Unset or false sends
+    # every proposal to a human; the chart sets it from remediation.autoEnabled, and
+    # `kubectl set env deploy/worker AUTOFIX_ENABLED=false` turns auto off without a release.
+    autofix_enabled: bool = False
+    # Namespaces the backend may patch, comma-separated (the chart's allowedNamespaces, one
+    # remediator Role each). Empty refuses every cluster remediation.
+    k8s_allowed_namespaces: str = ""
+    # The backend's apply loop: Kubernetes through the remediator ServiceAccount (in cluster) or
+    # KUBECONFIG (make local), and Prometheus for the error-ratio check. Off = approved cluster
+    # remediations wait (plain Compose, no cluster).
+    remediation_apply_enabled: bool = False
+    remediation_poll_seconds: float = 5
+    prometheus_url: str | None = None
+
+    @property
+    def allowed_namespaces(self) -> frozenset[str]:
+        return frozenset(ns.strip() for ns in self.k8s_allowed_namespaces.split(",") if ns.strip())
+
 
 @lru_cache
 def get_settings() -> Settings:

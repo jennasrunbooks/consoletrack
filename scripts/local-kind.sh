@@ -5,8 +5,9 @@
 #
 #   scripts/local-kind.sh cluster   before `docker compose up`: the cluster, the demo-app image
 #                                   (built by make), the add-on and demo-app releases, the
-#                                   consoletrack chart's k8s-mcp RBAC, and a kubeconfig for
-#                                   Compose's k8s-mcp
+#                                   consoletrack chart's k8s-mcp and remediator RBAC, a
+#                                   kubeconfig each for Compose's k8s-mcp and backend, and the
+#                                   chart's remediation policies for the backend and worker
 #   scripts/local-kind.sh alerts    after it: the backend's webhook token and the
 #                                   AlertmanagerConfig, then a check that Alertmanager reaches
 #                                   the Compose backend
@@ -41,9 +42,13 @@ context=kind-$cluster
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 # Read by Compose's k8s-mcp (docker-compose.yaml); gitignored (*.kubeconfig).
 mcp_kubeconfig=$repo_root/kind-internal.kubeconfig
+# Read by Compose's backend, which applies approved remediations (compose/kind.yaml); gitignored.
+remediator_kubeconfig=$repo_root/kind-remediator.kubeconfig
+# The chart's remediation-policies ConfigMap data, for Compose's backend and worker; gitignored.
+policies_file=$repo_root/kind-remediation-policies.yaml
 # Compose's backend on kind's Docker network (compose/kind.yaml).
 backend_url=http://consoletrack-backend:8000
-# The k8s-mcp token's lifetime; `make local` writes a new one on every run.
+# The k8s-mcp and remediator tokens' lifetime; `make local` writes new ones on every run.
 token_duration=${K8S_MCP_TOKEN_DURATION:-24h}
 compose=${COMPOSE:-docker compose}
 
@@ -83,13 +88,17 @@ cluster_up() {
 	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
 		-l name=kube-prometheus-stack -l name=demo-app "${verb[@]}"
 
-	# The consoletrack chart's ServiceAccounts and k8s-mcp's read-only Roles in `demo`, rendered
-	# from the chart that ships to EKS. Each object names its own namespace.
-	echo "local-kind: applying the consoletrack chart's k8s-mcp RBAC"
+	# The consoletrack chart's ServiceAccounts, k8s-mcp's read-only Roles, and the remediator's
+	# patch Role in `demo`, rendered from the chart that ships to EKS. Each object names its own
+	# namespace.
+	echo "local-kind: applying the consoletrack chart's k8s-mcp and remediator RBAC"
 	kc create namespace consoletrack --dry-run=client -o yaml | kc apply -f - >/dev/null
-	render templates/rbac-k8s-mcp.yaml templates/serviceaccounts.yaml | kc apply -f -
+	render templates/rbac-k8s-mcp.yaml templates/rbac-remediator.yaml templates/serviceaccounts.yaml |
+		kc apply -f -
 
-	write_mcp_kubeconfig
+	write_kubeconfig k8s-mcp "$mcp_kubeconfig"
+	write_kubeconfig remediator "$remediator_kubeconfig"
+	write_policies
 }
 
 # Templates of the consoletrack chart with compose/kind-values.yaml.
@@ -102,20 +111,22 @@ render() {
 		-f "$repo_root/compose/kind-values.yaml" "${args[@]}"
 }
 
-# Compose's k8s-mcp gets the ServiceAccount's token, not kind's admin credentials, so the RBAC
-# that ships is what limits it locally too (docs/permissions.md → k8s-mcp). The server address is
-# kind's internal one: the control-plane container's name on kind's Docker network.
-write_mcp_kubeconfig() {
-	local internal server ca token
+# Compose's k8s-mcp and backend get their ServiceAccount's token, not kind's admin credentials,
+# so the RBAC that ships is what limits them locally too (docs/permissions.md): k8s-mcp reads
+# `demo`, the backend (remediator) patches Deployments in `demo` and nothing else. The server
+# address is kind's internal one: the control-plane container's name on kind's Docker network.
+#   write_kubeconfig <serviceaccount> <file>
+write_kubeconfig() {
+	local account=$1 file=$2 internal server ca token
 	internal=$(mktemp)
 	kind get kubeconfig --internal --name "$cluster" >"$internal"
 	server=$(kubectl --kubeconfig "$internal" config view --raw -o jsonpath='{.clusters[0].cluster.server}')
 	ca=$(kubectl --kubeconfig "$internal" config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
 	rm -f "$internal"
-	token=$(kc -n consoletrack create token k8s-mcp --duration "$token_duration")
-	[ -n "$server" ] && [ -n "$ca" ] && [ -n "$token" ] || die "couldn't build the k8s-mcp kubeconfig"
+	token=$(kc -n consoletrack create token "$account" --duration "$token_duration")
+	[ -n "$server" ] && [ -n "$ca" ] && [ -n "$token" ] || die "couldn't build the $account kubeconfig"
 
-	cat >"$mcp_kubeconfig.tmp" <<-EOF
+	cat >"$file.tmp" <<-EOF
 		apiVersion: v1
 		kind: Config
 		clusters:
@@ -124,22 +135,33 @@ write_mcp_kubeconfig() {
 		      server: $server
 		      certificate-authority-data: $ca
 		users:
-		  - name: k8s-mcp
+		  - name: $account
 		    user:
 		      token: $token
 		contexts:
-		  - name: k8s-mcp
+		  - name: $account
 		    context:
 		      cluster: $cluster
-		      user: k8s-mcp
+		      user: $account
 		      namespace: demo
-		current-context: k8s-mcp
+		current-context: $account
 	EOF
-	# k8s-mcp runs as uid 10001 and reads it through a read-only bind mount. The token can only
-	# read the demo namespace, and expires.
-	chmod 0644 "$mcp_kubeconfig.tmp"
-	mv "$mcp_kubeconfig.tmp" "$mcp_kubeconfig"
-	echo "local-kind: wrote $(basename "$mcp_kubeconfig") (k8s-mcp ServiceAccount token, $token_duration)"
+	# The containers run as uid 10001 and read it through a read-only bind mount. The token is
+	# limited to the demo namespace by the chart's RBAC, and expires.
+	chmod 0644 "$file.tmp"
+	mv "$file.tmp" "$file"
+	echo "local-kind: wrote $(basename "$file") ($account ServiceAccount token, $token_duration)"
+}
+
+# The same policies.yaml the remediation-policies ConfigMap carries on EKS
+# (helm/charts/consoletrack/values.yaml → remediation), so the gate behaves the same locally.
+write_policies() {
+	render templates/remediation-policies.yaml |
+		kc create --dry-run=client -f - -o jsonpath='{.data.policies\.yaml}' >"$policies_file.tmp"
+	[ -s "$policies_file.tmp" ] || die "couldn't render the remediation policies"
+	chmod 0644 "$policies_file.tmp"
+	mv "$policies_file.tmp" "$policies_file"
+	echo "local-kind: wrote $(basename "$policies_file") (the chart's remediation policies)"
 }
 
 alerts() {
@@ -218,7 +240,10 @@ incidents() {
 			id, alertname, workload, status, opened_at, resolved_at,
 			root_cause: .analysis.root_cause, confidence: .analysis.confidence,
 			agent_run: (.analysis.agent_run | if . then {model, tool_calls, outcome} else null end),
-			proposal: (.remediation | if . then {kind, status, payload} else null end)
+			remediation: (.remediation | if . then {
+				kind, status, mode, policy, gate_reason, decided_by, payload, before, after,
+				steps: [.steps[]? | "\(.step) \(if .ok then "ok" else "FAILED" end): \(.detail)"]
+			} else null end)
 		}'
 	done
 	rm -f "$jar"

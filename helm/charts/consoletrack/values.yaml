@@ -172,22 +172,37 @@ deployers:
   group: consoletrack-deployers
   namespaces: [consoletrack, demo]
 
-# Remediation policies (product-spec.md → Remediation modes), mounted into the backend for the
-# policy gate. Phase 1 ships every policy as `manual` with the kill switch off: a policy moves
-# to `auto` only through a reviewed PR with eval results (docs/remediation-graduation.md).
+# Remediation policies (product-spec.md → Remediation modes), mounted into the worker (the
+# policy gate) and the backend (the apply loop) as REMEDIATION_POLICIES_FILE. A policy moves to
+# `auto` only through a reviewed PR with eval results (docs/remediation-graduation.md); the
+# backend and worker refuse to start with an `auto` AWS-side kind, a catch-all `auto`, or bounds
+# looser than the validator's own (2x, 512Mi). The first policy that matches decides.
 remediation:
-  autoEnabled: false          # global kill switch, also toggled from the dashboard
+  # Global kill switch. Also rendered as AUTOFIX_ENABLED on the backend and worker, so
+  # `kubectl set env deploy/worker AUTOFIX_ENABLED=false` turns auto off without a release.
+  autoEnabled: true
   policies:
     - name: oom-memory-bump
       # Matched on the proposed remediation kind, not an alert name: the incident's trigger is
       # the user-impact alert (DemoAppHighErrorRate), and kube-prometheus-stack has no OOM alert.
       match: {kind: set_memory_limit, namespace: demo}
-      mode: manual            # manual | auto
+      # Graduation phase 1 (#34): the one kind that runs without a human.
+      mode: auto              # manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
       minConfidence: high
       rateLimit: {perWorkload: 1, window: 1h}
-      verify: {waitForResolved: 10m, onFailure: rollback}
+      verify:
+        rolloutTimeout: 3m
+        # No new OOM kill, and the alert resolved or the error ratio below the threshold.
+        waitForResolved: 5m
+        errorRatio:
+          # DemoAppHighErrorRate's expression (demo-app chart) without the comparison.
+          query: >-
+            (sum(rate(demo_client_requests_total{namespace="demo", result!="ok"}[2m])) or vector(0))
+            / sum(rate(demo_client_requests_total{namespace="demo"}[2m]))
+          below: 0.05
+        onFailure: rollback
     - name: default
       match: {}
       mode: manual

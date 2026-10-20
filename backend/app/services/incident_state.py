@@ -9,6 +9,7 @@ and it records decision, decided_by, decided_at, and reason on the two terminal 
     awaiting_review ──triage_started───────▶ triaging        (re-run)
     awaiting_review ──remediation_approved─▶ remediating
     awaiting_review ──remediation_rejected─▶ closed          (reason required)
+    remediating     ──remediation_failed───▶ awaiting_review (rolled back, refused, or downgraded)
     any unresolved  ──alert_resolved───────▶ resolved
 """
 
@@ -33,6 +34,9 @@ class IncidentEvent(StrEnum):
     triage_incomplete = "triage_incomplete"
     remediation_approved = "remediation_approved"
     remediation_rejected = "remediation_rejected"
+    # The fix didn't hold (rolled back), was refused, or the validator downgraded an auto fix
+    # to manual: a human reviews the incident again.
+    remediation_failed = "remediation_failed"
     alert_resolved = "alert_resolved"
 
 
@@ -46,6 +50,7 @@ TRANSITIONS: dict[tuple[IncidentStatus, IncidentEvent], IncidentStatus] = {
     (S.triaging, E.triage_incomplete): S.awaiting_review,
     (S.awaiting_review, E.remediation_approved): S.remediating,
     (S.awaiting_review, E.remediation_rejected): S.closed,
+    (S.remediating, E.remediation_failed): S.awaiting_review,
     # A resolved notification ends the episode from any unresolved state.
     **{(status, E.alert_resolved): S.resolved for status in ACTIVE_INCIDENT_STATUSES},
 }

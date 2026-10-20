@@ -243,11 +243,17 @@ export interface paths {
         put?: never;
         /**
          * Approve the proposed remediation
-         * @description Requires admin. For a `cluster_patch` or `rollback`, the backend re-validates the
-         *     proposal against the allowlist and applies it through the `remediator` ServiceAccount.
-         *     For a `revert_workflow`, it dispatches the linked change's revert (same as
-         *     `POST /api/v1/changes/{id}/revert`). The incident moves `awaiting_review` →
-         *     `remediating`, then `resolved` on Alertmanager's resolved notification.
+         * @description Requires admin. The incident moves `awaiting_review` → `remediating` and the remediation
+         *     `proposed` → `approved`; the backend's apply loop then takes it through the same path as
+         *     an auto fix: the deterministic validator against the live Deployment, a server-side dry
+         *     run, the patch through the `remediator` ServiceAccount, the rollout, and verify (see
+         *     `Remediation.steps`). If the validator refuses it or verify fails (the patch is rolled
+         *     back), the remediation ends `failed` with the reason and the incident returns to
+         *     `awaiting_review`. The incident becomes `resolved` on Alertmanager's resolved
+         *     notification. Only `set_memory_limit` can be applied today; other kinds answer `501`
+         *     (`revert_workflow` will dispatch the linked change's revert, as
+         *     `POST /api/v1/changes/{id}/revert`). `409` when the latest remediation isn't `proposed`
+         *     or the incident isn't `awaiting_review`.
          */
         post: operations["approveIncidentRemediation"];
         delete?: never;
@@ -268,7 +274,7 @@ export interface paths {
         /**
          * Reject the proposed remediation and close the incident
          * @description Requires admin. Marks the remediation `rejected` and closes the incident (`closed`) with
-         *     the reason.
+         *     the reason. `409` when the latest remediation isn't `proposed`.
          */
         post: operations["rejectIncidentRemediation"];
         delete?: never;
@@ -510,10 +516,17 @@ export interface components {
         RemediationKind: "cluster_patch" | "set_memory_limit" | "rollback" | "revert_workflow" | "codify_pr";
         /**
          * @description `proposed` → `approved` → `running` → `succeeded` or `failed`; or `proposed` →
-         *     `rejected`.
+         *     `rejected`. An auto fix the validator refuses before anything is applied goes `running`
+         *     → `proposed` with `mode: manual` and the reason in `gate_reason`: it waits for a human.
          * @enum {string}
          */
         RemediationStatus: "proposed" | "approved" | "rejected" | "running" | "succeeded" | "failed";
+        /**
+         * @description The policy gate's decision: `manual` (an admin approves or rejects) or `auto` (the gate
+         *     approved on the admin's behalf; `decided_by` is `policy:<name>`).
+         * @enum {string}
+         */
+        RemediationMode: "manual" | "auto";
         /** @enum {string} */
         SubjectType: "change" | "incident";
         /**
@@ -869,6 +882,45 @@ export interface components {
             /** Format: date-time */
             applied_at: string | null;
             error: string | null;
+            /** @description Null until the policy gate has decided. */
+            mode?: components["schemas"]["RemediationMode"] | null;
+            /** @description The remediation policy that decided, e.g. `oom-memory-bump` or `default`. */
+            policy?: string | null;
+            /**
+             * @description Why the gate chose this mode, e.g. the kill switch, the rate limit, or the validator
+             *     rule that downgraded an auto fix to manual.
+             */
+            gate_reason?: string | null;
+            /**
+             * Format: date-time
+             * @description When it was approved or rejected.
+             */
+            decided_at?: string | null;
+            /**
+             * @description The values the patch changes, before it: `set_memory_limit` →
+             *     `{"limits": {"memory": "128Mi"}, "requests": {"memory": "128Mi"}}`.
+             */
+            before?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description The same values after the patch, e.g. `{"limits": {"memory": "256Mi"}}`. */
+            after?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * @description Every step in order, for the incident timeline: `approved` or `rejected`, then the
+             *     apply loop's `claimed`, `read`, `validate`, `dry_run`, `patch`, `rollout`, `verify`,
+             *     `rollback`, and the outcome (`succeeded`, `failed`, `downgraded`).
+             * @default []
+             */
+            steps: components["schemas"]["RemediationStep"][];
+        };
+        RemediationStep: {
+            step: string;
+            /** Format: date-time */
+            at: string;
+            ok: boolean;
+            detail: string;
         };
         AlertmanagerAlert: {
             /** @enum {string} */
