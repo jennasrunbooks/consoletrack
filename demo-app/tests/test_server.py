@@ -48,8 +48,8 @@ def test_allocation_is_held_and_reported() -> None:
 
 
 def test_waits_then_allocates_then_listens(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Allocating a few seconds in makes the kubelet report OOMKilled, not Error; listening last
-    # means the faulted pod is never Ready.
+    # The kill comes a few seconds after start; listening last means the faulted pod is never
+    # Ready.
     order: list[tuple] = []
     real_allocate, real_make_server = server.allocate, server.make_server
 

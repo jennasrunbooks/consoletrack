@@ -106,9 +106,10 @@ def build(
 ):
     """Wait, allocate, then listen: with the OOM fault the container dies before it is Ready.
 
-    The wait comes first because a process killed within about a second of starting can be
-    reported as `Error` (exit 137) instead of `OOMKilled`: the kernel kill races containerd's OOM
-    report. A few seconds in, the kubelet reports `OOMKilled` every time.
+    The wait only sets when the kill comes: a few seconds after start, not at once. It doesn't
+    make the reported reason reliable. On kind the last termination has read `Error` (exit 137)
+    before settling to `OOMKilled`, and once the other way round, so triage treats exit 137 soon
+    after start as a likely OOM whatever the reason says (prompts/system_v2.md).
     """
     held = None
     if config.allocate_mi:

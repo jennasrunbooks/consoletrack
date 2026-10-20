@@ -12,8 +12,10 @@ The workload the scenarios break, and the traffic generator that notices: one Py
 
 **Server.** `DEMO_ALLOCATE_MI` allocates that many MiB at startup, writes to every page so it is
 resident, and holds it, before the server listens: that makes the OOM fault deterministic. It
-waits `DEMO_ALLOCATE_DELAY_SECONDS` (3) first, because a container killed within about a second
-of starting can be reported as `Error` (exit 137) instead of `OOMKilled`. With
+waits `DEMO_ALLOCATE_DELAY_SECONDS` (3) first, so the kill comes a few seconds after start. The
+reason Kubernetes reports isn't reliable either way: on kind it has read `Error` (exit 137)
+before settling to `OOMKilled`, so the triage prompt treats exit 137 soon after start as a
+likely OOM. With
 `DEMO_BUCKET` set, every `GET /` reads `s3://$DEMO_BUCKET/$DEMO_OBJECT_KEY` through the SDK's
 default credential chain (Pod Identity on EKS) and answers 503 with the error code
 (`AccessDenied`, `NoCredentialsError`) when it can't, logging it for the triage agent; `/healthz`

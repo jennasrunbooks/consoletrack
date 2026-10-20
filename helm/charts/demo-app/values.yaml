@@ -38,9 +38,10 @@ faults:
   oom: false
   oomMemoryLimit: 128Mi
   allocateMi: 128
-  # Seconds the app waits after starting before it allocates (DEMO_ALLOCATE_DELAY_SECONDS). A kill
-  # within about a second of start can be reported as Error (exit 137) instead of OOMKilled; a
-  # few seconds in, it's OOMKilled every restart. Well under the liveness probe's 30s.
+  # Seconds the app waits after starting before it allocates (DEMO_ALLOCATE_DELAY_SECONDS), so
+  # the kill comes a few seconds after start; well under the liveness probe's 30s. It doesn't
+  # make the reported reason reliable: on kind a restart can read Error (exit 137) before it
+  # settles to OOMKilled, and the triage prompt allows for that.
   allocateDelaySeconds: 3
   # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
   badImage: false
