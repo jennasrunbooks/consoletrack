@@ -40,6 +40,7 @@ updates:
   - package-ecosystem: uv
     directories:
       - /backend
+      - /demo-app
       - /mcp-server/*
     schedule:
       interval: weekly
@@ -72,6 +73,7 @@ updates:
   - package-ecosystem: docker
     directories:
       - /backend
+      - /demo-app
       - /frontend
       - /mcp-server/*
     schedule:

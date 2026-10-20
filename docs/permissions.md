@@ -118,9 +118,11 @@ ClusterRole or ClusterRoleBinding (`helm/tests/test_rendered.py` checks the rend
 | ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
 | Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create, including Helm's release records (ConfigMaps, `HELM_DRIVER=configmap`); read pods, logs, events; port-forward for the smoke test | Secrets, anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
 
-Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, and the
-canary reach AWS through Pod Identity's own projected token, and the frontend and demo app call
-nothing. `make audit-rbac` prints the effective permissions per ServiceAccount.
+Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, the
+canary, and the demo app (its S3 read) reach AWS through Pod Identity's own projected token, and
+the frontend and the demo app's traffic generator (`demo:demo-app-loadgen`, no Pod Identity
+association; it only calls the `demo-app` Service) call nothing. `make audit-rbac` prints the
+effective permissions per ServiceAccount.
 
 ### k8s-mcp: checks inside the server
 
