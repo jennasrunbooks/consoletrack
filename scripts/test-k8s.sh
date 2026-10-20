@@ -92,8 +92,9 @@ can no update deployments.apps -n demo
 can no patch statefulsets.apps -n demo
 can no patch pods -n demo
 can no delete pods -n demo
-can no create pods/exec -n demo
-can no get pods/log -n demo
+# Subresources need --subresource: `pods/log` alone means the pod named "log".
+can no create pods --subresource=exec -n demo
+can no get pods --subresource=log -n demo
 can no get secrets -n demo
 can no get configmaps -n demo
 can no patch namespaces
