@@ -142,6 +142,23 @@ is subverted:
 to a throwaway kind cluster, and checks every allow and deny in the `k8s-mcp` row with
 `kubectl auth can-i`, so the test proves the RBAC that ships.
 
+## Runtime triage agent
+
+The agent that runs inside ConsoleTrack (`backend/app/agents/`, in the worker pod) can only
+read, and none of these depend on the prompt holding:
+
+| Layer | What it stops | Where |
+| --- | --- | --- |
+| Tools | The model's only tools are the MCP servers' reads plus `submit_analysis`. A tool name the servers don't offer gets a tool error; nothing is run | `app/agents/tools.py` |
+| RBAC and IAM | `k8s-mcp` and `aws-mcp` run under their own read-only identities (table above; `aws-mcp`'s Pod Identity role with #9). The worker itself has no Kubernetes token | `helm/charts/consoletrack/` |
+| Schema | `submit_analysis` is validated before anything is stored. Proposals are one of three narrow kinds that name a Deployment (or a change ID) and carry only the values the fix needs, with no free-form patch. Anything else, such as a Secret patch asked for by an injected log line, goes back to the model as an error | `app/agents/schema.py` |
+| Limits | 12 tool calls, 120 s, a token budget, one transient retry per run; a run that hits one stops and leaves the incident for a human | `app/agents/runner.py` |
+| Redaction | Tool results and arguments are redacted again in the backend before they're stored as evidence or sent back to the model | `app/agents/redact.py` |
+| Gate | A proposal is stored as `proposed` and handed to `PolicyGate.submit_proposal`. Phase 1's gate is `ManualPolicyGate`, which approves nothing; the validator, the `auto` policies, and the apply path are #34's | `app/services/policy_gate.py` |
+
+`ANTHROPIC_API_KEY` reaches the worker only (a Secret by name in the chart; the shell in Compose).
+The backend API pod doesn't have it and never calls the model.
+
 ## CI deploy role
 
 `deploy.yaml`'s OIDC role is mapped to the `consoletrack-deployers` group, bound to a namespaced

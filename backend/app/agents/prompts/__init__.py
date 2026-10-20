@@ -1,0 +1,20 @@
+"""Versioned prompt files. A wording change is a new `_vN` file, never an edit in place, so an
+analysis can be traced to the prompt that produced it (`PROMPT_VERSION`)."""
+
+from __future__ import annotations
+
+from functools import cache
+from importlib.resources import files
+from string import Template
+
+PROMPT_VERSION = "v1"
+
+
+@cache
+def load(name: str, version: str = PROMPT_VERSION) -> str:
+    return files(__package__).joinpath(f"{name}_{version}.md").read_text(encoding="utf-8")
+
+
+def render(name: str, version: str = PROMPT_VERSION, **values: object) -> str:
+    """The prompt with `$name` placeholders filled; a missing value raises `KeyError`."""
+    return Template(load(name, version)).substitute(values)

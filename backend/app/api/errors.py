@@ -14,6 +14,7 @@ from app.api.deps import Forbidden, Unauthorized
 from app.schemas import Error, ErrorDetail
 from app.services.errors import (
     InvalidCredentials,
+    InvalidModel,
     InvalidTransition,
     MissingReason,
     NotFound,
@@ -113,6 +114,10 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(MissingReason)
     async def missing_reason(_: Request, exc: MissingReason) -> JSONResponse:
+        return error_response(422, "validation_error", str(exc))
+
+    @app.exception_handler(InvalidModel)
+    async def invalid_model(_: Request, exc: InvalidModel) -> JSONResponse:
         return error_response(422, "validation_error", str(exc))
 
     @app.exception_handler(NotImplementedYet)

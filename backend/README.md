@@ -7,15 +7,17 @@ is [`../openapi.yaml`](../openapi.yaml); the layering and both state machines ar
 | Path | What's there |
 | --- | --- |
 | `app/main.py` | App factory: `uvicorn --factory app.main:create_app` |
+| `app/worker.py` | The worker process: `python -m app.worker` (the triage loop; the intake joins with #9) |
 | `app/settings.py` | Every setting, from the environment variables in `../.env.example` |
 | `app/api/` | Routers (HTTP only), auth dependencies, `Error` mapping |
-| `app/services/` | Change and incident state machines, Accept, Alertmanager processing, intake health |
+| `app/services/` | Change and incident state machines, Accept, Alertmanager processing, the triage queue, the policy gate interface, intake health |
 | `app/db/` | SQLAlchemy models, repository protocols and their SQL versions, Alembic migrations |
 | `app/schemas.py` | API models matching `openapi.yaml` |
 | `app/compose_entrypoint.py` | Docker Compose only: generated local secrets, `alembic upgrade head`, uvicorn |
 | `Dockerfile` | The API and worker image (non-root, locked uv environment); arm64 on EKS |
-| `app/intake/`, `app/agents/` | Filled by #9 (intake worker) and #10 (triage agent) |
-| `tests/unit/` | Fast tests on in-memory repositories (no database) |
+| `app/agents/` | The triage agent loop: see [`app/agents/README.md`](app/agents/README.md) |
+| `app/intake/` | Filled by #9 (intake worker) |
+| `tests/unit/` | Fast tests on in-memory repositories (no database), the agent on a scripted model |
 | `tests/contract/` | `app.openapi()` vs `../openapi.yaml` |
 | `tests/integration/` | Real Postgres (Testcontainers), marker `integration` |
 

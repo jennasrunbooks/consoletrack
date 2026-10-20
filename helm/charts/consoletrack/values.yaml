@@ -84,7 +84,8 @@ backend:
 
 worker:
   replicas: 1
-  command: [python, -m, app.intake.consumer]
+  # The triage loop today; the change intake (#9) joins the same process.
+  command: [python, -m, app.worker]
   # The worker has no HTTP server. It touches this file after every poll (20 s long poll), and
   # both probes fail once it's older than heartbeatMaxAgeSeconds.
   heartbeatFile: /tmp/worker-heartbeat
