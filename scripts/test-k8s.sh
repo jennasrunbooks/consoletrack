@@ -56,7 +56,7 @@ helm template consoletrack "$repo_root/helm/charts/consoletrack" -n consoletrack
 	--set target=local --set app.intakeMode=replay \
 	--show-only templates/rbac-k8s-mcp.yaml --show-only templates/serviceaccounts.yaml \
 	>"$workdir/rbac.yaml"
-kc apply -n consoletrack -f "$workdir/rbac.yaml"
+kc apply -f "$workdir/rbac.yaml"
 
 cd "$repo_root/mcp-server/k8s"
 K8S_MCP_KIND_KUBECONFIG="$kubeconfig" uv run --locked pytest tests/kind -m kind -q "$@"
