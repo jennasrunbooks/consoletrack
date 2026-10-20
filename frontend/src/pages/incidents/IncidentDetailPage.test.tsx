@@ -15,26 +15,31 @@ async function renderIncident(id: number, as: "admin" | "viewer" = "admin") {
 describe("incident detail", () => {
   it("shows the alert, the analysis, the run, the timeline, and the proposed fix", async () => {
     await renderIncident(14);
-    expect(screen.getByRole("heading", { level: 1, name: "KubePodOOMKilled" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeInTheDocument();
     expect(screen.getByText("INC-14")).toBeInTheDocument();
 
     const analysis = within(card("Agent analysis"));
-    expect(analysis.getByText(/demo-app was OOM killed three times/)).toBeInTheDocument();
-    expect(analysis.getByText(/The 128Mi memory limit is below/)).toBeInTheDocument();
+    expect(analysis.getByText(/OOMKilled \(exit code 137\) on each of its last 4 starts/)).toBeInTheDocument();
+    expect(analysis.getByText(/The 128Mi memory limit is below what demo-app needs at startup/)).toBeInTheDocument();
     expect(analysis.getByText("Risk: high.")).toBeInTheDocument();
-    expect(analysis.getByText(/Confidence: high · 5 tool calls/)).toBeInTheDocument();
+    expect(analysis.getByText(/Confidence: high · 6 tool calls/)).toBeInTheDocument();
     expect(analysis.getByText("claude-haiku-5-5")).toBeInTheDocument();
     expect(analysis.queryByRole("list", { name: "Flags" })).toBeNull();
 
     const fix = within(card("Proposed fix"));
     expect(fix.getByText("set_memory_limit demo/demo-app container demo-app → 256Mi")).toBeInTheDocument();
-    expect(fix.getByText(/Peak working set is 190Mi/)).toBeInTheDocument();
+    expect(fix.getByText(/128 MiB allocated \+ ~25 MiB baseline/)).toBeInTheDocument();
     expect(fix.getByRole("button", { name: "Approve fix" })).toBeEnabled();
 
     const alert = within(card("Alert"));
-    expect(alert.getByText("KubePodOOMKilled", { selector: "dd" })).toBeInTheDocument();
-    expect(alert.getByText("namespace=demo")).toBeInTheDocument();
-    expect(alert.getByText(/3 restarts in 10 minutes/)).toBeInTheDocument();
+    expect(alert.getByText("DemoAppHighErrorRate", { selector: "dd" })).toBeInTheDocument();
+    expect(within(alert.getByRole("list", { name: "Labels" })).getAllByRole("listitem").map((l) => l.textContent)).toEqual([
+      "alertname=DemoAppHighErrorRate",
+      "namespace=demo",
+      "severity=critical",
+      "workload=demo-app",
+    ]);
+    expect(alert.getByText(/More than 5% of the traffic generator's requests/)).toBeInTheDocument();
 
     const steps = within(card("Status")).getAllByRole("listitem");
     expect(steps.map((s) => s.querySelector(".timeline-label")!.textContent)).toEqual([
@@ -58,7 +63,7 @@ describe("incident detail", () => {
       "Insufficient evidence",
     ]);
     expect(flags[0]).toHaveClass("flag-warning");
-    expect(screen.getByText(/Confidence: low · 7 tool calls/)).toBeInTheDocument();
+    expect(screen.getByText(/Confidence: low · 3 tool calls/)).toBeInTheDocument();
     expect(within(card("Proposed fix")).getByText(/No fix proposed: the agent's confidence is low/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve fix" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Reject and close" })).toBeNull();
@@ -67,13 +72,17 @@ describe("incident detail", () => {
   it("renders evidence as text, collapsed until opened, never as HTML", async () => {
     const { user } = await renderIncident(13);
     const evidence = card("Evidence");
-    const call = await within(evidence).findByText('get_pod_logs(namespace="demo", pod="demo-loadgen-5f8b9c7d6-q4wz1", tail=50)');
+    const call = await within(evidence).findByText(
+      'get_pod_logs(namespace="demo", pod="demo-app-loadgen-6d5f8b7c9-q4wz1", container="loadgen", previous=true, tail=50)',
+    );
     const result = within(evidence).getByLabelText("Result of get_pod_logs");
     expect(result).not.toBeVisible();
 
     await user.click(call);
     expect(result).toBeVisible();
-    expect(result.textContent).toContain('<script>alert("pwned")</script>');
+    expect(result.textContent).toContain("<script>alert(1)</script>");
+    // k8s-mcp's JSON, pretty-printed as text.
+    expect(result.textContent).toContain('\n  "line_count": 3,');
     expect(evidence.querySelector("script")).toBeNull();
   });
 
@@ -184,7 +193,7 @@ describe("incident detail", () => {
     expect(await screen.findByText("Couldn't load this incident: database unavailable")).toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("heading", { name: "KubePodOOMKilled" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "DemoAppHighErrorRate" })).toBeInTheDocument();
   });
 
   describe("polling", () => {
@@ -204,7 +213,7 @@ describe("incident detail", () => {
       expect(screen.getByText(/The agent is triaging this incident/)).toBeInTheDocument();
 
       await act(() => vi.advanceTimersByTimeAsync(5_000));
-      expect(await screen.findByText(/readiness probe on demo-app now points at \/healthz/)).toBeInTheDocument();
+      expect(await screen.findByText(/probes call \/not-a-health-check/)).toBeInTheDocument();
       expect(screen.getByText("Awaiting review", { selector: ".detail-tags .pill" })).toBeInTheDocument();
       expect(screen.queryByText("Refreshing every 5 s")).toBeNull();
 
@@ -216,7 +225,7 @@ describe("incident detail", () => {
     it("doesn't poll an incident that's already past triage", async () => {
       const seen = recordRequests("/incidents/11");
       renderApp("/incidents/11");
-      await screen.findByRole("heading", { name: "KubePodNotReady" });
+      await screen.findByRole("heading", { name: "DemoAppHighErrorRate" });
       const initial = seen.length;
       await act(() => vi.advanceTimersByTimeAsync(20_000));
       expect(seen.length).toBe(initial);

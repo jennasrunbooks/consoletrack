@@ -25,13 +25,14 @@ describe("incident list", () => {
     await waitFor(() => expect(rows()).toHaveLength(6));
 
     const first = within(rows()[0]!);
-    expect(first.getByRole("link", { name: "KubeDeploymentRolloutStuck" })).toHaveAttribute("href", "/incidents/15");
+    expect(first.getByRole("link", { name: "KubePodNotReady" })).toHaveAttribute("href", "/incidents/15");
     expect(first.getByText("INC-15")).toBeInTheDocument();
     expect(first.getByText("Triaging")).toBeInTheDocument();
     expect(first.getByText("warning")).toBeInTheDocument();
 
     const oom = within(rows()[1]!);
     expect(oom.getByText("critical")).toBeInTheDocument();
+    expect(oom.getByRole("link", { name: "DemoAppHighErrorRate" })).toHaveAttribute("href", "/incidents/14");
     expect(oom.getByText("demo-app")).toBeInTheDocument();
     expect(oom.getByText("demo")).toBeInTheDocument();
     expect(oom.getByText("9 min ago")).toBeInTheDocument();
@@ -65,7 +66,7 @@ describe("incident list", () => {
     await user.selectOptions(screen.getByLabelText("Severity"), "critical");
     expect(location.current).toBe("/incidents?severity=critical");
     await waitFor(() => expect(lastQuery(seen).get("severity")).toBe("critical"));
-    await waitFor(() => expect(rows()).toHaveLength(2));
+    await waitFor(() => expect(rows()).toHaveLength(3));
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     expect(location.current).toBe("/incidents");

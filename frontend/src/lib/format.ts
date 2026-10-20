@@ -179,3 +179,15 @@ export function callSignature(e: Pick<Evidence, "tool_name" | "args">): string {
   const args = Object.entries(e.args).map(([key, value]) => `${key}=${JSON.stringify(value)}`);
   return `${e.tool_name}(${args.join(", ")})`;
 }
+
+/**
+ * A tool result for display: the worker stores k8s-mcp's structured output as compact JSON, so
+ * pretty-print it when it parses. Either way the caller renders it as text.
+ */
+export function readableResult(excerpt: string): string {
+  try {
+    return JSON.stringify(JSON.parse(excerpt), null, 2);
+  } catch {
+    return excerpt; // not JSON, or cut off at the 8,000-character excerpt limit
+  }
+}

@@ -1,5 +1,5 @@
 import type { Evidence } from "../api";
-import { callSignature } from "../lib/format";
+import { callSignature, readableResult } from "../lib/format";
 import type { Resource } from "../lib/useResource";
 
 /**
@@ -37,7 +37,7 @@ export function EvidenceList({ evidence }: { evidence: Resource<{ items: Evidenc
                 <code className="evidence-call">{callSignature(e)}</code>
               </summary>
               <pre className="evidence-result" aria-label={`Result of ${e.tool_name}`}>
-                {e.result_excerpt || "(empty result)"}
+                {e.result_excerpt ? readableResult(e.result_excerpt) : "(empty result)"}
               </pre>
             </details>
           </li>

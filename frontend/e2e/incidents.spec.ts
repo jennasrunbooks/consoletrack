@@ -23,6 +23,7 @@ test("the list filters by status and severity through the URL", async ({ page })
   await expect(changeRows(page)).toHaveCount(4);
 
   await page.getByLabel("Severity").selectOption("critical");
+  // Active and critical: INC-14 and INC-12 (INC-11 is resolved).
   await expect(page).toHaveURL(/severity=critical/);
   await expect(changeRows(page)).toHaveCount(2);
 
@@ -34,16 +35,16 @@ test("the list filters by status and severity through the URL", async ({ page })
   await expect(page).toHaveURL(/\/incidents$/);
   await expect(changeRows(page)).toHaveCount(6);
 
-  await page.getByRole("link", { name: "KubePodOOMKilled" }).click();
+  await page.getByRole("link", { name: "DemoAppHighErrorRate" }).first().click();
   await expect(page).toHaveURL(/\/incidents\/14$/);
 });
 
 test("detail shows the analysis, the run, and the proposed fix", async ({ page }) => {
   await openIncidents(page, "admin", "/incidents/14");
-  await expect(page.getByRole("heading", { level: 1, name: "KubePodOOMKilled" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeVisible();
   const analysis = card(page, "Agent analysis");
-  await expect(analysis).toContainText("demo-app was OOM killed three times");
-  await expect(analysis).toContainText("Confidence: high · 5 tool calls · claude-haiku-5-5");
+  await expect(analysis).toContainText("OOMKilled (exit code 137) on each of its last 4 starts");
+  await expect(analysis).toContainText("Confidence: high · 6 tool calls · claude-haiku-5-5");
   const fix = card(page, "Proposed fix");
   await expect(fix).toContainText("set_memory_limit demo/demo-app container demo-app → 256Mi");
   await expect(page.locator(".timeline-step.current")).toContainText("Awaiting review");
@@ -66,7 +67,7 @@ test("a low-confidence run with no proposal shows its flags and untrusted eviden
   const result = page.getByLabel("Result of get_pod_logs");
   await expect(result).toBeHidden();
   await page.getByText(/^get_pod_logs\(/).click();
-  await expect(result).toContainText('<script>alert("pwned")</script>');
+  await expect(result).toContainText("<script>alert(1)</script>");
   await expect(card(page, "Evidence").locator("script")).toHaveCount(0);
 });
 
@@ -89,7 +90,7 @@ test("a triaging incident polls until the analysis arrives, then stops", async (
   await expect(card(page, "Agent analysis")).toContainText("The agent is triaging this incident");
   await expect(page.getByText("Refreshing every 5 s")).toBeVisible();
 
-  await expect(card(page, "Agent analysis")).toContainText("readiness probe on demo-app", { timeout: 15_000 });
+  await expect(card(page, "Agent analysis")).toContainText("probes call /not-a-health-check", { timeout: 15_000 });
   await expect(page.locator(".detail-tags")).toContainText("Awaiting review");
   await expect(page.getByText("Refreshing every 5 s")).toHaveCount(0);
 

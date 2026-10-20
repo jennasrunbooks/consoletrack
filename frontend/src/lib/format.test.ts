@@ -10,8 +10,8 @@ describe("changeLabel", () => {
 describe("incidentTitle", () => {
   it("joins workload and alert name", () => {
     expect(
-      incidentTitle({ id: 12, alertname: "CrashLoopBackOff", namespace: "demo", workload: "demo-app", status: "open" }),
-    ).toBe("INC-12: demo-app CrashLoopBackOff");
+      incidentTitle({ id: 12, alertname: "DemoAppHighErrorRate", namespace: "demo", workload: "demo-app", status: "open" }),
+    ).toBe("INC-12: demo-app DemoAppHighErrorRate");
     expect(incidentTitle({ id: 3, alertname: "NodeDown", namespace: null, workload: null, status: "open" })).toBe(
       "INC-3: NodeDown",
     );
