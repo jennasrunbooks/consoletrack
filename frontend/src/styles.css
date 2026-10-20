@@ -42,6 +42,10 @@
   --down: #ef4444;
   --replay: #9aa1ab;
 
+  --accent-bg: #1d4a7d;
+  --accent-text: #ffffff;
+  --code-bg: #f3f4f6;
+
   --error-text: #b42318;
   --panel-shadow: 0 12px 32px rgb(15 23 42 / 0.18);
 
@@ -81,6 +85,10 @@
   --violet-bg: #33274f;
   --violet-text: #c6b2f6;
 
+  --accent-bg: #4a86d0;
+  --accent-text: #ffffff;
+  --code-bg: #111317;
+
   --error-text: #f39b92;
   --panel-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
   color-scheme: dark;
@@ -115,7 +123,8 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
@@ -483,6 +492,11 @@ select {
   color: var(--chip-active-text);
 }
 
+.button-accent {
+  background: var(--accent-bg);
+  color: var(--accent-text);
+}
+
 .button-secondary {
   border-color: var(--border-strong);
   background: var(--surface);
@@ -520,7 +534,8 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   min-height: 40px;
   padding: 8px 12px;
   border: 1px solid var(--border-strong);
@@ -528,7 +543,19 @@ select {
   background: var(--surface);
 }
 
-input::placeholder {
+textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+input:disabled,
+textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+input::placeholder,
+textarea::placeholder {
   color: var(--text-subtle);
 }
 
@@ -837,6 +864,43 @@ table.changes {
   color: var(--violet-text);
 }
 
+.incident-open,
+.incident-awaiting_review,
+.remediation-proposed {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.incident-triaging,
+.incident-remediating,
+.remediation-approved,
+.remediation-running {
+  background: var(--violet-bg);
+  color: var(--violet-text);
+}
+
+.incident-resolved,
+.incident-closed,
+.remediation-succeeded,
+.remediation-rejected,
+.severity-other,
+.flag-info {
+  background: var(--neutral-bg);
+  color: var(--neutral-text);
+}
+
+.severity-critical,
+.remediation-failed,
+.flag-warning {
+  background: var(--high-bg);
+  color: var(--high-text);
+}
+
+.severity-warning {
+  background: var(--medium-bg);
+  color: var(--medium-text);
+}
+
 .linked-incident {
   display: block;
   margin-top: 6px;
@@ -862,6 +926,354 @@ table.changes {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* --- Detail pages (incident; change detail follows the same layout) ------------------------ */
+
+.back-link {
+  display: inline-block;
+  font-size: 16px;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.detail-title {
+  margin-top: 14px;
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.detail .lede {
+  margin-top: 8px;
+}
+
+.detail > .table-banner {
+  margin-top: 16px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  align-items: start;
+  gap: 28px;
+  margin-top: 28px;
+}
+
+.detail-main,
+.detail-side {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.card {
+  padding: 24px 28px 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+
+.card h2 {
+  margin-bottom: 14px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.card h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.card-lede {
+  margin: -6px 0 14px;
+}
+
+.card-state > * + * {
+  margin-top: 10px;
+}
+
+.analysis > * + * {
+  margin-top: 12px;
+}
+
+.analysis p {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.analysis .analysis-meta {
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
+
+.flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence-run {
+  margin: 8px 0 6px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.evidence-item summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.evidence-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.evidence-item summary::after {
+  content: "Show result";
+  margin-left: auto;
+  flex: none;
+  color: var(--link);
+  font-size: 13px;
+}
+
+.evidence-item[open] summary::after {
+  content: "Hide result";
+}
+
+.evidence-seq {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--info-bg);
+  color: var(--info-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.evidence-call {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.evidence-result {
+  margin: 6px 0 4px 42px;
+  padding: 12px 14px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.remediation > * + *,
+.reject-form > * + *,
+.rerun-form > * + * {
+  margin-top: 10px;
+}
+
+.remediation-fix {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  font-size: 14px;
+}
+
+.reject-form {
+  display: block;
+  margin-top: 16px;
+}
+
+.reject-form label,
+.rerun-form label {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.rerun-form {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.rerun-form input {
+  width: 100%;
+}
+
+.tip-anchor:has(> .button.full) {
+  display: flex;
+}
+
+.card .button.full {
+  min-height: 42px;
+}
+
+.timeline {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
+
+.timeline-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 24px;
+  bottom: -12px;
+  width: 2px;
+  background: var(--border-strong);
+}
+
+.timeline-step.done:not(:last-child)::before {
+  background: var(--live);
+}
+
+.timeline-dot {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.timeline-step.done .timeline-dot {
+  border-color: var(--live);
+  background: var(--live);
+}
+
+.timeline-step.current .timeline-dot {
+  border-color: var(--accent-bg);
+  background: var(--accent-bg);
+  box-shadow: 0 0 0 4px var(--info-bg);
+}
+
+.timeline-step.upcoming .timeline-label {
+  color: var(--text-subtle);
+}
+
+.timeline-step.current .timeline-label {
+  font-weight: 600;
+}
+
+.facts {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.facts > div {
+  display: contents;
+}
+
+.facts dt {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.facts dd {
+  margin: 0 0 12px;
+}
+
+.facts > dd:last-child {
+  margin-bottom: 0;
+}
+
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.labels li {
+  padding: 1px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font-size: 12.5px;
+}
+
+.linked-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.live-note::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--violet-text);
+  vertical-align: middle;
 }
 
 /* --- Login -------------------------------------------------------------------------------- */
@@ -936,6 +1348,10 @@ table.changes {
   .tiles {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -955,6 +1371,14 @@ table.changes {
 
   .page {
     padding: 24px 16px 40px;
+  }
+
+  .card {
+    padding: 18px 16px 20px;
+  }
+
+  .evidence-result {
+    margin-left: 0;
   }
 
   .search,

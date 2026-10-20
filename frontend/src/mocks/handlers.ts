@@ -1,4 +1,4 @@
-// MSW handlers for every endpoint PR 1 uses, shared by tests (msw/node) and `npm run dev:mock`
+// MSW handlers for every endpoint the UI uses, shared by tests (msw/node) and `npm run dev:mock`
 // (msw/browser). They follow openapi.yaml: the same filters, the `counts` rules, and `Error`
 // bodies, so the UI can't lean on behavior the backend won't have.
 import { HttpResponse, http, type PathParams } from "msw";
@@ -8,12 +8,24 @@ import type {
   ChangeStatus,
   ChangeSummary,
   ErrorBody,
+  EvidenceList,
+  Incident,
+  IncidentPage,
+  IncidentStatus,
+  IncidentSummary,
   IntakeHealth,
   Risk,
   User,
   Via,
 } from "../api";
-import { buildChanges, buildIntakeHealth, mockUsers } from "./fixtures";
+import {
+  buildChanges,
+  buildEvidence,
+  buildIncidents,
+  buildIntakeHealth,
+  finishedTriage,
+  mockUsers,
+} from "./fixtures";
 
 const API = "*/api/v1";
 
@@ -30,6 +42,18 @@ export const CHANGE_STATUSES: ChangeStatus[] = [
   "codified",
   "failed",
 ];
+export const INCIDENT_STATUSES: IncidentStatus[] = [
+  "open",
+  "triaging",
+  "awaiting_review",
+  "remediating",
+  "resolved",
+  "closed",
+];
+/** TRIAGE_MODEL and TRIAGE_MODEL_ESCALATION from .env.example; the backend rejects any other. */
+export const TRIAGE_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5"];
+/** How long a mock triage run takes before its analysis appears. */
+export const MOCK_TRIAGE_MS = 6_000;
 const CLOSED: ChangeStatus[] = ["reverted", "accepted", "codified"];
 const RISKS: Risk[] = ["low", "medium", "high"];
 const VIAS: Via[] = ["console", "cli", "cloudshell", "sdk", "terraform_outside_pipeline"];
@@ -48,23 +72,71 @@ export const mockSession = {
 export const mockDb = {
   changes: buildChanges(),
   intake: buildIntakeHealth() as IntakeHealth,
+  incidents: buildIncidents(),
+  evidence: buildEvidence(),
+  /** When each triaging incident's run finishes (ms since epoch), with the model it runs on. */
+  triage: initialTriage(),
   reset() {
     this.changes = buildChanges();
     this.intake = buildIntakeHealth();
+    this.incidents = buildIncidents();
+    this.evidence = buildEvidence();
+    this.triage = initialTriage();
   },
 };
+
+function initialTriage(): Record<number, { doneAt: number; model: string }> {
+  return { 15: { doneAt: Date.now() + MOCK_TRIAGE_MS, model: TRIAGE_MODELS[0]! } };
+}
+
+/** Finishes a triage run whose time is up, the way the worker would. */
+function settleTriage(incident: Incident): Incident {
+  const run = mockDb.triage[incident.id];
+  if (incident.status !== "triaging" || !run || Date.now() < run.doneAt) return incident;
+  delete mockDb.triage[incident.id];
+  const runId = Math.max(0, ...mockDb.incidents.map((i) => i.analysis?.agent_run.id ?? 0)) + 1;
+  const fresh = finishedTriage(incident.id, runId, run.model);
+  // A re-run keeps the earlier conclusions in the mock; a first run gets the canned analysis.
+  const analysis = incident.analysis
+    ? { ...incident.analysis, id: runId, agent_run: { ...fresh.agent_run } }
+    : fresh;
+  Object.assign(incident, { status: "awaiting_review", analysis } satisfies Partial<Incident>);
+  return incident;
+}
+
+const toSummary = (i: Incident): IncidentSummary => ({
+  id: i.id,
+  alertname: i.alertname,
+  severity: i.severity,
+  namespace: i.namespace,
+  workload: i.workload,
+  status: i.status,
+  opened_at: i.opened_at,
+  resolved_at: i.resolved_at,
+  linked_changes: i.linked_changes.map((l) => l.change),
+});
 
 export const errorResponse = (status: number, code: string, message: string, init: ResponseInit = {}) =>
   HttpResponse.json<ErrorBody>({ code, message }, { status, ...init });
 
 const unauthorized = () => errorResponse(401, "unauthorized", "Log in to continue.");
+const forbidden = () => errorResponse(403, "forbidden", "This action requires the admin role.");
+const notFound = (what: string) => errorResponse(404, "not_found", `${what} not found`);
 
-function validationError(field: string, msg: string) {
+/** Null when the session may write, else the 401 or 403 the backend would send. */
+const adminCheck = () => (!mockSession.user ? unauthorized() : mockSession.user.role !== "admin" ? forbidden() : null);
+
+function findIncident(id: string | readonly string[] | undefined): Incident | undefined {
+  const incident = mockDb.incidents.find((i) => String(i.id) === id);
+  return incident && settleTriage(incident);
+}
+
+function validationError(field: string, msg: string, where: "query" | "body" = "query") {
   return HttpResponse.json<ErrorBody>(
     {
       code: "validation_error",
       message: "Request validation failed.",
-      details: [{ loc: ["query", field], msg, type: "value_error" }],
+      details: [{ loc: [where, field], msg, type: "value_error" }],
     },
     { status: 422 },
   );
@@ -168,6 +240,103 @@ export const handlers = [
       counts: countsFor(filtered, Date.now()),
     });
   }),
+
+  http.get<PathParams, never, Body<IncidentPage>>(`${API}/incidents`, ({ request }) => {
+    if (!mockSession.user) return unauthorized();
+    const params = new URL(request.url).searchParams;
+    const status = enumValues(params, "status", INCIDENT_STATUSES);
+    if (typeof status === "string") return validationError("status", `Invalid status: ${status}`);
+    const severity = params.get("severity");
+    const namespace = params.get("namespace");
+    const page = Number(params.get("page") ?? 1);
+    const pageSize = Number(params.get("page_size") ?? 25);
+    if (!Number.isInteger(page) || page < 1) return validationError("page", "Must be at least 1");
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      return validationError("page_size", "Must be between 1 and 100");
+    }
+    const matching = mockDb.incidents
+      .map(settleTriage)
+      .filter((i) => status.length === 0 || status.includes(i.status))
+      .filter((i) => !severity || i.severity === severity)
+      .filter((i) => !namespace || i.namespace === namespace)
+      .sort((a, b) => Date.parse(b.opened_at) - Date.parse(a.opened_at));
+    const start = (page - 1) * pageSize;
+    return HttpResponse.json<IncidentPage>({
+      items: matching.slice(start, start + pageSize).map(toSummary),
+      total: matching.length,
+      page,
+      page_size: pageSize,
+    });
+  }),
+
+  http.get<{ id: string }, never, Body<Incident>>(`${API}/incidents/:id`, ({ params }) => {
+    if (!mockSession.user) return unauthorized();
+    const incident = findIncident(params.id);
+    return incident ? HttpResponse.json<Incident>(incident) : notFound(`incident ${params.id}`);
+  }),
+
+  http.post<{ id: string }, { model?: string | null } | null, Body<Incident>>(
+    `${API}/incidents/:id/triage`,
+    async ({ params, request }) => {
+      const denied = adminCheck();
+      if (denied) return denied;
+      const incident = findIncident(params.id);
+      if (!incident) return notFound(`incident ${params.id}`);
+      const body = await request.json().catch(() => null);
+      const model = body?.model ?? null;
+      if (model !== null && !TRIAGE_MODELS.includes(model)) {
+        return errorResponse(422, "validation_error", `model must be one of: ${TRIAGE_MODELS.join(", ")}`);
+      }
+      if (incident.status !== "open" && incident.status !== "awaiting_review") {
+        return errorResponse(409, "invalid_state_transition", `triage_started is not allowed from ${incident.status}`);
+      }
+      incident.status = "triaging";
+      mockDb.triage[incident.id] = { doneAt: Date.now() + MOCK_TRIAGE_MS, model: model ?? TRIAGE_MODELS[0]! };
+      return HttpResponse.json<Incident>(incident, { status: 202 });
+    },
+  ),
+
+  // Approve and Reject answer 501 until the policy gate ships (#34), exactly like the backend.
+  http.post<{ id: string }, never, Body<Incident>>(`${API}/incidents/:id/remediation/approve`, ({ params }) => {
+    const denied = adminCheck();
+    if (denied) return denied;
+    return errorResponse(
+      501,
+      "not_implemented",
+      `POST /api/v1/incidents/${params.id}/remediation/approve is not implemented yet; it ships with #34 (validator, policy gate, and apply)`,
+    );
+  }),
+
+  http.post<{ id: string }, { reason?: string } | null, Body<Incident>>(
+    `${API}/incidents/:id/remediation/reject`,
+    async ({ params, request }) => {
+      const denied = adminCheck();
+      if (denied) return denied;
+      const body = await request.json().catch(() => null);
+      if (!body?.reason?.trim()) return validationError("reason", "Field required", "body");
+      return errorResponse(
+        501,
+        "not_implemented",
+        `POST /api/v1/incidents/${params.id}/remediation/reject is not implemented yet; it ships with #34 (validator, policy gate, and apply)`,
+      );
+    },
+  ),
+
+  http.get<{ subject: string; id: string }, never, Body<EvidenceList>>(
+    `${API}/:subject/:id/evidence`,
+    ({ params }) => {
+      if (!mockSession.user) return unauthorized();
+      if (params.subject === "incidents") {
+        if (!findIncident(params.id)) return notFound(`incident ${params.id}`);
+        return HttpResponse.json<EvidenceList>({ items: mockDb.evidence[Number(params.id)] ?? [] });
+      }
+      if (params.subject === "changes") {
+        if (!mockDb.changes.some((c) => String(c.id) === params.id)) return notFound(`change ${params.id}`);
+        return HttpResponse.json<EvidenceList>({ items: [] });
+      }
+      return validationError("subject", "Input should be 'changes' or 'incidents'");
+    },
+  ),
 
   http.get<PathParams, never, Body<IntakeHealth>>(`${API}/intake/health`, () =>
     mockSession.user ? HttpResponse.json<IntakeHealth>(mockDb.intake) : unauthorized(),

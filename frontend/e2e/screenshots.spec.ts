@@ -24,5 +24,24 @@ for (const theme of ["light", "dark"] as const) {
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: `${OUT}change-log${suffix}.png`, fullPage: true, animations: "disabled" });
     });
+
+    test("incidents", async ({ page }) => {
+      await logIn(page, "admin");
+      await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Incidents" }).click();
+      await expect(page.getByRole("link", { name: "KubePodOOMKilled" })).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: `${OUT}incidents${suffix}.png`, fullPage: true, animations: "disabled" });
+    });
+
+    test("incident detail", async ({ page }) => {
+      await logIn(page, "admin");
+      await page.goto("/incidents/14");
+      await expect(page.getByRole("heading", { level: 1, name: "KubePodOOMKilled" })).toBeVisible();
+      await expect(page.getByText(/^get_pods\(/)).toBeVisible();
+      // Open one result so the screenshot shows how evidence reads.
+      await page.getByText(/^get_events\(/).click();
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: `${OUT}incident-detail${suffix}.png`, fullPage: true, animations: "disabled" });
+    });
   });
 }

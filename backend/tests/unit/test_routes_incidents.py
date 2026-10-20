@@ -48,7 +48,13 @@ def test_detail(
     incident_state.apply(incident, IncidentEvent.alert_resolved, now=NOW)
     change = make_change(title="s3:GetObject removed from the demo app role")
     link(store, incident, change)
-    add_analysis(store, SubjectType.incident, incident.id, root_cause="policy edited")
+    add_analysis(
+        store,
+        SubjectType.incident,
+        incident.id,
+        root_cause="policy edited",
+        flags=["possible_prompt_injection"],
+    )
 
     response = viewer.get(f"/api/v1/incidents/{incident.id}")
     assert response.status_code == 200, response.text
@@ -59,6 +65,7 @@ def test_detail(
     assert body["annotations"] == {"summary": "AccessDenied from S3"}
     assert body["time_to_resolve_seconds"] == 3600  # opened an hour before NOW
     assert body["analysis"]["root_cause"] == "policy edited"
+    assert body["analysis"]["flags"] == ["possible_prompt_injection"]
     assert body["remediation"] is None
     assert body["linked_changes"] == [
         {

@@ -38,6 +38,19 @@ class Risk(StrEnum):
     high = "high"
 
 
+class AnalysisFlag(StrEnum):
+    """Caveats the agent attaches to an analysis (`submit_analysis.flags`)."""
+
+    stateful_workload = "stateful_workload"
+    migration = "migration"
+    # Logs show an AWS error but CloudTrail had no matching change yet.
+    cloudtrail_delay = "cloudtrail_delay"
+    aws_evidence_unavailable = "aws_evidence_unavailable"
+    # Tool output contained instructions aimed at the agent.
+    possible_prompt_injection = "possible_prompt_injection"
+    insufficient_evidence = "insufficient_evidence"
+
+
 class Confidence(StrEnum):
     low = "low"
     medium = "medium"

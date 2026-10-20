@@ -489,6 +489,15 @@ export interface components {
         /** @enum {string} */
         Confidence: "low" | "medium" | "high";
         /**
+         * @description Caveats the agent attaches to an analysis. `possible_prompt_injection`: tool output
+         *     contained instructions aimed at the agent. `aws_evidence_unavailable`: the AWS lookups
+         *     failed or weren't available. `cloudtrail_delay`: logs show an AWS error but CloudTrail had
+         *     no matching change yet. `insufficient_evidence`: not enough to conclude.
+         *     `stateful_workload` and `migration` mark a fix that needs extra care.
+         * @enum {string}
+         */
+        AnalysisFlag: "stateful_workload" | "migration" | "cloudtrail_delay" | "aws_evidence_unavailable" | "possible_prompt_injection" | "insufficient_evidence";
+        /**
          * @description The reviewer's choice, set when the change leaves `awaiting_review`.
          * @enum {string}
          */
@@ -816,6 +825,7 @@ export interface components {
             /** @description For incidents; null for a change with no symptom. */
             root_cause: string | null;
             confidence: components["schemas"]["Confidence"];
+            flags: components["schemas"]["AnalysisFlag"][];
             /** @description Markdown, editable by an admin. Render with HTML disabled. */
             postmortem_md: string | null;
             agent_run: components["schemas"]["AgentRun"];

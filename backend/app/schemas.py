@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.enums import (
     AgentRunOutcome,
+    AnalysisFlag,
     ChangeDecision,
     ChangeStatus,
     Confidence,
@@ -132,6 +133,7 @@ class Analysis(BaseModel):
     risk_reason: str | None
     root_cause: str | None
     confidence: Confidence
+    flags: list[AnalysisFlag]
     postmortem_md: str | None
     agent_run: AgentRun
 

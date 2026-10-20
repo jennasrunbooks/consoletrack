@@ -4,8 +4,9 @@ React + Vite + TypeScript dashboard for ConsoleTrack. Screens follow
 [`../docs/mockups/`](../docs/mockups/) in both themes; the contract is
 [`../openapi.yaml`](../openapi.yaml).
 
-Built so far (#13, PR 1): app shell, login, intake indicator, change log. Change detail,
-incidents, evidence, and the postmortem editor come in PR 2; their routes are placeholders.
+Built so far (#13): app shell, login, intake indicator, change log (PR 1); incident list and
+incident detail with evidence, Approve/Reject, and Re-run triage (PR 2a). Change detail and the
+postmortem editor come in PR 2b; the change detail route is a placeholder.
 
 ## Commands
 
@@ -28,8 +29,10 @@ src/api/          the only code that calls the backend
   schema.d.ts     generated from ../openapi.yaml by `npm run gen:api` (don't edit; CI checks it)
   client.ts       typed calls (openapi-fetch), one ApiError for every non-2xx
 src/auth/         session state from GET /auth/me; login and logout
-src/components/   shell: header, intake indicator, user menu, theme toggle, AdminButton
-src/pages/        login, change log (filters in the URL), PR 2 placeholders
+src/components/   shell: header, intake indicator, user menu, theme toggle, AdminButton,
+                  Pagination, EvidenceList
+src/pages/        login, change log and incident list (filters in the URL), incident detail
+                  (polls every 5 s while open or triaging), change detail placeholder
 src/lib/          formatting, theme, small data hooks
 src/mocks/        MSW handlers + fixtures shared by tests and `npm run dev:mock`
 src/test/         Vitest setup and render helpers
