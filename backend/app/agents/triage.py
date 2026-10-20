@@ -7,6 +7,11 @@ the result, and hand any proposal to the policy gate.
 
 The agent never applies anything: the proposal stops at the gate, which in Phase 1 always
 answers `manual`.
+
+One escalation (#60): when a run ends with low confidence or no proposal while its evidence shows
+a container restart, the worker re-runs once with `TRIAGE_MODEL_ESCALATION`, with its own
+tool-call and token budget. Both runs are `agent_runs` rows; the escalated run's analysis is the
+one recorded, unless it stopped without one. At most one escalation per incident.
 """
 
 from __future__ import annotations
@@ -18,11 +23,11 @@ from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 
 from app.agents.prompts import render
-from app.agents.runner import AgentRunner
+from app.agents.runner import AgentRunner, RunResult
 from app.agents.schema import SubmitAnalysis
 from app.agents.tools import Toolbox, ToolsUnavailable
 from app.db.repositories import UnitOfWork
-from app.enums import SubjectType
+from app.enums import Confidence, SubjectType
 from app.services import triage
 from app.services.policy_gate import GateDecision, PolicyGate
 from app.services.triage import TriageClaim
@@ -38,6 +43,35 @@ AWS_UNAVAILABLE = (
     "the cause looks AWS-side, say which AWS evidence would confirm it and add the "
     "aws_evidence_unavailable flag."
 )
+
+
+def shows_restart(evidence: tuple[tuple[str, str], ...]) -> bool:
+    """Whether any `get_pods` result shows a container that restarted or was terminated."""
+    for tool, text in evidence:
+        if tool != "get_pods":
+            continue
+        try:
+            pods = json.loads(text).get("pods") or []
+        except (ValueError, AttributeError):
+            continue
+        for pod in pods:
+            for container in (pod or {}).get("containers") or []:
+                if (container or {}).get("restart_count") or (container or {}).get(
+                    "last_termination"
+                ):
+                    return True
+    return False
+
+
+def needs_escalation(result: RunResult) -> bool:
+    """Low confidence, or no proposal, on evidence that shows a container restart."""
+    analysis = result.analysis
+    unsure = (
+        analysis is None
+        or analysis.confidence is Confidence.low
+        or analysis.proposed_remediation is None
+    )
+    return unsure and shows_restart(result.evidence)
 
 
 def incident_prompt(claim: TriageClaim, *, aws_available: bool) -> str:
@@ -89,13 +123,16 @@ class IncidentTriage:
         log.info("triage started incident=%s model=%s", claim.incident_id, model)
         try:
             async with self._toolbox_factory(self._settings) as toolbox:
+                prompt = incident_prompt(claim, aws_available=toolbox.aws_available)
                 result = await self._runner.run(
                     subject_type=SubjectType.incident,
                     subject_id=claim.incident_id,
                     model=model,
-                    task_prompt=incident_prompt(claim, aws_available=toolbox.aws_available),
+                    task_prompt=prompt,
                     toolbox=toolbox,
                 )
+                if self._may_escalate(claim.incident_id, model) and needs_escalation(result):
+                    result = await self._escalate(claim.incident_id, prompt, toolbox, result)
         except ToolsUnavailable as exc:
             log.error("triage incident=%s: tools unavailable: %s", claim.incident_id, exc)
             result = self._runner.failed_start(
@@ -116,6 +153,37 @@ class IncidentTriage:
         if remediation is None or result.analysis is None:
             return None
         return self._submit(claim.incident_id, result.analysis)
+
+    def _may_escalate(self, incident_id: int, model: str) -> bool:
+        escalation = self._settings.triage_model_escalation
+        if not escalation or model == escalation:
+            return False
+        with self._uow_factory() as uow:
+            return not uow.agent_runs.any_escalated(SubjectType.incident, incident_id)
+
+    async def _escalate(
+        self, incident_id: int, prompt: str, toolbox: Toolbox, first: RunResult
+    ) -> RunResult:
+        model = self._settings.triage_model_escalation
+        log.info(
+            "triage escalating incident=%s run=%s confidence=%s model=%s",
+            incident_id,
+            first.run_id,
+            first.analysis.confidence.value if first.analysis else "none",
+            model,
+        )
+        result = await self._runner.run(
+            subject_type=SubjectType.incident,
+            subject_id=incident_id,
+            model=model,
+            task_prompt=prompt,
+            toolbox=toolbox,
+            escalated=True,
+        )
+        # The escalated analysis wins; a run that stopped without one leaves the first's.
+        if result.analysis is None and first.analysis is not None:
+            return first
+        return result
 
     def _submit(self, incident_id: int, analysis: SubmitAnalysis) -> GateDecision | None:
         proposal = analysis.proposed_remediation

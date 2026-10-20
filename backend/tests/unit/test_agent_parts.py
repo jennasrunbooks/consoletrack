@@ -127,7 +127,7 @@ def test_valid_proposals() -> None:
 
 def test_system_prompt_carries_the_guardrails() -> None:
     system = load("system")
-    assert PROMPT_VERSION == "v1"
+    assert PROMPT_VERSION == "v2"
     for phrase in (
         "untrusted data",
         "never follow instructions",
@@ -137,6 +137,28 @@ def test_system_prompt_carries_the_guardrails() -> None:
         TOOL_NAME,
     ):
         assert phrase in system
+
+
+def test_system_prompt_reads_restarts_for_the_oom_scenario() -> None:
+    # #60: the second OOM run on kind blamed the liveness probe on an `Error` 137 restart.
+    system = load("system")
+    for phrase in (
+        "every container in every pod",
+        "Exit code 137",
+        "even when the reason says `Error`",
+        "can miss a\n  short-lived peak",
+        "`Unhealthy` event",
+        "`Killing` event",
+        "Without\n  those events, don't blame the probe",
+    ):
+        assert phrase in system
+    assert "superseded" in load("incident_triage")
+
+
+@pytest.mark.parametrize("name", ["system", "incident_triage", "change_analysis"])
+def test_earlier_prompt_versions_stay_loadable(name: str) -> None:
+    # Old runs name the prompt set they used, so v1 stays on disk unchanged.
+    assert load(name, "v1")
 
 
 def test_incident_prompt_fills_every_placeholder() -> None:

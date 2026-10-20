@@ -170,6 +170,8 @@ def _analysis(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
         agent_run=AgentRun(
             id=run.id,
             model=run.model,
+            prompt_version=run.prompt_version,
+            escalated=run.escalated,
             started_at=run.started_at,
             finished_at=run.finished_at,
             tool_calls=uow.evidence.count_for_run(run.id),

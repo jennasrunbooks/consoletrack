@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     triage_token_budget: int = 200_000
     triage_max_output_tokens: int = 8_192
     # How long a claimed incident stays the worker's before another worker may claim it again
-    # (a crashed run). Longer than the run's own timeout.
+    # (a crashed run). Longer than two runs' timeouts: a low-confidence run gets one escalation.
     triage_lease_seconds: int = 300
     mcp_call_timeout_seconds: float = 30
     worker_poll_seconds: float = 5

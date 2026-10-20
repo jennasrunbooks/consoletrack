@@ -160,8 +160,11 @@ def k8s_oom(*, log_lines: str = OOM_LOG) -> FakeToolProvider:
                                 "ready": False,
                                 "restart_count": 6,
                                 "state": {"waiting": {"reason": "CrashLoopBackOff"}},
-                                "last_state": {
-                                    "terminated": {"reason": "OOMKilled", "exit_code": 137}
+                                "last_termination": {
+                                    "reason": "OOMKilled",
+                                    "exit_code": 137,
+                                    "started": "2026-10-16T11:57:58Z",
+                                    "finished": "2026-10-16T11:58:01Z",
                                 },
                             }
                         ],

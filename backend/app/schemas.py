@@ -115,6 +115,8 @@ class Drift(BaseModel):
 class AgentRun(BaseModel):
     id: Int64
     model: str
+    prompt_version: str | None
+    escalated: bool
     started_at: datetime
     finished_at: datetime | None
     tool_calls: NonNegativeInt

@@ -124,14 +124,21 @@ flowchart LR
   agent's title and risk. The agent can raise the intake's risk, never lower it, and a proposal
   for a change is dropped: the reviewer picks Revert, Codify, or Accept. A run that stops early
   leaves the change `detected`.
-- **Prompts** are files in `app/agents/prompts/` (`system_v1.md`, `incident_triage_v1.md`,
-  `change_analysis_v1.md`); a wording change is a new version, not an edit.
+- **Escalation.** A triage run that ends with low confidence or no proposal, when its `get_pods`
+  evidence shows a container restart, is re-run once with `TRIAGE_MODEL_ESCALATION` (its own
+  tool-call and token budget, `agent_runs.escalated = true`). The escalated analysis is the one
+  recorded unless that run stopped without one. At most one escalation per incident, and none
+  for a run already on the escalation model.
+- **Prompts** are files in `app/agents/prompts/` (`system_vN.md`, `incident_triage_vN.md`,
+  `change_analysis_vN.md`, now `v2`); a wording change is a new version, not an edit, and every
+  `agent_runs` row records the version it used (`prompt_version`).
 
 ## Database
 
 Seven tables, from `product-spec.md` → Workflow and data model, created by
 `backend/app/db/migrations/versions/0001_initial_schema.py`; `0002_triage_queue.py` adds the
-triage queue columns, `analyses.flags`, and the `limit_reached` and `set_memory_limit` values. `make db-sql` prints the whole
+triage queue columns, `analyses.flags`, and the `limit_reached` and `set_memory_limit` values;
+`0003_agent_run_prompt_escalation.py` adds `agent_runs.prompt_version` and `escalated`. `make db-sql` prints the whole
 schema without a database.
 
 - Enums are `VARCHAR(32)` plus a named `CHECK` constraint, not native Postgres enum types, so a

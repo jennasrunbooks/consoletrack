@@ -69,7 +69,7 @@ CANNED: list[tuple[str, str, dict[str, Any], dict[str, Any]]] = [
                             "ready": False,
                             "restart_count": 7,
                             "state": {"waiting": {"reason": "CrashLoopBackOff"}},
-                            "last_state": {"terminated": {"reason": "OOMKilled", "exit_code": 137}},
+                            "last_termination": {"reason": "OOMKilled", "exit_code": 137},
                         }
                     ],
                 }
