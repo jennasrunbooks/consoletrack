@@ -130,7 +130,7 @@ flowchart LR
   recorded unless that run stopped without one. At most one escalation per incident, and none
   for a run already on the escalation model.
 - **Prompts** are files in `app/agents/prompts/` (`system_vN.md`, `incident_triage_vN.md`,
-  `change_analysis_vN.md`, now `v2`); a wording change is a new version, not an edit, and every
+  `change_analysis_vN.md`, now `v3`); a wording change is a new version, not an edit, and every
   `agent_runs` row records the version it used (`prompt_version`).
 
 ## Database
