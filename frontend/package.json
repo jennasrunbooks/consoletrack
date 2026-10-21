@@ -27,9 +27,12 @@
     "openapi-fetch": "0.17.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "react-router-dom": "7.18.4"
+    "react-markdown": "10.1.0",
+    "react-router-dom": "7.18.4",
+    "rehype-sanitize": "6.0.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.64.1",
     "@testing-library/dom": "10.4.2",

@@ -7,19 +7,20 @@ import {
   listEvidence,
   rejectRemediation,
   triageIncident,
-  type Analysis,
   type Incident,
   type IncidentStatus,
   type Remediation,
   type RemediationKind,
 } from "../../api";
 import { AdminButton } from "../../components/AdminButton";
+import { AnalysisDetails } from "../../components/AnalysisDetails";
 import { EvidenceList } from "../../components/EvidenceList";
+import { OutcomeNote } from "../../components/OutcomeNote";
+import { outcomeFor, type Outcome } from "../../lib/outcome";
 import { useUser } from "../../auth/AuthProvider";
 import {
   changeLabel,
   duration,
-  FLAG_LABELS,
   fullTime,
   INCIDENT_STATUS_LABELS,
   incidentLabel,
@@ -27,14 +28,13 @@ import {
   proposedFix,
   relativeTime,
   REMEDIATION_STATUS_LABELS,
-  RISK_LABELS,
   safeHttpUrl,
   STATUS_LABELS,
-  WARNING_FLAGS,
 } from "../../lib/format";
 import { useNow } from "../../lib/useNow";
 import { useResource } from "../../lib/useResource";
 import { SeverityPill } from "./IncidentListPage";
+import { PostmortemCard } from "./PostmortemCard";
 import { changeText, remediationResult, valueChanges } from "./remediation";
 import { timelineSteps } from "./timeline";
 
@@ -147,6 +147,7 @@ function IncidentDetail({ id }: { id: number }) {
             </p>
             <EvidenceList evidence={evidence} />
           </section>
+          <PostmortemCard incident={data} onSaved={incident.reload} />
         </div>
 
         <aside className="detail-side">
@@ -182,12 +183,6 @@ function IncidentDetail({ id }: { id: number }) {
   );
 }
 
-function runSeconds(analysis: Analysis): number | null {
-  const { started_at, finished_at } = analysis.agent_run;
-  if (!finished_at) return null;
-  return Math.max(0, Math.round((Date.parse(finished_at) - Date.parse(started_at)) / 1000));
-}
-
 function AnalysisBody({ incident }: { incident: Incident }) {
   const a = incident.analysis;
   if (incident.status === "triaging" && !a) {
@@ -200,8 +195,6 @@ function AnalysisBody({ incident }: { incident: Incident }) {
   if (!a) {
     return <p className="muted">No analysis yet. An admin can re-run triage from the panel on the right.</p>;
   }
-  const seconds = runSeconds(a);
-  const run = a.agent_run;
   return (
     <div className="analysis">
       {incident.status === "triaging" && (
@@ -209,58 +202,12 @@ function AnalysisBody({ incident }: { incident: Incident }) {
           Re-running triage. This is the previous run's analysis until the new one finishes.
         </p>
       )}
-      {a.flags.length > 0 && (
-        <ul className="flags" aria-label="Flags">
-          {a.flags.map((flag) => (
-            <li key={flag} className={`pill ${WARNING_FLAGS.has(flag) ? "flag-warning" : "flag-info"}`}>
-              {FLAG_LABELS[flag] ?? flag}
-            </li>
-          ))}
-        </ul>
-      )}
-      <p>{a.summary}</p>
-      {a.root_cause && (
-        <p>
-          <strong>Root cause.</strong> {a.root_cause}
-        </p>
-      )}
-      {(a.risk || a.risk_reason) && (
-        <p>
-          <strong>Risk{a.risk ? `: ${RISK_LABELS[a.risk].toLowerCase()}` : ""}.</strong> {a.risk_reason}
-        </p>
-      )}
-      <p className="analysis-meta">
-        Confidence: {a.confidence} · {run.tool_calls} tool {run.tool_calls === 1 ? "call" : "calls"} ·{" "}
-        <span className="mono">{run.model}</span>
-        {seconds !== null && ` · ${duration(seconds)}`}
-        {run.prompt_version && ` · prompt ${run.prompt_version}`}
-        {run.escalated && " · escalated"}
-        {run.outcome !== "succeeded" && run.outcome !== "running" && ` · run ${run.outcome.replace("_", " ")}`}
-      </p>
+      <AnalysisDetails analysis={a} />
     </div>
   );
 }
 
 // --- Decision: the proposed fix, Approve / Reject, Re-run ---------------------------------------
-
-/** A message after an action; 501 means the backend can't do it yet. */
-type Outcome = { kind: "error" | "unavailable" | "done"; text: string } | null;
-
-function outcomeFor(err: unknown): Outcome {
-  if (err instanceof ApiError && err.status === 501) {
-    return { kind: "unavailable", text: `Not available yet: ${err.message}. Nothing was changed.` };
-  }
-  return { kind: "error", text: err instanceof Error ? err.message : String(err) };
-}
-
-function OutcomeNote({ outcome }: { outcome: Outcome }) {
-  if (!outcome) return null;
-  return (
-    <p className={outcome.kind === "error" ? "form-error" : "notice"} role={outcome.kind === "error" ? "alert" : "status"}>
-      {outcome.text}
-    </p>
-  );
-}
 
 function DecisionCard({ incident, onChanged }: { incident: Incident; onChanged: () => void }) {
   return (

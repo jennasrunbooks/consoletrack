@@ -559,7 +559,9 @@ paths:
       tags: [incidents]
       operationId: savePostmortem
       summary: Save the edited postmortem
-      description: Requires admin. Replaces the postmortem Markdown on the incident's analysis.
+      description: |
+        Requires admin. Replaces the postmortem Markdown on the incident's latest analysis (the
+        agent's draft, or an earlier edit). `409` if the agent hasn't written an analysis yet.
       security:
         - sessionCookie: [admin]
       parameters:

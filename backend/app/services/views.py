@@ -97,7 +97,7 @@ def change_detail(uow: UnitOfWork, row: ChangeRow) -> Change:
         decided_by=row.decided_by,
         decided_at=row.decided_at,
         reason=row.reason,
-        analysis=_analysis(uow, uow.analyses.latest_for(SubjectType.change, row.id)),
+        analysis=analysis_detail(uow, uow.analyses.latest_for(SubjectType.change, row.id)),
         drift=Drift.model_validate(row.drift) if row.drift else None,
         remediation=_remediation(uow.remediations.latest_for(SubjectType.change, row.id)),
         linked_incidents=[
@@ -143,7 +143,7 @@ def incident_detail(uow: UnitOfWork, row: IncidentRow) -> Incident:
         labels=row.labels,
         annotations=row.annotations,
         time_to_resolve_seconds=time_to_resolve,
-        analysis=_analysis(uow, uow.analyses.latest_for(SubjectType.incident, row.id)),
+        analysis=analysis_detail(uow, uow.analyses.latest_for(SubjectType.incident, row.id)),
         remediation=_remediation(uow.remediations.latest_for(SubjectType.incident, row.id)),
         linked_changes=[
             LinkedChange(change=change_ref(change), confidence=confidence)
@@ -152,7 +152,7 @@ def incident_detail(uow: UnitOfWork, row: IncidentRow) -> Incident:
     )
 
 
-def _analysis(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
+def analysis_detail(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
     if row is None:
         return None
     run = uow.agent_runs.get(row.agent_run_id)

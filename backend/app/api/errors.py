@@ -17,6 +17,7 @@ from app.services.errors import (
     InvalidModel,
     InvalidTransition,
     MissingReason,
+    NoAnalysis,
     NoProposedRemediation,
     NotFound,
     TooManyLoginAttempts,
@@ -117,6 +118,10 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(NoProposedRemediation)
     async def no_proposal(_: Request, exc: NoProposedRemediation) -> JSONResponse:
         return error_response(409, "no_proposed_remediation", str(exc))
+
+    @app.exception_handler(NoAnalysis)
+    async def no_analysis(_: Request, exc: NoAnalysis) -> JSONResponse:
+        return error_response(409, "no_analysis", str(exc))
 
     @app.exception_handler(UnsupportedRemediation)
     async def unsupported(_: Request, exc: UnsupportedRemediation) -> JSONResponse:
