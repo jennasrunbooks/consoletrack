@@ -23,6 +23,7 @@ describe("incident detail", () => {
     expect(analysis.getByText(/The 128Mi memory limit is below what demo-app needs at startup/)).toBeInTheDocument();
     expect(analysis.getByText("Risk: high.")).toBeInTheDocument();
     expect(analysis.getByText(/Confidence: high · 6 tool calls/)).toBeInTheDocument();
+    expect(analysis.getByText(/· prompt v2/)).toBeInTheDocument();
     expect(analysis.getByText("claude-haiku-5-5")).toBeInTheDocument();
     expect(analysis.queryByRole("list", { name: "Flags" })).toBeNull();
 
@@ -30,6 +31,9 @@ describe("incident detail", () => {
     expect(fix.getByText("set_memory_limit demo/demo-app container demo-app → 256Mi")).toBeInTheDocument();
     expect(fix.getByText(/128 MiB allocated \+ ~25 MiB baseline/)).toBeInTheDocument();
     expect(fix.getByRole("button", { name: "Approve fix" })).toBeEnabled();
+    // The chart's policy is auto; with the kill switch off the gate leaves it to an admin.
+    expect(fix.getByText("Manual")).toBeInTheDocument();
+    expect(fix.getByText(/kill switch: AUTOFIX_ENABLED is false/)).toBeInTheDocument();
 
     const alert = within(card("Alert"));
     expect(alert.getByText("DemoAppHighErrorRate", { selector: "dd" })).toBeInTheDocument();
@@ -97,10 +101,79 @@ describe("incident detail", () => {
     expect(screen.getByLabelText("Model (optional)")).toBeDisabled();
   });
 
-  it("says Approve isn't available yet while the backend answers 501", async () => {
+  it("approves a fix: the incident moves to remediating and the approval is the first step", async () => {
     const { user } = await renderIncident(14);
     await user.click(screen.getByRole("button", { name: "Approve fix" }));
-    expect(await screen.findByText(/Not available yet: approving a fix ships with the policy gate/)).toBeInTheDocument();
+    expect(await screen.findByText(/Fix approved/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("Remediating", { selector: ".detail-tags .pill" })).toBeInTheDocument(),
+    );
+    const steps = within(screen.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(steps[0]).toHaveTextContent("approved");
+    expect(steps[0]).toHaveTextContent("approved by admin");
+    expect(screen.queryByRole("button", { name: "Approve fix" })).toBeNull();
+    // An approved fix is still being applied, so the page keeps polling.
+    expect(screen.getByText("Refreshing every 5 s")).toBeInTheDocument();
+  });
+
+  it("can't approve a kind the backend can't apply yet, and shows a 501 as not available", async () => {
+    const r = mockDb.incidents.find((i) => i.id === 14)!.remediation!;
+    Object.assign(r, { kind: "rollback", payload: { kind: "rollback", namespace: "demo", deployment: "demo-app", to_revision: null } });
+    await renderIncident(14);
+    expect(screen.getByRole("button", { name: "Approve fix" })).toBeDisabled();
+    expect(screen.getByText(/only set_memory_limit fixes can be applied/)).toBeInTheDocument();
+  });
+
+  it("explains a 501 from the backend", async () => {
+    server.use(
+      http.post("*/api/v1/incidents/14/remediation/approve", () =>
+        HttpResponse.json(
+          { code: "not_implemented", message: "approving a rollback remediation is not available yet" },
+          { status: 501 },
+        ),
+      ),
+    );
+    const { user } = await renderIncident(14);
+    await user.click(screen.getByRole("button", { name: "Approve fix" }));
+    expect(
+      await screen.findByText("Not available yet: approving a rollback remediation is not available yet. Nothing was changed."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the conflict and reloads when someone else decided first", async () => {
+    server.use(
+      http.post("*/api/v1/incidents/14/remediation/approve", () =>
+        HttpResponse.json(
+          { code: "no_proposed_remediation", message: "incident 14 has no proposed remediation to decide on" },
+          { status: 409 },
+        ),
+      ),
+    );
+    const { user } = await renderIncident(14);
+    await user.click(screen.getByRole("button", { name: "Approve fix" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("incident 14 has no proposed remediation to decide on");
+  });
+
+  it("shows a fix the policy gate applied: mode, policy, the values it changed, and every step", async () => {
+    await renderIncident(11);
+    const fix = within(card("Proposed fix"));
+    expect(fix.getByText("Auto")).toBeInTheDocument();
+    expect(fix.getByText("Succeeded")).toBeInTheDocument();
+    expect(fix.getByText(/approved by policy:oom-memory-bump/)).toBeInTheDocument();
+    expect(fix.getByText("limits.memory 128Mi → 256Mi")).toBeInTheDocument();
+    const steps = within(fix.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(steps.map((li) => li.querySelector(".apply-step-name")!.textContent)).toEqual([
+      "claimed",
+      "read",
+      "validate",
+      "dry_run",
+      "patch",
+      "rollout",
+      "verify",
+      "succeeded",
+    ]);
+    expect(steps[6]).toHaveTextContent("the alert resolved");
+    expect(screen.queryByText("Refreshing every 5 s")).toBeNull();
   });
 
   it("requires a reason to reject, and sends it", async () => {
@@ -118,8 +191,10 @@ describe("incident detail", () => {
 
     await user.type(screen.getByLabelText("Reason (required to reject)"), "wrong container");
     await user.click(reject);
-    expect(await screen.findByText(/Not available yet: rejecting a fix/)).toBeInTheDocument();
+    expect(await screen.findByText("Fix rejected; incident closed.")).toBeInTheDocument();
     expect(bodies).toEqual([{ reason: "wrong container" }]);
+    await waitFor(() => expect(screen.getByText("Closed", { selector: ".detail-tags .pill" })).toBeInTheDocument());
+    expect(screen.getByText(/rejected by admin: wrong container/)).toBeInTheDocument();
   });
 
   it("re-runs triage with a model override and shows the run in progress", async () => {

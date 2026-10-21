@@ -39,8 +39,8 @@ describe("incident list", () => {
     expect(oom.getByText("Open 9 min")).toBeInTheDocument();
 
     expect(within(rows()[2]!).getByRole("link", { name: /Linked to CHG-0041/ })).toHaveAttribute("href", "/changes/41");
-    // Resolved 23 minutes after it opened.
-    expect(within(rows()[4]!).getByText("23 min")).toBeInTheDocument();
+    // Resolved 7 minutes after it opened.
+    expect(within(rows()[4]!).getByText("7 min")).toBeInTheDocument();
     expect(within(rows()[5]!).getByText("Closed unresolved")).toBeInTheDocument();
     expect(screen.getByText(/Showing 6 of 6 incidents/)).toBeInTheDocument();
   });

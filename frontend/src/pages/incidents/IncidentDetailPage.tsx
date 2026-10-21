@@ -11,6 +11,7 @@ import {
   type Incident,
   type IncidentStatus,
   type Remediation,
+  type RemediationKind,
 } from "../../api";
 import { AdminButton } from "../../components/AdminButton";
 import { EvidenceList } from "../../components/EvidenceList";
@@ -34,11 +35,20 @@ import {
 import { useNow } from "../../lib/useNow";
 import { useResource } from "../../lib/useResource";
 import { SeverityPill } from "./IncidentListPage";
+import { valueChanges } from "./remediation";
 import { timelineSteps } from "./timeline";
 
 /** While an incident is open or triaging the page polls, so the analysis appears without a reload. */
 export const INCIDENT_POLL_MS = 5_000;
 const POLLING: IncidentStatus[] = ["open", "triaging"];
+/** Kinds the backend's apply loop can run today (openapi.yaml → approveIncidentRemediation). */
+const APPLY_KINDS: RemediationKind[] = ["set_memory_limit"];
+
+/** Open or triaging, or an approved fix still going through the apply loop. */
+const isLive = (incident: Incident): boolean =>
+  POLLING.includes(incident.status) ||
+  incident.remediation?.status === "approved" ||
+  incident.remediation?.status === "running";
 // openapi.yaml → triageIncident: "Allowed from `open` and `awaiting_review`."
 const RERUNNABLE: IncidentStatus[] = ["open", "awaiting_review"];
 
@@ -67,8 +77,8 @@ function IncidentDetail({ id }: { id: number }) {
     pollMs: polling ? INCIDENT_POLL_MS : undefined,
   });
   const data = incident.data;
-  // Poll only while the incident is open or triaging; stop as soon as it moves on.
-  const shouldPoll = !data || POLLING.includes(data.status);
+  // Poll only while something is happening (triage or the apply loop); stop as soon as it settles.
+  const shouldPoll = !data || isLive(data);
   if (data && shouldPoll !== polling) setPolling(shouldPoll);
   const evidence = useResource(`evidence-${id}-${data?.analysis?.id ?? "none"}-${data?.status ?? ""}`, (signal) =>
     listEvidence("incidents", id, signal),
@@ -101,7 +111,7 @@ function IncidentDetail({ id }: { id: number }) {
         <SeverityPill severity={data.severity} />
         <span className={`pill incident-${data.status}`}>{INCIDENT_STATUS_LABELS[data.status]}</span>
         <span className="mono change-id">{incidentLabel(data.id)}</span>
-        {POLLING.includes(data.status) && (
+        {isLive(data) && (
           <span className="muted small live-note" role="status">
             Refreshing every {INCIDENT_POLL_MS / 1000} s
           </span>
@@ -223,6 +233,8 @@ function AnalysisBody({ incident }: { incident: Incident }) {
         Confidence: {a.confidence} · {run.tool_calls} tool {run.tool_calls === 1 ? "call" : "calls"} ·{" "}
         <span className="mono">{run.model}</span>
         {seconds !== null && ` · ${duration(seconds)}`}
+        {run.prompt_version && ` · prompt ${run.prompt_version}`}
+        {run.escalated && " · escalated"}
         {run.outcome !== "succeeded" && run.outcome !== "running" && ` · run ${run.outcome.replace("_", " ")}`}
       </p>
     </div>
@@ -231,15 +243,12 @@ function AnalysisBody({ incident }: { incident: Incident }) {
 
 // --- Decision: the proposed fix, Approve / Reject, Re-run ---------------------------------------
 
-/** A message after an action; 501 means the backend doesn't have the operation yet. */
+/** A message after an action; 501 means the backend can't do it yet. */
 type Outcome = { kind: "error" | "unavailable" | "done"; text: string } | null;
 
-function outcomeFor(err: unknown, action: string): Outcome {
+function outcomeFor(err: unknown): Outcome {
   if (err instanceof ApiError && err.status === 501) {
-    return {
-      kind: "unavailable",
-      text: `Not available yet: ${action} ships with the policy gate (#34). Nothing was changed.`,
-    };
+    return { kind: "unavailable", text: `Not available yet: ${err.message}. Nothing was changed.` };
   }
   return { kind: "error", text: err instanceof Error ? err.message : String(err) };
 }
@@ -290,6 +299,8 @@ function RemediationPanel({
   const why = proposalReason(r);
   const link = safeHttpUrl(r.external_url);
   const decidable = r.status === "proposed" && incident.status === "awaiting_review";
+  const applicable = APPLY_KINDS.includes(r.kind);
+  const changed = valueChanges(r.before, r.after);
 
   const run = async (action: "approve" | "reject") => {
     setBusy(action);
@@ -297,10 +308,18 @@ function RemediationPanel({
     try {
       if (action === "approve") await approveRemediation(incident.id);
       else await rejectRemediation(incident.id, reason.trim());
-      setOutcome({ kind: "done", text: action === "approve" ? "Fix approved." : "Fix rejected; incident closed." });
+      setOutcome({
+        kind: "done",
+        text:
+          action === "approve"
+            ? "Fix approved. The apply loop's steps appear below as it runs."
+            : "Fix rejected; incident closed.",
+      });
       onChanged();
     } catch (err) {
-      setOutcome(outcomeFor(err, action === "approve" ? "approving a fix" : "rejecting a fix"));
+      setOutcome(outcomeFor(err));
+      // 409: someone (or the policy gate) decided first; show what happened.
+      if (err instanceof ApiError && err.status === 409) onChanged();
     } finally {
       setBusy(null);
     }
@@ -317,7 +336,7 @@ function RemediationPanel({
       {why && <p className="remediation-reason">{why}</p>}
       <p className="muted small">
         <span className={`pill remediation-${r.status}`}>{REMEDIATION_STATUS_LABELS[r.status]}</span>
-        {r.decided_by && ` · decided by ${r.decided_by}`}
+        {r.decided_by && ` · ${r.status === "rejected" ? "rejected" : "approved"} by ${r.decided_by}`}
         {r.applied_at && ` · applied ${relativeTime(r.applied_at)}`}
         {link && (
           <>
@@ -328,19 +347,60 @@ function RemediationPanel({
           </>
         )}
       </p>
+      {r.mode && (
+        <p className="gate small">
+          <span className={`pill mode-${r.mode}`}>{r.mode === "auto" ? "Auto" : "Manual"}</span>
+          {r.policy && (
+            <>
+              {" "}
+              policy <span className="mono">{r.policy}</span>
+            </>
+          )}
+          {r.gate_reason && <span className="muted">: {r.gate_reason}</span>}
+        </p>
+      )}
+      {changed.length > 0 && (
+        <ul className="value-changes mono small" aria-label="Changes">
+          {changed.map((c) => (
+            <li key={c.path}>
+              {c.path} {c.before ?? "unset"} → {c.after ?? "unset"}
+            </li>
+          ))}
+        </ul>
+      )}
       {r.error && (
         <p className="form-error">
           <strong>Failed:</strong> {r.error}
         </p>
       )}
+      {r.steps.length > 0 && (
+        <ol className="apply-steps" aria-label="Steps">
+          {r.steps.map((step, i) => (
+            <li key={`${step.step}-${i}`} className={step.ok ? "ok" : "failed"}>
+              <span className="apply-step-name mono">{step.step}</span>
+              <span className="visually-hidden">{step.ok ? " (ok)" : " (failed)"}</span>
+              {step.detail && <span className="apply-step-detail"> {step.detail}</span>}
+              <time className="muted" dateTime={step.at} title={fullTime(step.at)}>
+                {relativeTime(step.at)}
+              </time>
+            </li>
+          ))}
+        </ol>
+      )}
 
       {decidable && (
         <>
-          <AdminButton className="button button-accent full" disabled={busy !== null} onClick={() => void run("approve")}>
+          <AdminButton
+            className="button button-accent full"
+            disabled={busy !== null || !applicable}
+            onClick={() => void run("approve")}
+          >
             {busy === "approve" ? "Approving…" : "Approve fix"}
           </AdminButton>
           <p className="muted small">
-            The backend re-checks the fix against the allowlist before applying it to the cluster.
+            {applicable
+              ? "The backend validates it against the live Deployment and the policy's bounds, does a server-side dry run, patches, and verifies; a failed verify rolls it back."
+              : `Not available yet: only ${APPLY_KINDS.join(", ")} fixes can be applied. Reject it, or fix it by hand.`}
           </p>
           <form className="reject-form" onSubmit={onReject}>
             <label htmlFor={reasonId}>Reason (required to reject)</label>
@@ -387,7 +447,7 @@ function RerunForm({ incident, onChanged }: { incident: Incident; onChanged: () 
       setOutcome({ kind: "done", text: "Triage started. The new analysis appears here when it finishes." });
       onChanged();
     } catch (err) {
-      setOutcome(outcomeFor(err, "re-running triage"));
+      setOutcome(outcomeFor(err));
     } finally {
       setBusy(false);
     }

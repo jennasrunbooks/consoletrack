@@ -1127,6 +1127,54 @@ table.changes {
   font-size: 14px;
 }
 
+.mode-auto {
+  background: var(--violet-bg);
+  color: var(--violet-text);
+}
+
+.mode-manual {
+  background: var(--info-bg);
+  color: var(--info-text);
+}
+
+.value-changes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.apply-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+  font-size: 13px;
+}
+
+.apply-steps li {
+  display: grid;
+  grid-template-columns: 14px auto 1fr auto;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.apply-steps li::before {
+  content: "✓";
+  color: var(--live);
+  font-weight: 700;
+}
+
+.apply-steps li.failed::before {
+  content: "✕";
+  color: var(--error-text);
+}
+
+.apply-step-detail {
+  color: var(--text-muted);
+}
+
 .reject-form {
   display: block;
   margin-top: 16px;

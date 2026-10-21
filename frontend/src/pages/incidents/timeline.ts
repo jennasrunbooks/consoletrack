@@ -20,7 +20,9 @@ export function timelineSteps(incident: Incident): Step[] {
   if (incident.status === "closed") {
     steps.push({ status: "closed", label: "Closed", at: null });
   } else {
-    steps.push({ status: "remediating", label: "Remediating", at: incident.remediation?.applied_at ?? null });
+    // The incident moves to remediating when the fix is approved (by an admin or the policy gate).
+    const r = incident.remediation;
+    steps.push({ status: "remediating", label: "Remediating", at: r?.decided_at ?? r?.applied_at ?? null });
     steps.push({ status: "resolved", label: "Resolved", at: incident.resolved_at });
   }
   return steps;

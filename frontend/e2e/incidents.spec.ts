@@ -39,7 +39,7 @@ test("the list filters by status and severity through the URL", async ({ page })
   await expect(page).toHaveURL(/\/incidents\/14$/);
 });
 
-test("detail shows the analysis, the run, and the proposed fix", async ({ page }) => {
+test("detail shows the analysis and the proposed fix, and Approve runs it", async ({ page }) => {
   await openIncidents(page, "admin", "/incidents/14");
   await expect(page.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeVisible();
   const analysis = card(page, "Agent analysis");
@@ -49,8 +49,15 @@ test("detail shows the analysis, the run, and the proposed fix", async ({ page }
   await expect(fix).toContainText("set_memory_limit demo/demo-app container demo-app → 256Mi");
   await expect(page.locator(".timeline-step.current")).toContainText("Awaiting review");
 
+  await expect(fix).toContainText("kill switch: AUTOFIX_ENABLED is false");
+
+  // Approve: the apply loop runs the fix and the page polls until its steps are in.
   await page.getByRole("button", { name: "Approve fix" }).click();
-  await expect(fix.getByText(/Not available yet: approving a fix/)).toBeVisible();
+  await expect(page.locator(".detail-tags")).toContainText("Remediating");
+  const steps = fix.getByRole("list", { name: "Steps" });
+  await expect(steps.getByRole("listitem").first()).toContainText("approved by admin");
+  await expect(steps.getByRole("listitem").last()).toContainText("succeeded", { timeout: 15_000 });
+  await expect(fix).toContainText("limits.memory 128Mi → 256Mi");
 });
 
 test("a low-confidence run with no proposal shows its flags and untrusted evidence as text", async ({ page }) => {

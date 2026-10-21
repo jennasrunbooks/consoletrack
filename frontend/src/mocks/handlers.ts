@@ -14,6 +14,7 @@ import type {
   IncidentStatus,
   IncidentSummary,
   IntakeHealth,
+  Remediation,
   Risk,
   User,
   Via,
@@ -54,6 +55,8 @@ export const INCIDENT_STATUSES: IncidentStatus[] = [
 export const TRIAGE_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5"];
 /** How long a mock triage run takes before its analysis appears. */
 export const MOCK_TRIAGE_MS = 6_000;
+/** How long the mock apply loop takes from approval to a verified fix. */
+export const MOCK_APPLY_MS = 6_000;
 const CLOSED: ChangeStatus[] = ["reverted", "accepted", "codified"];
 const RISKS: Risk[] = ["low", "medium", "high"];
 const VIAS: Via[] = ["console", "cli", "cloudshell", "sdk", "terraform_outside_pipeline"];
@@ -76,12 +79,15 @@ export const mockDb = {
   evidence: buildEvidence(),
   /** When each triaging incident's run finishes (ms since epoch), with the model it runs on. */
   triage: initialTriage(),
+  /** When each approved fix finishes the apply loop (ms since epoch). */
+  apply: {} as Record<number, number>,
   reset() {
     this.changes = buildChanges();
     this.intake = buildIntakeHealth();
     this.incidents = buildIncidents();
     this.evidence = buildEvidence();
     this.triage = initialTriage();
+    this.apply = {};
   },
 };
 
@@ -101,6 +107,42 @@ function settleTriage(incident: Incident): Incident {
     ? { ...incident.analysis, id: runId, agent_run: { ...fresh.agent_run } }
     : fresh;
   Object.assign(incident, { status: "awaiting_review", analysis } satisfies Partial<Incident>);
+  return incident;
+}
+
+/**
+ * Finishes an approved set_memory_limit fix whose time is up, the way the backend's apply loop
+ * would. The incident stays `remediating` until Alertmanager's resolved notification.
+ */
+function settleApply(incident: Incident): Incident {
+  const doneAt = mockDb.apply[incident.id];
+  const r = incident.remediation;
+  if (doneAt === undefined || !r || Date.now() < doneAt) return incident;
+  delete mockDb.apply[incident.id];
+  const limit = typeof r.payload.memory_limit === "string" ? r.payload.memory_limit : "?";
+  const at = new Date().toISOString();
+  const summary = `memory limit 128Mi → ${limit}`;
+  Object.assign(r, {
+    status: "succeeded",
+    applied_at: at,
+    before: { limits: { memory: "128Mi" }, requests: { memory: "128Mi" } },
+    after: { limits: { memory: limit } },
+    steps: [
+      ...r.steps,
+      ...(
+        [
+          ["claimed", ""],
+          ["read", `${String(r.payload.namespace)}/${String(r.payload.deployment)}`],
+          ["validate", summary],
+          ["dry_run", "server-side dry run accepted the patch"],
+          ["patch", summary],
+          ["rollout", "every replica runs the new limit"],
+          ["verify", "error ratio 0.000 is below 0.05"],
+          ["succeeded", "error ratio 0.000 is below 0.05"],
+        ] as const
+      ).map(([step, detail]) => ({ step, at, ok: true, detail })),
+    ],
+  } satisfies Partial<Remediation>);
   return incident;
 }
 
@@ -128,8 +170,11 @@ const adminCheck = () => (!mockSession.user ? unauthorized() : mockSession.user.
 
 function findIncident(id: string | readonly string[] | undefined): Incident | undefined {
   const incident = mockDb.incidents.find((i) => String(i.id) === id);
-  return incident && settleTriage(incident);
+  return incident && settleApply(settleTriage(incident));
 }
+
+const noProposal = (id: number) =>
+  errorResponse(409, "no_proposed_remediation", `incident ${id} has no proposed remediation to decide on`);
 
 function validationError(field: string, msg: string, where: "query" | "body" = "query") {
   return HttpResponse.json<ErrorBody>(
@@ -255,7 +300,7 @@ export const handlers = [
       return validationError("page_size", "Must be between 1 and 100");
     }
     const matching = mockDb.incidents
-      .map(settleTriage)
+      .map((i) => settleApply(settleTriage(i)))
       .filter((i) => status.length === 0 || status.includes(i.status))
       .filter((i) => !severity || i.severity === severity)
       .filter((i) => !namespace || i.namespace === namespace)
@@ -296,16 +341,42 @@ export const handlers = [
     },
   ),
 
-  // Approve and Reject answer 501 until the policy gate ships (#34), exactly like the backend.
-  http.post<{ id: string }, never, Body<Incident>>(`${API}/incidents/:id/remediation/approve`, ({ params }) => {
-    const denied = adminCheck();
-    if (denied) return denied;
-    return errorResponse(
-      501,
-      "not_implemented",
-      `POST /api/v1/incidents/${params.id}/remediation/approve is not implemented yet; it ships with #34 (validator, policy gate, and apply)`,
-    );
-  }),
+  // Approve and Reject follow the backend (#63): only set_memory_limit can be applied, anything
+  // else answers 501; the apply loop then runs the fix (settleApply).
+  http.post<{ id: string }, { note?: string | null } | null, Body<Incident>>(
+    `${API}/incidents/:id/remediation/approve`,
+    async ({ params, request }) => {
+      const denied = adminCheck();
+      if (denied) return denied;
+      const incident = findIncident(params.id);
+      if (!incident) return notFound(`incident ${params.id}`);
+      const remediation = incident.remediation;
+      if (!remediation || remediation.status !== "proposed") return noProposal(incident.id);
+      if (remediation.kind !== "set_memory_limit") {
+        return errorResponse(
+          501,
+          "not_implemented",
+          `approving a ${remediation.kind} remediation is not available yet; only set_memory_limit can be applied`,
+        );
+      }
+      if (incident.status !== "awaiting_review") {
+        return errorResponse(409, "invalid_state_transition", `remediation_approved is not allowed from ${incident.status}`);
+      }
+      const note = (await request.json().catch(() => null))?.note?.trim();
+      const actor = mockSession.user!.username;
+      const now = new Date().toISOString();
+      incident.status = "remediating";
+      Object.assign(remediation, {
+        status: "approved",
+        mode: "manual",
+        decided_by: actor,
+        decided_at: now,
+        steps: [...remediation.steps, { step: "approved", at: now, ok: true, detail: `approved by ${actor}${note ? `: ${note}` : ""}` }],
+      } satisfies Partial<Remediation>);
+      mockDb.apply[incident.id] = Date.now() + MOCK_APPLY_MS;
+      return HttpResponse.json<Incident>(incident);
+    },
+  ),
 
   http.post<{ id: string }, { reason?: string } | null, Body<Incident>>(
     `${API}/incidents/:id/remediation/reject`,
@@ -313,12 +384,23 @@ export const handlers = [
       const denied = adminCheck();
       if (denied) return denied;
       const body = await request.json().catch(() => null);
-      if (!body?.reason?.trim()) return validationError("reason", "Field required", "body");
-      return errorResponse(
-        501,
-        "not_implemented",
-        `POST /api/v1/incidents/${params.id}/remediation/reject is not implemented yet; it ships with #34 (validator, policy gate, and apply)`,
-      );
+      const reason = body?.reason?.trim();
+      if (!reason) return validationError("reason", "Field required", "body");
+      const incident = findIncident(params.id);
+      if (!incident) return notFound(`incident ${params.id}`);
+      const remediation = incident.remediation;
+      if (!remediation || remediation.status !== "proposed") return noProposal(incident.id);
+      const actor = mockSession.user!.username;
+      const now = new Date().toISOString();
+      incident.status = "closed";
+      Object.assign(remediation, {
+        status: "rejected",
+        mode: remediation.mode ?? "manual",
+        decided_by: actor,
+        decided_at: now,
+        steps: [...remediation.steps, { step: "rejected", at: now, ok: true, detail: `rejected by ${actor}: ${reason}` }],
+      } satisfies Partial<Remediation>);
+      return HttpResponse.json<Incident>(incident);
     },
   ),
 

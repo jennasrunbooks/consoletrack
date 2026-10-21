@@ -171,6 +171,8 @@ function agentRun(id: number, startedAgo: number, seconds: number, toolCalls: nu
   return {
     id,
     model: "claude-haiku-5-5",
+    prompt_version: "v2",
+    escalated: false,
     started_at: ago(startedAgo, now),
     finished_at: ago(startedAgo - seconds * second, now),
     tool_calls: toolCalls,
@@ -202,6 +204,13 @@ function remediation(
     created_at: ago(5 * minute, now),
     applied_at: null,
     error: null,
+    mode: null,
+    policy: null,
+    gate_reason: null,
+    decided_at: null,
+    before: null,
+    after: null,
+    steps: [],
     ...r,
   };
 }
@@ -275,6 +284,10 @@ export function buildIncidents(now = Date.now()): Incident[] {
         {
           kind: "set_memory_limit",
           status: "proposed",
+          // The chart's oom-memory-bump policy is auto; with the kill switch off it waits for an admin.
+          mode: "manual",
+          policy: "oom-memory-bump",
+          gate_reason: "kill switch: AUTOFIX_ENABLED is false",
           payload: {
             kind: "set_memory_limit",
             namespace: "demo",
@@ -351,6 +364,10 @@ export function buildIncidents(now = Date.now()): Incident[] {
             reason: "Restoring the Terraform policy puts s3:GetObject back.",
           },
           decided_by: "admin",
+          decided_at: ago(13 * minute, now),
+          mode: "manual",
+          policy: "default",
+          gate_reason: "revert_workflow changes AWS: always manual (Revert or Codify)",
           external_url: "https://github.com/jennasrunbooks/consoletrack/actions/runs/1",
         },
         now,
@@ -368,33 +385,60 @@ export function buildIncidents(now = Date.now()): Incident[] {
         },
       ],
     }),
+    // The OOM fault with the chart's defaults: the policy gate approves the fix on an admin's
+    // behalf and the backend's apply loop runs it (docs/remediation-graduation.md).
     incident({
       id: 11,
       ...HIGH_ERROR_RATE,
       status: "resolved",
       opened_at: ago(26 * 60 * minute, now),
-      resolved_at: ago(26 * 60 * minute - 23 * minute, now),
-      analysis: analysis(11, agentRun(211, 26 * 60 * minute - minute, 12, 3, now), {
-        summary: "Revision 4 of demo-app uses image tag does-not-exist, so its pod is stuck in ImagePullBackOff.",
-        root_cause: "The Deployment was updated to an image tag that was never pushed.",
+      resolved_at: ago(26 * 60 * minute - 7 * minute, now),
+      analysis: analysis(11, agentRun(211, 26 * 60 * minute - minute, 17, 6, now), {
+        summary:
+          "demo-app's only pod is in CrashLoopBackOff: the demo-app container was OOMKilled (exit code 137) on each " +
+          "of its last 3 starts. Its memory request and limit are 128Mi and DEMO_ALLOCATE_MI is set, so it " +
+          "allocates 128 MiB at startup, before it listens.",
+        root_cause: "The 128Mi memory limit is below the 128 MiB the app allocates at startup plus its baseline.",
         risk: "high",
-        risk_reason: "With the Recreate strategy the old pod is gone, so demo-app serves nothing.",
+        risk_reason: "demo-app serves nothing while it crash-loops.",
         confidence: "high",
       }),
       remediation: remediation(
         11,
         {
-          kind: "rollback",
+          kind: "set_memory_limit",
           status: "succeeded",
           payload: {
-            kind: "rollback",
+            kind: "set_memory_limit",
             namespace: "demo",
             deployment: "demo-app",
-            to_revision: null,
-            reason: "Revision 3 runs the last image that exists.",
+            container: "demo-app",
+            memory_limit: "256Mi",
+            reason: "Startup needs about 153 MiB; 256Mi, 2x the current limit, fits it with headroom.",
           },
-          decided_by: "admin",
-          applied_at: ago(26 * 60 * minute - 10 * minute, now),
+          mode: "auto",
+          policy: "oom-memory-bump",
+          gate_reason: "policy oom-memory-bump applies it",
+          decided_by: "policy:oom-memory-bump",
+          decided_at: ago(26 * 60 * minute - 3 * minute, now),
+          applied_at: ago(26 * 60 * minute - 3 * minute - 4 * second, now),
+          before: { limits: { memory: "128Mi" }, requests: { memory: "128Mi" } },
+          after: { limits: { memory: "256Mi" } },
+          steps: [
+            ["claimed", 1, true, ""],
+            ["read", 2, true, "demo/demo-app"],
+            ["validate", 2, true, "memory limit 128Mi → 256Mi"],
+            ["dry_run", 3, true, "server-side dry run accepted the patch"],
+            ["patch", 4, true, "memory limit 128Mi → 256Mi"],
+            ["rollout", 31, true, "every replica runs the new limit"],
+            ["verify", 4 * 60, true, "the alert resolved"],
+            ["succeeded", 4 * 60, true, "the alert resolved"],
+          ].map(([step, secondsIn, ok, detail]) => ({
+            step: step as string,
+            at: ago(26 * 60 * minute - 3 * minute - (secondsIn as number) * second, now),
+            ok: ok as boolean,
+            detail: detail as string,
+          })),
         },
         now,
       ),
