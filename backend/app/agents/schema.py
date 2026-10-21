@@ -12,12 +12,11 @@ check the proposal again before anyone sees it.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.enums import Confidence, Risk
+from app.enums import AnalysisFlag, Confidence, Risk
 
 SCHEMA_VERSION = "1"
 TOOL_NAME = "submit_analysis"
@@ -26,17 +25,6 @@ TOOL_NAME = "submit_analysis"
 K8S_NAME = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
 # A memory quantity in Mi or Gi: the only units the validator compares.
 MEMORY_QUANTITY = r"^[1-9][0-9]{0,5}(Mi|Gi)$"
-
-
-class Flag(StrEnum):
-    stateful_workload = "stateful_workload"
-    migration = "migration"
-    # Logs show an AWS error but CloudTrail had no matching change yet.
-    cloudtrail_delay = "cloudtrail_delay"
-    aws_evidence_unavailable = "aws_evidence_unavailable"
-    # Tool output contained instructions aimed at the agent.
-    possible_prompt_injection = "possible_prompt_injection"
-    insufficient_evidence = "insufficient_evidence"
 
 
 class _Strict(BaseModel):
@@ -115,7 +103,7 @@ class SubmitAnalysis(_Strict):
         Field(max_length=10, description="IDs of ConsoleTrack changes that likely caused this"),
     ]
     proposed_remediation: Proposal | None
-    flags: Annotated[list[Flag], Field(max_length=len(Flag))]
+    flags: Annotated[list[AnalysisFlag], Field(max_length=len(AnalysisFlag))]
     postmortem_md: Annotated[
         str | None, Field(max_length=20_000, description="Incidents: a draft postmortem")
     ] = None

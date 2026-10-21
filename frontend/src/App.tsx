@@ -3,7 +3,9 @@ import { useAuth } from "./auth/AuthProvider";
 import { AppShell } from "./components/AppShell";
 import { ChangeLogPage } from "./pages/changes/ChangeLogPage";
 import { LoginPage } from "./pages/LoginPage";
-import { ChangeDetailPlaceholder, IncidentsPlaceholder, NotFoundPage } from "./pages/PlaceholderPage";
+import { IncidentDetailPage } from "./pages/incidents/IncidentDetailPage";
+import { IncidentListPage } from "./pages/incidents/IncidentListPage";
+import { ChangeDetailPlaceholder, NotFoundPage } from "./pages/PlaceholderPage";
 
 export function App() {
   const { user } = useAuth();
@@ -21,7 +23,8 @@ export function App() {
         <Route index element={<Navigate to="/changes" replace />} />
         <Route path="changes" element={<ChangeLogPage />} />
         <Route path="changes/:id" element={<ChangeDetailPlaceholder />} />
-        <Route path="incidents/*" element={<IncidentsPlaceholder />} />
+        <Route path="incidents" element={<IncidentListPage />} />
+        <Route path="incidents/:id" element={<IncidentDetailPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
