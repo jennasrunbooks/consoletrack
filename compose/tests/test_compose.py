@@ -167,3 +167,32 @@ def test_the_incident_journey_dashboard_uses_the_provisioned_datasources() -> No
             assert panel["datasource"]["uid"] in uids, panel["title"]
     tempo = next(ds for ds in datasources if ds["uid"] == "tempo")
     assert tempo["jsonData"]["tracesToLogsV2"]["datasourceUid"] == "loki"
+
+
+def _paths(node: object) -> list[str]:
+    """Every absolute path value in a config file."""
+    if isinstance(node, dict):
+        return [p for value in node.values() for p in _paths(value)]
+    if isinstance(node, list):
+        return [p for value in node for p in _paths(value)]
+    return [node] if isinstance(node, str) and node.startswith("/") else []
+
+
+@pytest.mark.parametrize(
+    ("name", "config", "default_root"),
+    [("tempo", "tempo/tempo.yaml", "/var/tempo"), ("loki", "loki/loki.yaml", "/tmp")],
+)
+def test_storage_is_writable_on_a_read_only_root(
+    name: str, config: str, default_root: str
+) -> None:
+    """Both run with a read-only root filesystem: every path they write, and the directory their
+    unconfigured modules default to, must be on a tmpfs (Tempo 3's live-store failed to start
+    writing /var/tempo/live-store)."""
+    service = SERVICES[name]
+    assert service["read_only"] is True
+    tmpfs = service["tmpfs"]
+    assert default_root in tmpfs, name
+    for path in _paths(yaml.safe_load((OBSERVABILITY / config).read_text())):
+        assert any(path == mount or path.startswith(f"{mount}/") for mount in tmpfs), (
+            path
+        )

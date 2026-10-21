@@ -186,6 +186,9 @@ services:
     image: grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
     <<: *hardening
     command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
+    # Tempo 3's modules write under /var/tempo by default (live-store, WAL, blocks, the backend
+    # scheduler), not all of them configurable in one place: the whole directory is tmpfs.
+    tmpfs: [/tmp, /var/tempo]
     volumes:
       - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
     mem_limit: 384m
