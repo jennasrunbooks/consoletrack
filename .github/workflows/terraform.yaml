@@ -1,5 +1,14 @@
-# PROPOSED: a human needs to move this to .github/workflows/terraform.yaml.
+# PROPOSED: a human needs to move this to .github/workflows/terraform.yaml, replacing the current file.
 # (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
+#
+# Changes from the current .github/workflows/terraform.yaml: `changes` diffs a PR against HEAD^1,
+# the merge commit's first parent (the base branch as it is now), instead of
+# github.event.pull_request.base.sha, which stays at the base the PR was opened on. After main
+# moved, a re-pushed PR also planned the roots that only main had changed (same fix as ci.yaml).
+#
+# The plan job also runs `terraform test` for each changed root that has a tests/ directory (issue #8: the boundary must
+# stay under 6,144 characters, checked in terraform/consoletrack/global/tests). The tests are
+# offline: every AWS call is overridden and the provider endpoints point at a closed port.
 #
 # Terraform CI for every root under terraform/<account>/<scope>/ (product-spec.md → Testing,
 # CI/CD, and deployment). Each account directory is one matrix entry with its own GitHub
@@ -7,7 +16,8 @@
 # role ARN as the secret AWS_ROLE_ARN. Today there is one entry, `consoletrack`;
 # terraform/demo-app/us-east-1 uses the hub's roles until demo-app moves to its own account.
 #
-#   pull_request touching terraform/**  → fmt -check, validate, tflint, plan per changed root,
+#   pull_request touching terraform/**  → fmt -check, validate, terraform test, tflint, plan per
+#                                          changed root,
 #                                          plan posted as a PR comment (account ID replaced)
 #   push to main touching terraform/**  → apply per changed root, after the <account>-apply
 #                                          environment's required reviewer approves
@@ -91,14 +101,16 @@ jobs:
       - id: roots
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           BEFORE_SHA: ${{ github.event.before }}
           DISPATCH_ROOT: ${{ inputs.root }}
           DISPATCH_CONFIRM: ${{ inputs.destroy }}
         run: |
           set -euo pipefail
           case "$EVENT" in
-            pull_request) files=$(git diff --name-only "$BASE_SHA" HEAD) ;;
+            # HEAD is the PR merged into the base branch as it is now, and HEAD^1 is that base. Not
+            # pull_request.base.sha: it stays at the base the PR was opened on, so after main moves
+            # the diff would also hold main's new commits, and the PR would plan their roots.
+            pull_request) files=$(git diff --name-only HEAD^1 HEAD) ;;
             push) files=$(git diff --name-only "$BEFORE_SHA" HEAD) ;;
             workflow_dispatch)
               if [ "$DISPATCH_CONFIRM" != "$DISPATCH_ROOT" ]; then
@@ -158,7 +170,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
       - name: Mask the account ID
         run: echo "::add-mask::$(aws sts get-caller-identity --query Account --output text)"
-      - name: fmt, validate, tflint, plan
+      - name: fmt, validate, test, tflint, plan
         env:
           ROOTS: ${{ needs.changes.outputs.roots }}
           ACCOUNT: ${{ matrix.account }}
@@ -170,6 +182,8 @@ jobs:
             terraform fmt -check -recursive "terraform/$root"
             make tf-init ROOT="$root"
             terraform -chdir="terraform/$root" validate
+            # Offline policy checks: boundary and managed policies under 6,144 characters, etc.
+            if [ -d "terraform/$root/tests" ]; then terraform -chdir="terraform/$root" test; fi
             tflint --chdir="terraform/$root" --config="$PWD/.tflint.hcl"
             make tf-plan ROOT="$root"
             {
