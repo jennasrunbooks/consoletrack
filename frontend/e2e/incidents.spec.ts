@@ -57,7 +57,7 @@ test("detail shows the analysis and the proposed fix, and Approve runs it", asyn
   const steps = fix.getByRole("list", { name: "Steps" });
   await expect(steps.getByRole("listitem").first()).toContainText("approved by admin");
   await expect(steps.getByRole("listitem").last()).toContainText("succeeded", { timeout: 15_000 });
-  await expect(fix).toContainText("limits.memory 128Mi → 256Mi");
+  await expect(fix.locator(".remediation-result")).toHaveText("Fixed: memory limit 128Mi → 256Mi");
 });
 
 test("a low-confidence run with no proposal shows its flags and untrusted evidence as text", async ({ page }) => {
