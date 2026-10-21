@@ -18,6 +18,7 @@ from app.schemas import (
     LinkedChange,
     LinkedIncident,
     Remediation,
+    RemediationStep,
 )
 
 
@@ -171,6 +172,8 @@ def _analysis(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
         agent_run=AgentRun(
             id=run.id,
             model=run.model,
+            prompt_version=run.prompt_version,
+            escalated=run.escalated,
             started_at=run.started_at,
             finished_at=run.finished_at,
             tool_calls=uow.evidence.count_for_run(run.id),
@@ -196,4 +199,11 @@ def _remediation(row: RemediationRow | None) -> Remediation | None:
         created_at=row.created_at,
         applied_at=row.applied_at,
         error=row.error,
+        mode=row.mode,
+        policy=row.policy,
+        gate_reason=row.gate_reason,
+        decided_at=row.decided_at,
+        before=row.before_json,
+        after=row.after_json,
+        steps=[RemediationStep.model_validate(step) for step in row.steps or []],
     )

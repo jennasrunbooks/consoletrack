@@ -55,14 +55,31 @@ def test_dependencies_wait_for_health(name: str) -> None:
         assert "healthcheck" in SERVICES[dependency], dependency
 
 
-def test_kind_override_only_joins_networks() -> None:
-    """compose/kind.yaml publishes nothing and adds no settings: only the backend's network."""
-    assert set(KIND_SERVICES) == {"backend"}
-    assert set(KIND_SERVICES["backend"]) == {"networks"}
-    networks = KIND_SERVICES["backend"]["networks"]
+def test_kind_override_adds_only_networks_and_the_remediation_wiring() -> None:
+    """compose/kind.yaml publishes nothing. It joins the backend to kind's network and gives the
+    backend and worker the remediation settings and the files scripts/local-kind.sh writes,
+    read-only: the remediator kubeconfig (backend only) and the policies."""
+    assert set(KIND_SERVICES) == {"backend", "worker"}
+    backend, worker = KIND_SERVICES["backend"], KIND_SERVICES["worker"]
+    assert set(backend) == {"networks", "environment", "volumes"}
+    assert set(worker) == {"environment", "volumes"}
+    networks = backend["networks"]
     assert set(networks) == {"default", "kind"}
     # The name Alertmanager posts to (compose/kind-values.yaml → monitoring.webhookUrl).
     assert networks["kind"]["aliases"] == ["consoletrack-backend"]
+    policies = "./kind-remediation-policies.yaml:/etc/consoletrack/remediation/policies.yaml:ro"
+    assert backend["volumes"] == [
+        "./kind-remediator.kubeconfig:/run/kube/config:ro",
+        policies,
+    ]
+    # The worker decides; only the backend can reach the cluster.
+    assert worker["volumes"] == [policies]
+    assert "KUBECONFIG" not in worker["environment"]
+    for service in (backend, worker):
+        assert "ports" not in service
+        assert service["environment"]["AUTOFIX_ENABLED"] == "${AUTOFIX_ENABLED:-true}"
+        for key in service["environment"]:
+            assert not SECRET_NAME.search(key), key
 
 
 def test_kind_services_use_the_external_kind_network() -> None:

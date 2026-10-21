@@ -18,6 +18,7 @@ from typing import Any
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -42,6 +43,7 @@ from app.enums import (
     IncidentDecision,
     IncidentStatus,
     RemediationKind,
+    RemediationMode,
     RemediationStatus,
     Risk,
     SubjectType,
@@ -196,6 +198,10 @@ class AgentRunRow(TimestampMixin, Base):
     outcome: Mapped[AgentRunOutcome] = mapped_column(
         enum_column(AgentRunOutcome, "outcome"), default=AgentRunOutcome.running
     )
+    # The prompt set it ran with (app/agents/prompts PROMPT_VERSION); null for runs before 0003.
+    prompt_version: Mapped[str | None] = mapped_column(String(16))
+    # The worker's one re-run with TRIAGE_MODEL_ESCALATION after a low-confidence result.
+    escalated: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
 
 class EvidenceRow(TimestampMixin, Base):
@@ -238,8 +244,23 @@ class AnalysisRow(TimestampMixin, Base):
 
 
 class RemediationRow(TimestampMixin, Base):
+    """A proposed fix and, once approved, every step of applying it.
+
+    `status` is only ever assigned by `app/services/remediation_state.py`.
+    """
+
     __tablename__ = "remediations"
-    __table_args__ = (Index("ix_remediations_subject", "subject_type", "subject_id"),)
+    __table_args__ = (
+        Index("ix_remediations_subject", "subject_type", "subject_id"),
+        # The policy gate's rate limit and block list look up auto fixes per workload.
+        Index("ix_remediations_workload", "namespace", "workload"),
+        # The backend's apply queue: approved, or running with an expired lease.
+        Index(
+            "ix_remediations_status_pending",
+            "status",
+            postgresql_where=text("status IN ('approved', 'running')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     subject_type: Mapped[SubjectType] = mapped_column(enum_column(SubjectType, "subject_type"))
@@ -250,7 +271,25 @@ class RemediationRow(TimestampMixin, Base):
         enum_column(RemediationStatus, "status"), default=RemediationStatus.proposed
     )
     decided_by: Mapped[str | None] = mapped_column(String(256))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # The GitHub workflow run or pull request.
     external_url: Mapped[str | None] = mapped_column(String(2048))
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+    # The policy gate's answer: the mode, the policy that decided, and why (e.g. why a proposal
+    # was downgraded to manual). Null until the gate has seen it.
+    mode: Mapped[RemediationMode | None] = mapped_column(enum_column(RemediationMode, "mode"))
+    policy: Mapped[str | None] = mapped_column(String(128))
+    gate_reason: Mapped[str | None] = mapped_column(Text)
+    # The cluster workload a kind like set_memory_limit targets; null for AWS-side kinds.
+    namespace: Mapped[str | None] = mapped_column(String(63))
+    workload: Mapped[str | None] = mapped_column(String(253))
+    # The container's resources before and after the patch, e.g. {"limits": {"memory": "128Mi"}}.
+    before_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Every apply step in order: {"step", "at", "ok", "detail"} (app/services/remediation.py).
+    steps: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    # The backend that claimed it to apply holds it until then; a crashed backend's claim expires.
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -18,8 +18,10 @@ class Fake(BaseHTTPRequestHandler):
     """/ok → 200, /fail → 500, /slow → 200 after the client gave up, /hangup → closes early."""
 
     release = threading.Event()
+    reports: list[str | None] = []
 
     def do_GET(self) -> None:  # noqa: N802
+        Fake.reports.append(self.headers.get("X-Demo-Report"))
         if self.path == "/hangup":
             self.close_connection = True
             return
@@ -49,6 +51,14 @@ def fake() -> str:
 )
 def test_result_labels(fake: str, path: str, result: str) -> None:
     assert loadgen.call(f"{fake}{path}", TIMEOUT) == result
+
+
+@pytest.mark.parametrize(("report", "sent"), [("", None), ("large", "large")])
+def test_the_oom_fault_asks_for_large_reports(fake: str, report: str, sent: str | None) -> None:
+    gen = loadgen.Loadgen(Config(target=f"{fake}/ok", report=report), CollectorRegistry())
+    Fake.reports.clear()
+    assert gen.once() == "ok"
+    assert Fake.reports == [sent]
 
 
 def test_connection_refused(closed_port: int) -> None:

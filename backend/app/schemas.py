@@ -22,6 +22,7 @@ from app.enums import (
     IncidentStatus,
     IntakeState,
     RemediationKind,
+    RemediationMode,
     RemediationStatus,
     Risk,
     Role,
@@ -116,6 +117,8 @@ class Drift(BaseModel):
 class AgentRun(BaseModel):
     id: Int64
     model: str
+    prompt_version: str | None
+    escalated: bool
     started_at: datetime
     finished_at: datetime | None
     tool_calls: NonNegativeInt
@@ -138,6 +141,13 @@ class Analysis(BaseModel):
     agent_run: AgentRun
 
 
+class RemediationStep(BaseModel):
+    step: str
+    at: datetime
+    ok: bool
+    detail: str
+
+
 class Remediation(BaseModel):
     id: Int64
     subject_type: SubjectType
@@ -150,6 +160,15 @@ class Remediation(BaseModel):
     created_at: datetime
     applied_at: datetime | None
     error: str | None
+    # The policy gate's decision and the apply path's record (#34). Optional, so clients built
+    # before them keep working.
+    mode: RemediationMode | None = None
+    policy: str | None = None
+    gate_reason: str | None = None
+    decided_at: datetime | None = None
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    steps: list[RemediationStep] = []
 
 
 class Change(BaseModel):

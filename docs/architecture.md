@@ -19,7 +19,7 @@ flowchart LR
 | Layer | Rule |
 | --- | --- |
 | `app/api/` | HTTP only: parse and validate input (Pydantic), check auth, call one service function, return a schema from `app/schemas.py`. Never touches a session. Every error is an `Error` body (`app/api/errors.py`), including `422`s. |
-| `app/services/` | Business rules. Reaches data only through a `UnitOfWork` and commits it. The only code that assigns a `status` column, through the two state machines below. |
+| `app/services/` | Business rules. Reaches data only through a `UnitOfWork` and commits it. The only code that assigns a `status` column, through the three state machines below. |
 | `app/db/` | SQLAlchemy models, the repository protocols, their SQL implementations, and Alembic migrations. `sql.py` and `session.py` are the only modules that touch a `Session`. |
 | `app/schemas.py` | API models, hand-written to match `openapi.yaml`; `tests/contract/test_openapi.py` fails on any drift. |
 
@@ -70,6 +70,7 @@ stateDiagram-v2
   awaiting_review --> triaging: triage_started (re-run)
   awaiting_review --> remediating: remediation_approved
   awaiting_review --> closed: remediation_rejected (reason required)
+  remediating --> awaiting_review: remediation_failed (rolled back, refused, or downgraded)
   open --> resolved: alert_resolved
   triaging --> resolved: alert_resolved
   awaiting_review --> resolved: alert_resolved
@@ -81,6 +82,26 @@ stateDiagram-v2
 A firing alert reuses the unresolved incident with the same Alertmanager fingerprint; Postgres
 enforces that with a partial unique index (`uq_incidents_active_fingerprint`). After the incident
 is resolved or closed, the next firing opens a new incident.
+
+## Remediation state machine
+
+`app/services/remediation_state.py`. Approving and rejecting record `decided_by` (a username, or
+`policy:<name>` for an auto fix) and `decided_at`.
+
+```mermaid
+stateDiagram-v2
+  [*] --> proposed: record_triage
+  proposed --> approved: approved (admin, or the gate in auto)
+  proposed --> rejected: rejected (admin)
+  approved --> running: claimed (the backend's apply loop)
+  running --> running: claimed (an expired lease, recovered)
+  running --> proposed: downgraded (auto only, refused before anything was applied)
+  running --> succeeded: succeeded
+  running --> failed: failed (refused, patch failed, or rolled back)
+  rejected --> [*]
+  succeeded --> [*]
+  failed --> [*]
+```
 
 ## Triage agent
 
@@ -96,7 +117,9 @@ flowchart LR
   runner <--> k8s["k8s-mcp"]
   runner <-.optional.-> aws["aws-mcp"]
   runner --> record["analysis, evidence,<br/>links, proposed remediation"]
-  record --> gate["PolicyGate<br/>(manual in Phase 1)"]
+  record --> gate["PolicyGate<br/>manual, or auto for oom-memory-bump"]
+  gate -.approved.-> apply["backend: apply loop<br/>validate, dry run, patch,<br/>rollout, verify, rollback"]
+  admin["POST /incidents/{id}/remediation/approve"] -.approved.-> apply
 ```
 
 - **Queue.** `incidents.triage_requested_at` is the queue: the webhook sets it on a new
@@ -115,24 +138,47 @@ flowchart LR
   to changes that exist), and the proposal as a `proposed` remediation, then `analysis_written`.
   A run that stops without one records why and moves on with `triage_incomplete`, so a human
   sees it in `awaiting_review`.
-- **Gate.** The proposal goes to `PolicyGate.submit_proposal(incident_id, proposal)`. Phase 1
-  wires `ManualPolicyGate`, which approves nothing; #34 implements the validator, the policies,
-  and the apply path behind the same interface.
+- **Gate.** The proposal goes to `PolicyGate.submit_proposal(incident_id, proposal)`. The worker
+  wires `ConfiguredPolicyGate` with the chart's policies (`REMEDIATION_POLICIES_FILE`,
+  `app/services/remediation_policy.py`): `auto` approves on the admin's behalf only for
+  `oom-memory-bump` (`set_memory_limit` in `demo`), with both kill switches on, high confidence
+  (the escalated run's, after an escalation), no earlier failed auto fix of the workload, the
+  rate limit, and the validator's cluster-free checks; otherwise `manual`, with the reason on the
+  remediation (`gate_reason`). The order and the rules are in
+  [remediation-graduation.md](remediation-graduation.md).
+- **Apply.** `app/services/remediation_apply.py` runs in the backend's lifespan
+  (`REMEDIATION_APPLY_ENABLED`), never in the worker: it claims an `approved` remediation with
+  `FOR UPDATE SKIP LOCKED` and a lease (like the triage queue), runs the validator against the
+  live Deployment, a server-side dry run, the strategic-merge patch, the rollout wait, and verify,
+  through the `remediator` ServiceAccount (`app/cluster.py`). Every step is appended to
+  `remediations.steps`. A failure after the patch applies the inverse patch and sends the
+  incident back to `awaiting_review`; a backend that dies mid-run leaves a lease that expires,
+  and the next claim rolls the patch back. A human's approval takes the same path.
 - **Changes.** `ChangeAnalysis.analyze(change_id)` (`app/agents/changes.py`) is what the intake
   (#9) calls after recording a change: the same runner with `aws-mcp` only (optional; without it
   the agent works from the stored CloudTrail record), then `detected → awaiting_review` with the
   agent's title and risk. The agent can raise the intake's risk, never lower it, and a proposal
   for a change is dropped: the reviewer picks Revert, Codify, or Accept. A run that stops early
   leaves the change `detected`.
-- **Prompts** are files in `app/agents/prompts/` (`system_v1.md`, `incident_triage_v1.md`,
-  `change_analysis_v1.md`); a wording change is a new version, not an edit.
+- **Escalation.** A triage run that ends with low confidence or no proposal, when its `get_pods`
+  evidence shows a container restart, is re-run once with `TRIAGE_MODEL_ESCALATION` (its own
+  tool-call and token budget, `agent_runs.escalated = true`). The escalated analysis is the one
+  recorded unless that run stopped without one. At most one escalation per incident, and none
+  for a run already on the escalation model.
+- **Prompts** are files in `app/agents/prompts/` (`system_vN.md`, `incident_triage_vN.md`,
+  `change_analysis_vN.md`, now `v3`); a wording change is a new version, not an edit, and every
+  `agent_runs` row records the version it used (`prompt_version`).
 
 ## Database
 
 Seven tables, from `product-spec.md` → Workflow and data model, created by
 `backend/app/db/migrations/versions/0001_initial_schema.py`; `0002_triage_queue.py` adds the
-triage queue columns, `analyses.flags`, and the `limit_reached` and `set_memory_limit` values. `make db-sql` prints the whole
-schema without a database.
+triage queue columns, `analyses.flags`, and the `limit_reached` and `set_memory_limit` values;
+`0003_agent_run_prompt_escalation.py` adds `agent_runs.prompt_version` and `escalated`;
+`0004_remediation_apply.py` adds the gate's decision (`mode`, `policy`, `gate_reason`,
+`decided_at`), the target (`namespace`, `workload`), `before_json`, `after_json`, `steps`, and
+the apply loop's `lease_until` to `remediations`. `make db-sql` prints the whole schema without a
+database.
 
 - Enums are `VARCHAR(32)` plus a named `CHECK` constraint, not native Postgres enum types, so a
   later value is a constraint swap rather than `ALTER TYPE`. The migration freezes the values.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -35,18 +36,59 @@ def test_allocate_is_resident() -> None:
     del buf
 
 
-def test_allocation_is_held_and_reported() -> None:
-    app, httpd = server.build(Config(port=0, allocate_mi=4), host="127.0.0.1")
-    assert app.held is not None and len(app.held) == 4 * MIB
+def get_with(url: str, headers: dict[str, str]) -> int:
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=5) as resp:
+        return resp.status
+
+
+def cache_bytes(metrics: str) -> float:
+    (line,) = [m for m in metrics.splitlines() if m.startswith("demo_app_report_cache_bytes ")]
+    return float(line.split()[1])
+
+
+def test_large_reports_are_cached() -> None:
+    app, httpd = server.build(Config(port=0, report_mi=1, report_cache_mi=8), host="127.0.0.1")
     with serving(httpd) as url:
+        for _ in range(3):
+            assert get_with(f"{url}/", {"X-Demo-Report": "large"}) == 200
         _, metrics = get(f"{url}/metrics")
-    assert "demo_app_allocated_bytes 4.194304e+06" in metrics
+    assert len(app.cache.reports) == 3
+    assert cache_bytes(metrics) == 3 * MIB
 
 
-def test_no_allocation_by_default() -> None:
+def test_the_cache_is_bounded() -> None:
+    # Bounded, so a large enough limit holds it: 256Mi is the scenario's fix.
+    app, httpd = server.build(Config(port=0, report_mi=2, report_cache_mi=7), host="127.0.0.1")
+    httpd.server_close()
+    for _ in range(10):
+        app.work({"X-Demo-Report": "large"})
+    assert len(app.cache.reports) == 3  # 7 // 2
+    assert app.registry.get_sample_value("demo_app_report_cache_bytes") == 6 * MIB
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Demo-Report": "small"}, {"X-Other": "large"}])
+def test_other_requests_cache_nothing(headers: dict[str, str]) -> None:
     app, httpd = server.build(Config(port=0), host="127.0.0.1")
     httpd.server_close()
-    assert app.held is None
+    assert app.work(headers)[0] == 200
+    assert len(app.cache.reports) == 0
+
+
+def test_default_sizing_outgrows_128mi() -> None:
+    # The scenario's numbers: ~25-50 MiB of app plus a full cache passes a 128Mi limit and fits
+    # in 256Mi with more than 64 MiB to spare.
+    cfg = Config()
+    assert (cfg.report_mi, cfg.report_cache_mi) == (2, 140)
+    assert 25 + cfg.report_cache_mi > 128
+    assert 256 - (50 + cfg.report_cache_mi) >= 64
+
+
+def test_no_cache_means_no_allocation() -> None:
+    app, httpd = server.build(Config(port=0, report_cache_mi=0), host="127.0.0.1")
+    httpd.server_close()
+    app.work({"X-Demo-Report": "large"})
+    assert len(app.cache.reports) == 0
 
 
 def test_serves_without_aws_when_bucket_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,7 +171,7 @@ def test_bucket_builds_a_boto3_client(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     httpd.server_close()
     assert built == [("s3", "us-east-1")]
-    assert app.work()[0] == 200
+    assert app.work({})[0] == 200
 
 
 def test_unknown_path_is_404() -> None:

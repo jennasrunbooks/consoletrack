@@ -14,15 +14,17 @@ from concurrent.futures import ThreadPoolExecutor
 from prometheus_client import CollectorRegistry, Counter
 
 from demo_app.config import Config
+from demo_app.server import REPORT_HEADER
 from demo_app.web import make_server
 
 RESULTS = ("ok", "http_error", "conn_error", "timeout")
 
 
-def call(url: str, timeout: float) -> str:
+def call(url: str, timeout: float, headers: dict[str, str] | None = None) -> str:
     """One GET; returns its `result` label."""
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        request = urllib.request.Request(url, headers=headers or {})
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
             resp.read()
             return "ok" if 200 <= resp.status < 300 else "http_error"
     except urllib.error.HTTPError:
@@ -52,9 +54,11 @@ class Loadgen:
         for result in RESULTS:
             self.requests.labels(result=result)
         self.stopped = threading.Event()
+        # The OOM fault: every request asks for a large report, which the app caches.
+        self.headers = {REPORT_HEADER: config.report} if config.report else {}
 
     def once(self) -> str:
-        result = call(self.config.target, self.config.timeout_seconds)
+        result = call(self.config.target, self.config.timeout_seconds, self.headers)
         self.requests.labels(result=result).inc()
         return result
 

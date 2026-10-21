@@ -10,7 +10,7 @@ is [`../openapi.yaml`](../openapi.yaml); the layering and both state machines ar
 | `app/worker.py` | The worker process: `python -m app.worker` (the triage loop; the intake joins with #9) |
 | `app/settings.py` | Every setting, from the environment variables in `../.env.example` |
 | `app/api/` | Routers (HTTP only), auth dependencies, `Error` mapping |
-| `app/services/` | Change and incident state machines, Accept, Alertmanager processing, the triage queue, the policy gate interface, intake health |
+| `app/services/` | Change, incident, and remediation state machines, Accept, Alertmanager processing, the triage queue, the policy gate and its policies, the remediation validator and apply loop, intake health |
 | `app/db/` | SQLAlchemy models, repository protocols and their SQL versions, Alembic migrations |
 | `app/schemas.py` | API models matching `openapi.yaml` |
 | `app/compose_entrypoint.py` | Docker Compose only: generated local secrets, `alembic upgrade head`, uvicorn |

@@ -31,6 +31,17 @@ class NotFound(Exception):
         super().__init__(f"{subject} {subject_id} not found")
 
 
+class NoProposedRemediation(Exception):
+    """Approve or reject, but the incident has no remediation waiting for a decision (HTTP 409)."""
+
+    def __init__(self, incident_id: int) -> None:
+        super().__init__(f"incident {incident_id} has no proposed remediation to decide on")
+
+
+class UnsupportedRemediation(Exception):
+    """A remediation kind the backend can't apply yet (HTTP 501)."""
+
+
 class InvalidCredentials(Exception):
     """Unknown username or wrong password; deliberately one error for both (HTTP 401)."""
 

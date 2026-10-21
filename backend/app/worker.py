@@ -23,7 +23,8 @@ from app.agents.tools import open_aws_toolbox, open_toolbox
 from app.agents.triage import IncidentTriage
 from app.api.deps import utcnow
 from app.db.session import make_engine, make_uow_factory
-from app.services.policy_gate import ManualPolicyGate
+from app.services.policy_gate import ConfiguredPolicyGate
+from app.services.remediation_policy import load_policies
 from app.settings import Settings, get_settings
 
 log = logging.getLogger("app.worker")
@@ -49,7 +50,12 @@ def build_agents(settings: Settings, clock: Callable[[], datetime] = utcnow) -> 
         triage=IncidentTriage(
             uow_factory=uow_factory,
             runner=runner,
-            gate=ManualPolicyGate(),
+            gate=ConfiguredPolicyGate(
+                uow_factory=uow_factory,
+                config=load_policies(settings.remediation_policies_file),
+                settings=settings,
+                clock=clock,
+            ),
             settings=settings,
             toolbox_factory=open_toolbox,
             clock=clock,
