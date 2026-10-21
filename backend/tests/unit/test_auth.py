@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 from datetime import timedelta
 from http.cookies import SimpleCookie
@@ -336,7 +337,7 @@ def test_hash_password_prints_a_make_escaped_argon2id_hash(
         "hash_password",
         PasswordHasher(time_cost=1, memory_cost=8, parallelism=1).hash,
     )
-    assert hash_password_cli.main() == 0
+    assert hash_password_cli.main([]) == 0
     out = capsys.readouterr().out.strip()
     assert out.startswith("$$argon2id$$v=19$$")
     assert PasswordHasher().verify(out.replace("$$", "$"), "s3cret-pass")
@@ -349,4 +350,24 @@ def test_hash_password_rejects_empty_or_mismatched(
 ) -> None:
     replies = iter(answers)
     monkeypatch.setattr(hash_password_cli.getpass, "getpass", lambda prompt: next(replies))
-    assert hash_password_cli.main() == 1
+    assert hash_password_cli.main([]) == 1
+
+
+def test_hash_password_stdin_prints_a_plain_argon2id_hash(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(hash_password_cli.sys, "stdin", io.StringIO("s3cret-pass\n"))
+    monkeypatch.setattr(
+        hash_password_cli,
+        "hash_password",
+        PasswordHasher(time_cost=1, memory_cost=8, parallelism=1).hash,
+    )
+    assert hash_password_cli.main(["--stdin"]) == 0
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("$argon2id$v=19$")
+    assert PasswordHasher().verify(out, "s3cret-pass")
+
+
+def test_hash_password_stdin_rejects_an_empty_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hash_password_cli.sys, "stdin", io.StringIO("\n"))
+    assert hash_password_cli.main(["--stdin"]) == 1

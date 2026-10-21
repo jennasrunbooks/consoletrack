@@ -114,6 +114,22 @@ HELMFILE_STATE := helm/helmfile.yaml.gotmpl
 override HELM_DRIVER := configmap
 export HELM_DRIVER
 
+# The kubectl/Helm context for the EKS cluster. `make kubeconfig` creates it under this fixed alias
+# (no account ID in the name), and every kubectl, helm, and helmfile call names it: the current
+# context is never used.
+KUBE_CONTEXT ?= consoletrack-eks
+HELMFILE_EKS = $(HELMFILE) --file $(HELMFILE_STATE) -e eks --kube-context $(KUBE_CONTEXT)
+# The tag `make images` pushes and `make deploy` rolls out: the current commit's short SHA.
+IMAGE_TAG ?= $(shell git rev-parse HEAD 2>/dev/null | cut -c1-7)
+# Where `make helm-values` reads the Terraform outputs: terraform, env (deploy.yaml), or none.
+HELM_VALUES_SOURCE ?= terraform
+# Appended to `python -m app.hash_password` by `make hash-password`: --stdin for the scripts.
+HASH_ARGS ?=
+# The ServiceAccounts `make audit-rbac` checks (namespace:name), in the namespaces below.
+AUDIT_SERVICE_ACCOUNTS := consoletrack:remediator consoletrack:worker consoletrack:frontend \
+	consoletrack:k8s-mcp consoletrack:aws-mcp consoletrack:canary demo:demo-app
+AUDIT_NAMESPACES := consoletrack demo
+
 # One Terraform root per folder (product-spec.md → Terraform layout).
 TF_ROOTS := terraform/consoletrack/global terraform/consoletrack/us-east-1 terraform/demo-app/us-east-1
 
@@ -138,7 +154,8 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
 	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
-	preflight bootstrap up down down-all verify-clean addons deploy open \
+	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
+	images kubeconfig tf-destroy \
 	domain domain-zone domain-cert domain-destroy \
 	local local-down local-fault local-incidents demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
@@ -290,7 +307,7 @@ db-sql: ## Print the full schema migration as SQL, offline (no database needed)
 	$(BACKEND_RUN) alembic upgrade head --sql
 
 hash-password: ## Prompt for a password and print its argon2id hash for .env ($ doubled for make)
-	@$(BACKEND_RUN) python -m app.hash_password
+	@$(BACKEND_RUN) python -m app.hash_password $(HASH_ARGS)
 
 # npm ci (scripts off) whenever the lockfile is newer than the installed tree.
 $(FRONTEND_DEPS): frontend/package-lock.json
@@ -348,8 +365,8 @@ tf-env: ## Show which .env names map to which TF_VAR_* and whether each is set (
 
 ##@ AWS deployment
 
-preflight: env-check-up ## Check tools, AWS identity, quotas, K8s version, API key, CAA (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+preflight: env-check-up ## Check tools, AWS identity, helm-diff, API key, NAME_SUFFIX, and the ALB inputs
+	scripts/preflight.sh
 
 bootstrap: env-check-aws ## Create the Terraform state bucket (and print a NAME_SUFFIX if unset)
 	scripts/bootstrap-state.sh
@@ -367,30 +384,114 @@ tf-apply: env-check-tf ## terraform apply ROOT=… after Terraform's own yes pro
 	$(check_human)
 	$(TERRAFORM) -chdir=$(TF_DIR) apply
 
+tf-destroy: env-check-tf ## terraform destroy ROOT=… after Terraform's own yes prompt (humans only)
+	$(check_root)
+	$(check_human)
+	$(TERRAFORM) -chdir=$(TF_DIR) destroy
+
 tf-output: env-check-tf ## terraform output ROOT=<account>/<scope> [OUTPUT=<name>] (read-only; sensitive values stay hidden)
 	$(check_root)
 	$(TERRAFORM) -chdir=$(TF_DIR) output $(OUTPUT)
 
-up: env-check-up ## Create the platform, add-ons, and app; print the dashboard URL (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+# addons and deploy each run helm-values first, so the Terraform outputs they read are current.
+# `make images` is the step before the first `make up`. Each Terraform root is initialized, then
+# applied (Terraform shows the plan and asks for "yes" itself). A root with no .tf files is skipped.
+up: env-check-up ## Create the platform, add-ons, and app; safe to rerun (run make images first)
+	$(check_human)
+	$(MAKE) --no-print-directory preflight
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global
+	@echo "make $@: consoletrack/global must have no changes to apply"
+	@$(TERRAFORM) -chdir=terraform/consoletrack/global plan -input=false -detailed-exitcode; rc=$$?; \
+	if [ $$rc -eq 2 ]; then \
+		echo "make $@: consoletrack/global has changes (above). Apply them yourself, then run make up again:" \
+			"make tf-apply ROOT=consoletrack/global" >&2; exit 1; \
+	elif [ $$rc -ne 0 ]; then exit $$rc; fi
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/us-east-1
+	$(MAKE) --no-print-directory tf-apply ROOT=consoletrack/us-east-1
+	@if ls terraform/demo-app/us-east-1/*.tf >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory tf-init ROOT=demo-app/us-east-1 && \
+		$(MAKE) --no-print-directory tf-apply ROOT=demo-app/us-east-1; \
+	else echo "make $@: demo-app/us-east-1 skipped (no Terraform yet)"; fi
+	$(MAKE) --no-print-directory kubeconfig
+	$(MAKE) --no-print-directory addons
+	$(MAKE) --no-print-directory create-secrets
+	$(MAKE) --no-print-directory deploy
+	@echo "make $@: done. Run make open for the dashboard (admin password: printed above on first run)."
 
-addons: env-check-aws ## helmfile -l tier=addons apply: Gateway API CRDs and third-party charts (stub)
-	$(call todo,#12)
+images: ## Build every image for linux/arm64 and push to GHCR as IMAGE_TAG (humans; run before the first make up)
+	$(check_human)
+	scripts/images.sh
 
-deploy: env-check-aws ## helmfile -l tier=app apply: the consoletrack and demo-app releases (stub)
-	$(call todo,#12)
+# Writes helm/environments/values.generated.yaml. deploy.yaml runs it too, with
+# HELM_VALUES_SOURCE=env (its role can't read Terraform state), so it isn't human-only.
+helm-values: ## Write helm/environments/values.generated.yaml from .env and the Terraform outputs (gitignored, no secrets)
+ifeq ($(HELM_VALUES_SOURCE),terraform)
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/us-east-1 >/dev/null
+	@if ls terraform/demo-app/us-east-1/*.tf >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory tf-init ROOT=demo-app/us-east-1 >/dev/null; fi
+endif
+	scripts/helm-values.sh
 
-open: env-check-aws ## Port-forward the dashboard and open it (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+kubeconfig: env-check-aws ## aws eks update-kubeconfig under the context alias KUBE_CONTEXT (humans only)
+	$(check_human)
+	@cluster=$$($(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 output -raw cluster_name) || \
+		{ echo "make $@: no cluster_name output; run make up first" >&2; exit 1; }; \
+	aws eks update-kubeconfig --name "$$cluster" --region $(AWS_REGION) --alias $(KUBE_CONTEXT) | \
+		sed -E 's/[0-9]{12}/***/g'
 
-down: env-check-aws ## Destroy demo-app and the regional platform; keep global and state (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+create-secrets: env-check-aws ## Create the consoletrack-api-key, -auth, and -webhook Secrets if missing (humans only)
+	$(check_human)
+	scripts/create-secrets.sh
 
-down-all: env-check-aws ## down, plus the global root and the state bucket (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+addons: env-check-aws helm-values ## helmfile -l tier=addons apply: Gateway API CRDs and third-party charts (humans only)
+	$(check_human)
+	$(HELMFILE_EKS) -l tier=addons apply
 
-verify-clean: env-check-aws ## Fail if project-tagged billable resources remain (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+# CI runs this too (deploy.yaml, role ct-gh-deploy-<suffix>), so no check_human and no AWS_PROFILE.
+deploy: env-check-tf helm-values ## helmfile -l tier=app apply at IMAGE_TAG: the consoletrack and demo-app releases
+	$(HELMFILE_EKS) -l tier=app --state-values-set imageTag=$(IMAGE_TAG) apply
+
+OPEN_PORT ?= 8080
+open: ## Port-forward the dashboard to 127.0.0.1:8080 and print the URL (EXPOSURE=alb prints the HTTPS URL)
+ifeq ($(EXPOSURE),alb)
+	@echo "make $@: EXPOSURE=alb: the dashboard is at https://$(DOMAIN) (from ALLOWED_CIDRS only)"
+else
+	@echo "make $@: dashboard at http://127.0.0.1:$(OPEN_PORT) (Ctrl-C to stop); log in as admin"
+	kubectl --context $(KUBE_CONTEXT) -n consoletrack port-forward --address 127.0.0.1 svc/frontend $(OPEN_PORT):8080
+endif
+
+# The Helmfile half is scripts/down-cluster.sh: app, any Gateway, wait for the load balancers,
+# add-ons, then the PVCs. helm-values runs source=none: .env alone is enough to destroy, and the
+# Terraform outputs may already be gone.
+down: env-check-aws ## Destroy the releases, wait for load balancers and ENIs, then demo-app and consoletrack/us-east-1; keep global and state
+	$(check_human)
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/us-east-1
+	@if $(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 output -raw cluster_name >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory kubeconfig; \
+	else echo "make $@: no cluster in the Terraform state; the Helmfile steps are skipped if the context is unreachable"; fi
+	$(MAKE) --no-print-directory helm-values HELM_VALUES_SOURCE=none
+	scripts/down-cluster.sh
+	@if ls terraform/demo-app/us-east-1/*.tf >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory tf-init ROOT=demo-app/us-east-1 && \
+		$(MAKE) --no-print-directory tf-destroy ROOT=demo-app/us-east-1; \
+	else echo "make $@: demo-app/us-east-1 skipped (no Terraform yet)"; fi
+	$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1
+	@echo "make $@: done. consoletrack/global and the state bucket are kept; run make verify-clean."
+
+down-all: env-check-aws env-check-tf ## down, plus the global root and the state bucket, after a typed confirmation
+	$(check_human)
+	@echo "make $@: this destroys everything: the platform, consoletrack/global (IAM roles, boundary, DNS zone)," \
+		"and the Terraform state bucket ct-tfstate-$(NAME_SUFFIX)."
+	@read -r -p "Type the state bucket name (ct-tfstate-$(NAME_SUFFIX)) to continue: " reply; \
+		[ "$$reply" = "ct-tfstate-$(NAME_SUFFIX)" ] || { echo "make $@: aborted; nothing changed" >&2; exit 1; }
+	$(MAKE) --no-print-directory down
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global
+	$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/global
+	DELETE_STATE_BUCKET_CONFIRMED=1 scripts/delete-state-bucket.sh
+
+verify-clean: env-check-aws ## List project=consoletrack load balancers, ENIs, EBS volumes, Elastic IPs, and NAT gateways; fail if any remain
+	$(check_human)
+	scripts/teardown-verify.sh verify
 
 ##@ Custom domain
 
@@ -482,5 +583,12 @@ triage-smoke: env-check-local ## One real Messages API request with the triage p
 eval: env-check-local ## Agent eval against kind with the real model (stub)
 	$(call todo,the tests + evals workstream; no issue yet)
 
-audit-rbac: env-check-aws ## kubectl auth can-i --list for each ServiceAccount (stub)
-	$(call todo,the tests + evals workstream; no issue yet)
+audit-rbac: ## kubectl auth can-i --list for each ServiceAccount, in the consoletrack and demo namespaces (needs cluster admin)
+	$(check_human)
+	@for sa in $(AUDIT_SERVICE_ACCOUNTS); do \
+		for ns in $(AUDIT_NAMESPACES); do \
+			echo "=== $$sa in namespace $$ns"; \
+			kubectl --context $(KUBE_CONTEXT) auth can-i --list -n $$ns \
+				--as=system:serviceaccount:$${sa%%:*}:$${sa#*:} || exit 1; \
+		done; \
+	done

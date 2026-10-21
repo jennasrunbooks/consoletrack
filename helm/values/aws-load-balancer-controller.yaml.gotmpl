@@ -7,6 +7,11 @@ region: {{ .Values.awsRegion | quote }}
 vpcId: {{ .Values.vpcId | quote }}
 replicaCount: 1
 
+# Every AWS resource carries project=consoletrack; the controller's ALBs and security groups don't
+# get the provider's default_tags, and `make verify-clean` finds leftovers by this tag.
+defaultTags:
+  project: consoletrack
+
 serviceAccount:
   create: true
   # Bound to ct-lbc-<region>-<suffix> by Pod Identity (kube-system:aws-load-balancer-controller).

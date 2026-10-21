@@ -159,15 +159,38 @@ The session cookie is always `Secure`, with no setting to turn that off. Chrome 
 
 ### Steps
 
+**Cost: about $0.23/hr with on-demand nodes, $0.26 with the ALB; `make down` when idle.** (Spot nodes, the default, bring it to about $0.20; see [Cost](#cost).)
+
 ```bash
 cp .env.example .env           # fill in the values, see Configuration
-make preflight                 # tools, AWS identity, Spot quota, Kubernetes version, API key, CAA
+make preflight                 # tools, AWS identity, helm-diff, API key, NAME_SUFFIX, ALB inputs
 make bootstrap                 # once: state bucket; prints a NAME_SUFFIX to add to .env
-make up                        # Terraform (global, us-east-1, demo-app), then Helmfile (add-ons, app)
-make open                      # port-forwards the dashboard and prints the URL and admin password
+make images                    # once, before the first make up: arm64 images to GHCR (see Images)
+make up                        # Terraform (global check, us-east-1, demo-app), then Helmfile (add-ons, app)
+make open                      # port-forwards the dashboard to http://127.0.0.1:8080
+make down                      # when you're done: removes everything but global and the state bucket
+make verify-clean              # fails if any project-tagged billable resource is left
 ```
 
-`make up` takes about 20–25 minutes and is safe to rerun. Terraform is AWS-only; Helmfile owns every chart: it installs everything inside the cluster from [helm/helmfile.yaml.gotmpl](helm/), the add-ons with `make addons` (`helmfile -l tier=addons apply`) and the app with `make deploy` (`helmfile -l tier=app apply`).
+`make up` takes about 20–25 minutes and is safe to rerun. In order, it:
+
+1. runs `make preflight`;
+2. checks that `consoletrack/global` has no changes to apply, and otherwise stops and asks you to apply them (`make tf-apply ROOT=consoletrack/global`; the first time, that creates it);
+3. applies `consoletrack/us-east-1` (Terraform shows the plan and asks for `yes`), then `demo-app/us-east-1` if it has Terraform yet (it logs `skipped (no Terraform yet)` otherwise; the demo app then runs without its S3 bucket, which is enough for the OOM scenario);
+4. runs `aws eks update-kubeconfig` under the context alias `consoletrack-eks`: every `kubectl`, `helm`, and `helmfile` call names it, so your current context is never touched;
+5. writes `helm/environments/values.generated.yaml` from `.env` and the Terraform outputs (`make helm-values`, no secrets), installs the add-ons (`make addons`), creates the Secrets (`make create-secrets`), and deploys the app (`make deploy`).
+
+Terraform is AWS-only; Helmfile owns every chart: it installs everything inside the cluster from [helm/helmfile.yaml.gotmpl](helm/), the add-ons with `make addons` (`helmfile -l tier=addons apply`) and the app with `make deploy` (`helmfile -l tier=app apply` at `IMAGE_TAG`, the current commit's short SHA by default).
+
+**Logging in.** On the first run `make create-secrets` prints the generated `admin` password once and stores only its hash in the `consoletrack-auth` Secret. Set `ADMIN_PASSWORD_HASH` (and `VIEWER_PASSWORD_HASH`) in `.env` before the first run to choose your own; the viewer can't log in without one. A rerun never rotates a Secret that exists. To start over, delete the Secret and run `make create-secrets`.
+
+**Images.** `make images` builds `backend`, `frontend`, `k8s-mcp`, and `demo-app` (and `aws-mcp` once it has a Dockerfile) for `linux/arm64` with `docker buildx` and pushes them to `ghcr.io/jennasrunbooks/consoletrack-*` tagged with the short commit SHA. It logs in with `gh auth token | docker login ghcr.io -u <you> --password-stdin`, so the GitHub CLI needs the `write:packages` scope (`gh auth refresh -s write:packages`); the token is never printed. Run it on your machine: the devcontainer has no Docker. A new package is private, and the nodes pull without an image pull secret, so once per package (after the first push) open github.com → your profile or org → Packages → `consoletrack-<name>` → Package settings → Change visibility → Public. If you also use the `deploy` workflow, add the repository under "Manage Actions access" with the Write role.
+
+**Access without a port-forward.** `make open` is the default exposure. With `EXPOSURE=alb` (and `DOMAIN`) the dashboard is an HTTPS ALB limited to `ALLOWED_CIDRS` instead, and `make open` prints its URL.
+
+**Teardown.** `make down` runs `helmfile destroy` for the app (which removes the Gateway, so the ALB goes), any Gateway left over, then the add-ons; waits until no `project=consoletrack` load balancers or load-balancer ENIs remain; and destroys `demo-app/us-east-1` (if present), then `consoletrack/us-east-1`. `consoletrack/global` and the state bucket stay. `make verify-clean` then lists any leftover `project=consoletrack` load balancers, ENIs, EBS volumes, Elastic IPs, and NAT gateways, and exits non-zero if there are any. `make down-all` also destroys `global` and the state bucket, after you type the bucket name. `make audit-rbac` lists what each ServiceAccount may do (`kubectl auth can-i --list`).
+
+These targets are for a human at a terminal: they refuse to run in CI or without a TTY, and none is on the agent's allow list.
 
 ### Optional: GitHub Actions on your fork
 
@@ -187,14 +210,6 @@ make demo                      # the three cluster faults (OOM, bad image, bad p
 ```
 
 Each one prints the dashboard link to the change or incident it creates.
-
-### Teardown
-
-```bash
-make down                      # Helmfile destroy, then the demo-app and regional Terraform roots
-make verify-clean              # fails if any project-tagged billable resource is left
-make down-all                  # optional: also the global root and the state bucket
-```
 
 ## Cost
 
