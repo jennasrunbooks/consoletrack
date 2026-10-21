@@ -2,7 +2,17 @@
 // schema so a contract change that breaks it fails `npm run typecheck`. Times are relative to
 // when the module loads, so "4 min ago" stays true in `npm run dev:mock`. The account ID is the
 // documentation placeholder (AGENTS.md → Hard rules).
-import type { AgentRun, Analysis, ChangeSummary, Evidence, Incident, IntakeHealth, Remediation, User } from "../api";
+import type {
+  AgentRun,
+  Analysis,
+  Change,
+  ChangeSummary,
+  Evidence,
+  Incident,
+  IntakeHealth,
+  Remediation,
+  User,
+} from "../api";
 import { recordedOomIncident } from "./recorded-oom";
 
 const ACCOUNT = "123456789012";
@@ -125,6 +135,262 @@ export function buildChanges(now = Date.now()): ChangeSummary[] {
       linked_incidents: [],
     }),
   ];
+}
+
+/** What GET /changes/{id} adds to a change log row; the mock joins the two by id. */
+export type ChangeDetails = Omit<Change, keyof ChangeSummary | "linked_incidents">;
+
+/** A change's details before the agent has looked at it: just the CloudTrail fields. */
+export function emptyChangeDetails(id: number): ChangeDetails {
+  return {
+    cloudtrail_event_id: `00000000-0000-4000-8000-${String(id).padStart(12, "0")}`,
+    region: "us-east-1",
+    source_ip: null,
+    user_agent: null,
+    request_parameters: null,
+    decision: null,
+    decided_by: null,
+    decided_at: null,
+    reason: null,
+    analysis: null,
+    drift: null,
+    remediation: null,
+  };
+}
+
+function changeRun(id: number, startedAgo: number, seconds: number, toolCalls: number, now: number): AgentRun {
+  return { ...agentRun(id, startedAgo, seconds, toolCalls, now), input_tokens: 9_800, output_tokens: 640 };
+}
+
+function changeAnalysis(
+  changeId: number,
+  run: AgentRun,
+  a: Pick<Analysis, "summary" | "risk" | "risk_reason" | "confidence"> & Partial<Analysis>,
+): Analysis {
+  return { id: run.id, subject_type: "change", subject_id: changeId, root_cause: null, flags: [], postmortem_md: null, agent_run: run, ...a };
+}
+
+function revertRemediation(changeId: number, r: Pick<Remediation, "status"> & Partial<Remediation>, now: number): Remediation {
+  return {
+    id: 1000 + changeId,
+    subject_type: "change",
+    subject_id: changeId,
+    kind: "revert_workflow",
+    payload: { kind: "revert_workflow", change_id: changeId, tf_root: DEMO_ROOT },
+    decided_by: "admin",
+    external_url: `https://github.com/jennasrunbooks/consoletrack/actions/runs/${changeId}`,
+    created_at: ago(10 * minute, now),
+    applied_at: null,
+    error: null,
+    mode: "manual",
+    policy: "default",
+    gate_reason: "revert_workflow changes AWS: always manual (Revert or Codify)",
+    decided_at: ago(10 * minute, now),
+    before: null,
+    after: null,
+    steps: [],
+    ...r,
+  };
+}
+
+const DEMO_ROOT = "terraform/demo-app/us-east-1";
+const SG_ID = "sg-0a1b2c3d4e5f60718";
+
+/** Details for the changes in buildChanges(), by id. CHG-0042 is docs/mockups/change-details.png. */
+export function buildChangeDetails(now = Date.now()): Record<number, ChangeDetails> {
+  return {
+    42: {
+      ...emptyChangeDetails(42),
+      cloudtrail_event_id: "7f3e2a10-9c4b-4d8e-b1a6-2c5d0e8f9a31",
+      source_ip: "203.0.113.24",
+      user_agent: "AWS Internal",
+      request_parameters: {
+        groupId: SG_ID,
+        ipPermissions: {
+          items: [{ ipProtocol: "tcp", fromPort: 22, toPort: 22, ipRanges: { items: [{ cidrIp: "0.0.0.0/0" }] } }],
+        },
+      },
+      analysis: changeAnalysis(42, changeRun(342, 3 * minute, 11, 4, now), {
+        summary:
+          "The ct-demo-developer role added an inbound rule to demo-app-sg allowing TCP 22 from 0.0.0.0/0. The " +
+          "change was made from a console session and has no matching Terraform change. The group protects the " +
+          "demo app, so port 22 is now reachable from anywhere on the internet.",
+        risk: "high",
+        risk_reason:
+          "Internet-wide SSH exposure on a group Terraform manages. The next terraform apply of the demo-app root " +
+          "would silently remove the rule. No incident is linked yet.",
+        confidence: "high",
+      }),
+      drift: {
+        tf_root: DEMO_ROOT,
+        tf_address: "aws_security_group.demo_app",
+        attribute: "ingress rules",
+        lines: [
+          { op: "context", text: "tcp 443 from [ALLOWED_CIDRS]", note: "in Terraform and live" },
+          { op: "added", text: "tcp 22 from 0.0.0.0/0", note: "live only, added out of band" },
+        ],
+      },
+    },
+    41: {
+      ...emptyChangeDetails(41),
+      cloudtrail_event_id: "b4d1c0e2-5a3f-4e71-9c28-0f6a1d2e3b45",
+      source_ip: "198.51.100.7",
+      user_agent: "aws-cli/2.31.4 md/awscrt#0.27.6 ua/2.1 os/macos#25.0.0 md/arch#arm64 lang/python#3.13.7 cfg/retry-mode#standard md/command#iam.put-role-policy",
+      request_parameters: {
+        roleName: "demo-app",
+        policyName: "demo-app-data",
+        policyDocument: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:ListBucket"],"Resource":"arn:aws:s3:::demo-app-data"}]}',
+      },
+      analysis: changeAnalysis(41, changeRun(341, 17 * minute, 14, 3, now), {
+        summary:
+          "jdev rewrote the demo-app role's inline policy demo-app-data with the AWS CLI. The new document keeps " +
+          "s3:ListBucket but drops s3:GetObject on demo-app-data/*, which the demo app reads on every request.",
+        risk: "high",
+        risk_reason: "The demo app can no longer read its data: every request fails until the policy is restored.",
+        confidence: "high",
+      }),
+      drift: {
+        tf_root: DEMO_ROOT,
+        tf_address: "aws_iam_role_policy.demo_app",
+        attribute: "policy actions",
+        lines: [
+          { op: "context", text: '"s3:ListBucket" on arn:aws:s3:::demo-app-data', note: "in Terraform and live" },
+          { op: "removed", text: '"s3:GetObject" on arn:aws:s3:::demo-app-data/*', note: "Terraform only, removed out of band" },
+        ],
+      },
+      decision: "revert",
+      decided_by: "admin",
+      decided_at: ago(13 * minute, now),
+      remediation: revertRemediation(41, {
+        status: "running",
+        decided_at: ago(13 * minute, now),
+        created_at: ago(13 * minute, now),
+        steps: [{ step: "approved", at: ago(13 * minute, now), ok: true, detail: "revert requested by admin" }],
+      }, now),
+    },
+    40: {
+      ...emptyChangeDetails(40),
+      cloudtrail_event_id: "2e9f8a7b-6c5d-4e3f-8a1b-0c9d8e7f6a5b",
+      source_ip: "192.0.2.41",
+      user_agent: "APN/1.0 HashiCorp/1.0 Terraform/1.13.4 (+https://www.terraform.io) terraform-provider-aws/6.17.0",
+      request_parameters: { roleName: "demo-app", policyDocument: "(redacted: 412 characters)" },
+      analysis: changeAnalysis(40, changeRun(340, 60 * minute, 19, 5, now), {
+        summary:
+          "jsprattler ran terraform apply from a laptop with the AdministratorAccess SSO role and changed the demo-app " +
+          "role's trust policy. The new policy still trusts pods.eks.amazonaws.com and adds sts:TagSession.",
+        risk: "medium",
+        risk_reason: "Same principal as before, but the apply skipped the pipeline's plan review.",
+        confidence: "medium",
+      }),
+      drift: {
+        tf_root: DEMO_ROOT,
+        tf_address: "aws_iam_role.demo_app",
+        attribute: "assume_role_policy actions",
+        lines: [
+          { op: "context", text: '"sts:AssumeRole" for pods.eks.amazonaws.com', note: "in Terraform and live" },
+          { op: "added", text: '"sts:TagSession" for pods.eks.amazonaws.com', note: "live only" },
+        ],
+      },
+    },
+    39: {
+      ...emptyChangeDetails(39),
+      source_ip: "ec2.amazonaws.com",
+      user_agent: "Boto3/1.40.55 md/Botocore#1.40.55 ua/2.1 os/linux#6.1 lang/python#3.12.12",
+      request_parameters: { bucketName: "demo-app-data", Tagging: { TagSet: { Tag: [{ Key: "cost-center", Value: "demo" }] } } },
+      analysis: changeAnalysis(39, changeRun(339, 26 * 60 * minute - minute, 9, 2, now), {
+        summary: "The finops cost-tagger added a cost-center tag to demo-app-data through the SDK.",
+        risk: "low",
+        risk_reason: "Tags don't change access or behavior.",
+        confidence: "high",
+      }),
+      decision: "accept",
+      decided_by: "admin",
+      decided_at: ago(25 * 60 * minute, now),
+      reason: "FinOps tagging; codify the tag in the next demo-app pull request.",
+    },
+    38: {
+      ...emptyChangeDetails(38),
+      source_ip: "203.0.113.24",
+      user_agent: "AWS Internal",
+      request_parameters: { roleName: "demo-app", policyArn: "arn:aws:iam::aws:policy/ReadOnlyAccess" },
+      analysis: changeAnalysis(38, changeRun(338, 29 * 60 * minute - minute, 12, 3, now), {
+        summary: "jdev attached the AWS managed ReadOnlyAccess policy to the demo-app role from the console.",
+        risk: "high",
+        risk_reason: "Account-wide read access for a workload that only needs one bucket.",
+        confidence: "high",
+      }),
+      decision: "revert",
+      decided_by: "admin",
+      decided_at: ago(28 * 60 * minute, now),
+      remediation: revertRemediation(38, {
+        status: "succeeded",
+        decided_at: ago(28 * 60 * minute, now),
+        created_at: ago(28 * 60 * minute, now),
+        applied_at: ago(28 * 60 * minute - 6 * minute, now),
+      }, now),
+    },
+    37: {
+      ...emptyChangeDetails(37),
+      source_ip: "198.51.100.23",
+      user_agent: "aws-cli/2.31.4 md/awscrt#0.27.6 ua/2.1 exec-env/CloudShell os/linux#5.10 md/command#ec2.authorize-security-group-ingress",
+      analysis: changeAnalysis(37, changeRun(337, 5 * 24 * 60 * minute - minute, 10, 3, now), {
+        summary: "jdev opened TCP 8080 on demo-app-sg to 198.51.100.0/24 from CloudShell.",
+        risk: "medium",
+        risk_reason: "Limited to the office range, but not in Terraform.",
+        confidence: "high",
+      }),
+      decision: "accept",
+      decided_by: "admin",
+      decided_at: ago(5 * 24 * 60 * minute - 30 * minute, now),
+      reason: "Temporary debug port for the load test; closes with the next apply.",
+    },
+  };
+}
+
+/** The tool calls behind CHG-0042's analysis (docs/mockups/change-details.png), as aws-mcp returns them. */
+export function buildChangeEvidence(now = Date.now()): Record<number, Evidence[]> {
+  const e = (id: number, seq: number, tool_name: string, args: Evidence["args"], result: unknown): Evidence => ({
+    id,
+    agent_run_id: 342,
+    seq,
+    tool_name,
+    args,
+    result_excerpt: json(result),
+    created_at: ago(3 * minute - seq * 2 * second, now),
+  });
+  return {
+    42: [
+      e(101, 1, "get_resource_changes", { resource_id: SG_ID, hours: 24 }, {
+        resource_id: SG_ID,
+        events: [
+          {
+            event_name: "AuthorizeSecurityGroupIngress",
+            event_time: ago(4 * minute, now),
+            principal: "assumed-role/ct-demo-developer/jdev",
+            session_credential_from_console: true,
+          },
+        ],
+      }),
+      e(102, 2, "get_security_group", { group_id: SG_ID }, {
+        group_id: SG_ID,
+        group_name: "demo-app-sg",
+        ingress: [
+          { protocol: "tcp", from_port: 443, to_port: 443, cidrs: ["[ALLOWED_CIDRS]"] },
+          { protocol: "tcp", from_port: 22, to_port: 22, cidrs: ["0.0.0.0/0"] },
+        ],
+      }),
+      e(103, 3, "lookup_terraform_address", { resource_id: SG_ID }, {
+        tf_root: DEMO_ROOT,
+        tf_address: "aws_security_group.demo_app",
+        state_ingress: [{ protocol: "tcp", from_port: 443, to_port: 443, cidrs: ["[ALLOWED_CIDRS]"] }],
+      }),
+      e(104, 4, "get_principal_activity", { principal: "ct-demo-developer", hours: 24 }, {
+        principal: "ct-demo-developer",
+        writes: 1,
+        events: ["AuthorizeSecurityGroupIngress"],
+      }),
+    ],
+  };
 }
 
 export function buildIntakeHealth(overrides: Partial<IntakeHealth> = {}, now = Date.now()): IntakeHealth {

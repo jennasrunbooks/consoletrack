@@ -1,11 +1,12 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { AppShell } from "./components/AppShell";
+import { ChangeDetailPage } from "./pages/changes/ChangeDetailPage";
 import { ChangeLogPage } from "./pages/changes/ChangeLogPage";
 import { LoginPage } from "./pages/LoginPage";
 import { IncidentDetailPage } from "./pages/incidents/IncidentDetailPage";
 import { IncidentListPage } from "./pages/incidents/IncidentListPage";
-import { ChangeDetailPlaceholder, NotFoundPage } from "./pages/PlaceholderPage";
+import { NotFoundPage } from "./pages/PlaceholderPage";
 
 export function App() {
   const { user } = useAuth();
@@ -22,7 +23,7 @@ export function App() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/changes" replace />} />
         <Route path="changes" element={<ChangeLogPage />} />
-        <Route path="changes/:id" element={<ChangeDetailPlaceholder />} />
+        <Route path="changes/:id" element={<ChangeDetailPage />} />
         <Route path="incidents" element={<IncidentListPage />} />
         <Route path="incidents/:id" element={<IncidentDetailPage />} />
         <Route path="*" element={<NotFoundPage />} />
