@@ -143,3 +143,6 @@ def _real_applier(
 
 def _secret(value: SecretStr | None) -> str | None:
     return value.get_secret_value() if value is not None else None
+
+
+# CI timing probe (backend-only). Do not merge.
