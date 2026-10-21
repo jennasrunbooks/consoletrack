@@ -33,3 +33,4 @@ async function start() {
 }
 
 void start();
+// CI timing probe (frontend-only). Do not merge.
