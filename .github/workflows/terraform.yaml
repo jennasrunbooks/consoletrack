@@ -4,7 +4,7 @@
 # role ARN as the secret AWS_ROLE_ARN. Today there is one entry, `consoletrack`;
 # terraform/demo-app/us-east-1 uses the hub's roles until demo-app moves to its own account.
 #
-#   pull_request touching terraform/**  → fmt -check, validate, tflint, plan per changed root,
+#   pull_request touching terraform/**  → "validate, terraform test, tflint, plan per changed root,
 #                                          plan posted as a PR comment (account ID replaced)
 #   push to main touching terraform/**  → apply per changed root, after the <account>-apply
 #                                          environment's required reviewer approves
