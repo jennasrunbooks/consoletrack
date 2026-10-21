@@ -24,5 +24,22 @@ for (const theme of ["light", "dark"] as const) {
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: `${OUT}change-log${suffix}.png`, fullPage: true, animations: "disabled" });
     });
+
+    test("incidents", async ({ page }) => {
+      await logIn(page, "admin");
+      await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Incidents" }).click();
+      await expect(page.getByRole("link", { name: "DemoAppHighErrorRate" }).first()).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: `${OUT}incidents${suffix}.png`, fullPage: true, animations: "disabled" });
+    });
+
+    test("incident detail", async ({ page }) => {
+      await logIn(page, "admin");
+      await page.goto("/incidents/14");
+      await expect(page.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeVisible();
+      await expect(page.getByText(/^get_pods\(/).first()).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: `${OUT}incident-detail${suffix}.png`, fullPage: true, animations: "disabled" });
+    });
   });
 }

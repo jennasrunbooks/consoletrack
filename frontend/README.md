@@ -4,8 +4,9 @@ React + Vite + TypeScript dashboard for ConsoleTrack. Screens follow
 [`../docs/mockups/`](../docs/mockups/) in both themes; the contract is
 [`../openapi.yaml`](../openapi.yaml).
 
-Built so far (#13, PR 1): app shell, login, intake indicator, change log. Change detail,
-incidents, evidence, and the postmortem editor come in PR 2; their routes are placeholders.
+Built so far (#13): app shell, login, intake indicator, change log (PR 1); incident list and
+incident detail with evidence, Approve/Reject, and Re-run triage (PR 2a). Change detail and the
+postmortem editor come in PR 2b; the change detail route is a placeholder.
 
 ## Commands
 
@@ -28,8 +29,10 @@ src/api/          the only code that calls the backend
   schema.d.ts     generated from ../openapi.yaml by `npm run gen:api` (don't edit; CI checks it)
   client.ts       typed calls (openapi-fetch), one ApiError for every non-2xx
 src/auth/         session state from GET /auth/me; login and logout
-src/components/   shell: header, intake indicator, user menu, theme toggle, AdminButton
-src/pages/        login, change log (filters in the URL), PR 2 placeholders
+src/components/   shell: header, intake indicator, user menu, theme toggle, AdminButton,
+                  Pagination, EvidenceList
+src/pages/        login, change log and incident list (filters in the URL), incident detail
+                  (polls every 5 s while open or triaging), change detail placeholder
 src/lib/          formatting, theme, small data hooks
 src/mocks/        MSW handlers + fixtures shared by tests and `npm run dev:mock`
 src/test/         Vitest setup and render helpers
@@ -54,3 +57,28 @@ e2e/              Playwright specs; fixtures.ts fails any test that requests bey
   that breaks them fails `typecheck`.
 - **Colors are CSS variables** in `src/styles.css`, one set per theme. The theme follows the OS
   until the header toggle sets it; `public/theme-init.js` applies it before first paint.
+
+## Mock data
+
+`src/mocks/fixtures.ts` follows a real kind run: the demo-app chart's alert and faults, and only
+k8s-mcp's tools with their real result shapes. INC-14 goes further: `src/mocks/recorded-oom.ts` is
+generated from a real capture of the OOM fault, field for field, with ids changed to INC-14's and
+every timestamp re-based (`src/mocks/rebase.ts`) so it reads as 9 minutes old.
+
+To re-capture after the agent, k8s-mcp, or the fault changes: on the host, `make local`, then
+`make local-fault FAULT=oom`, wait for the incident (`make local-incidents`), and from the repo root:
+
+```bash
+base=http://localhost:8080
+pw=$(docker compose -f docker-compose.yaml -f compose/kind.yaml --profile kind exec -T backend cat /run/consoletrack/admin-password)
+jar=$(mktemp)
+jq -n --arg p "$pw" '{username: "admin", password: $p}' |
+  curl -fsS -c "$jar" -o /dev/null -H 'Content-Type: application/json' --data @- "$base/api/v1/auth/login"
+id=$(curl -fsS -b "$jar" "$base/api/v1/incidents?page_size=1" | jq '.items[0].id')
+curl -fsS -b "$jar" "$base/api/v1/incidents/$id" | jq . > incident.json
+curl -fsS -b "$jar" "$base/api/v1/incidents/$id/evidence" | jq . > evidence.json
+rm -f "$jar"
+```
+
+Read both files before using them (no secrets or account IDs), then
+`cd frontend && npm run record:incident -- ../incident.json ../evidence.json` and delete them.

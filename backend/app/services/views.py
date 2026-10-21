@@ -167,6 +167,7 @@ def _analysis(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
         risk_reason=row.risk_reason,
         root_cause=row.root_cause,
         confidence=row.confidence,
+        flags=list(row.flags),
         postmortem_md=row.postmortem_md,
         agent_run=AgentRun(
             id=run.id,
