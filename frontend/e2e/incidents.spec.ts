@@ -43,13 +43,13 @@ test("detail shows the analysis and the proposed fix, and Approve runs it", asyn
   await openIncidents(page, "admin", "/incidents/14");
   await expect(page.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeVisible();
   const analysis = card(page, "Agent analysis");
-  await expect(analysis).toContainText("OOMKilled (exit code 137) on each of its last 4 starts");
-  await expect(analysis).toContainText("Confidence: high · 6 tool calls · claude-haiku-5-5");
+  await expect(analysis).toContainText("is in CrashLoopBackOff with 3 restarts");
+  await expect(analysis).toContainText("Confidence: medium · 7 tool calls · claude-haiku-5-5");
   const fix = card(page, "Proposed fix");
   await expect(fix).toContainText("set_memory_limit demo/demo-app container demo-app → 256Mi");
   await expect(page.locator(".timeline-step.current")).toContainText("Awaiting review");
 
-  await expect(fix).toContainText("kill switch: AUTOFIX_ENABLED is false");
+  await expect(fix).toContainText("the agent's confidence is medium; policy oom-memory-bump needs high");
 
   // Approve: the apply loop runs the fix and the page polls until its steps are in.
   await page.getByRole("button", { name: "Approve fix" }).click();

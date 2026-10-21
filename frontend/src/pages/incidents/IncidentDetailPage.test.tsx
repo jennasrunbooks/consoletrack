@@ -13,35 +13,37 @@ async function renderIncident(id: number, as: "admin" | "viewer" = "admin") {
 }
 
 describe("incident detail", () => {
+  // INC-14 is a real kind run of the OOM fault (src/mocks/recorded-oom.ts).
   it("shows the alert, the analysis, the run, the timeline, and the proposed fix", async () => {
     await renderIncident(14);
     expect(screen.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeInTheDocument();
     expect(screen.getByText("INC-14")).toBeInTheDocument();
 
     const analysis = within(card("Agent analysis"));
-    expect(analysis.getByText(/OOMKilled \(exit code 137\) on each of its last 4 starts/)).toBeInTheDocument();
-    expect(analysis.getByText(/The 128Mi memory limit is below what demo-app needs at startup/)).toBeInTheDocument();
+    expect(analysis.getByText(/Its single pod, demo-app-76bfd6b877-n4gtq, is in CrashLoopBackOff/)).toBeInTheDocument();
+    expect(analysis.getByText(/Its 128Mi memory limit is too small for that work/)).toBeInTheDocument();
     expect(analysis.getByText("Risk: high.")).toBeInTheDocument();
-    expect(analysis.getByText(/Confidence: high · 6 tool calls/)).toBeInTheDocument();
-    expect(analysis.getByText(/· prompt v2/)).toBeInTheDocument();
+    expect(analysis.getByText(/Confidence: medium · 7 tool calls/)).toBeInTheDocument();
+    expect(analysis.getByText(/· 15 s · prompt v3/)).toBeInTheDocument();
     expect(analysis.getByText("claude-haiku-5-5")).toBeInTheDocument();
-    expect(analysis.queryByRole("list", { name: "Flags" })).toBeNull();
+    expect(within(analysis.getByRole("list", { name: "Flags" })).getByText("Insufficient evidence")).toBeInTheDocument();
 
     const fix = within(card("Proposed fix"));
     expect(fix.getByText("set_memory_limit demo/demo-app container demo-app → 256Mi")).toBeInTheDocument();
-    expect(fix.getByText(/128 MiB allocated \+ ~25 MiB baseline/)).toBeInTheDocument();
+    expect(fix.getByText(/256Mi is exactly 2x the current limit/)).toBeInTheDocument();
     expect(fix.getByRole("button", { name: "Approve fix" })).toBeEnabled();
-    // The chart's policy is auto; with the kill switch off the gate leaves it to an admin.
+    // The chart's policy is auto, but it needs high confidence: the gate left this one to an admin.
     expect(fix.getByText("Manual")).toBeInTheDocument();
-    expect(fix.getByText(/kill switch: AUTOFIX_ENABLED is false/)).toBeInTheDocument();
+    expect(fix.getByText(/the agent's confidence is medium; policy oom-memory-bump needs high/)).toBeInTheDocument();
 
     const alert = within(card("Alert"));
     expect(alert.getByText("DemoAppHighErrorRate", { selector: "dd" })).toBeInTheDocument();
     expect(within(alert.getByRole("list", { name: "Labels" })).getAllByRole("listitem").map((l) => l.textContent)).toEqual([
-      "alertname=DemoAppHighErrorRate",
-      "namespace=demo",
       "severity=critical",
       "workload=demo-app",
+      "alertname=DemoAppHighErrorRate",
+      "namespace=demo",
+      "prometheus=monitoring/kube-prometheus-stack-prometheus",
     ]);
     expect(alert.getByText(/More than 5% of the traffic generator's requests/)).toBeInTheDocument();
 
@@ -305,5 +307,17 @@ describe("incident detail", () => {
       await act(() => vi.advanceTimersByTimeAsync(20_000));
       expect(seen.length).toBe(initial);
     });
+  });
+});
+
+describe("the recorded capture", () => {
+  it("re-bases every timestamp by the same whole seconds and keeps each format", async () => {
+    const { rebaser } = await import("../../mocks/rebase");
+    const rebase = rebaser("2026-10-21T00:53:50.589000Z", Date.parse("2026-11-01T12:00:00.589Z"));
+    expect(rebase("2026-10-21T00:53:50.589000Z")).toBe("2026-11-01T12:00:00.589000Z");
+    expect(rebase('"started": "2026-10-21T00:53:36+00:00"')).toBe('"started": "2026-11-01T11:59:46+00:00"');
+    expect(rebase("2026-10-21 00:53:38,357 INFO demo_app serving")).toBe("2026-11-01 11:59:48,357 INFO demo_app serving");
+    expect(rebase("[1792544021.382, \"11112448\"]")).toBe(`[${1792544021 + (Date.parse("2026-11-01T12:00:00.589Z") - Date.parse("2026-10-21T00:53:50.589Z")) / 1000}.382, "11112448"]`);
+    expect(rebase("tcp 10.244.0.13:8080 count 9")).toBe("tcp 10.244.0.13:8080 count 9");
   });
 });

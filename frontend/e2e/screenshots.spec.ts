@@ -37,7 +37,7 @@ for (const theme of ["light", "dark"] as const) {
       await logIn(page, "admin");
       await page.goto("/incidents/14");
       await expect(page.getByRole("heading", { level: 1, name: "DemoAppHighErrorRate" })).toBeVisible();
-      await expect(page.getByText(/^get_pods\(/)).toBeVisible();
+      await expect(page.getByText(/^get_pods\(/).first()).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: `${OUT}incident-detail${suffix}.png`, fullPage: true, animations: "disabled" });
     });

@@ -125,7 +125,7 @@ function settleApply(incident: Incident): Incident {
   Object.assign(r, {
     status: "succeeded",
     applied_at: at,
-    before: { limits: { memory: "128Mi" }, requests: { memory: "128Mi" } },
+    before: { limits: { memory: "128Mi" }, requests: { memory: "64Mi" } },
     after: { limits: { memory: limit } },
     steps: [
       ...r.steps,
