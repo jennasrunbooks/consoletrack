@@ -190,8 +190,12 @@ def test_storage_is_writable_on_a_read_only_root(
     writing /var/tempo/live-store)."""
     service = SERVICES[name]
     assert service["read_only"] is True
-    tmpfs = service["tmpfs"]
+    mounts = dict(f"{entry}:".split(":")[:2] for entry in service["tmpfs"])
+    tmpfs = set(mounts)
     assert default_root in tmpfs, name
+    # They run as uid 10001; a tmpfs other than /tmp is root's 0755 unless the mode says so.
+    for mount, options in mounts.items():
+        assert mount == "/tmp" or "mode=1777" in options.split(","), (name, mount)
     for path in _paths(yaml.safe_load((OBSERVABILITY / config).read_text())):
         assert any(path == mount or path.startswith(f"{mount}/") for mount in tmpfs), (
             path

@@ -188,7 +188,8 @@ services:
     command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
     # Tempo 3's modules write under /var/tempo by default (live-store, WAL, blocks, the backend
     # scheduler), not all of them configurable in one place: the whole directory is tmpfs.
-    tmpfs: [/tmp, /var/tempo]
+    # mode=1777 like /tmp: a new tmpfs is root's 0755, and Tempo runs as uid 10001.
+    tmpfs: [/tmp, "/var/tempo:mode=1777"]
     volumes:
       - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
     mem_limit: 384m
