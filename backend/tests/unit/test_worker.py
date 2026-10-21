@@ -51,5 +51,5 @@ def test_build_agents_needs_a_database() -> None:
 def test_build_agents_wires_the_manual_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
     agents = worker.build_agents(Settings(database_url="postgresql+psycopg://u:p@127.0.0.1:1/db"))
-    assert type(agents.triage._gate).__name__ == "ManualPolicyGate"
+    assert type(agents.triage._gate).__name__ == "ConfiguredPolicyGate"
     assert agents.changes is not None

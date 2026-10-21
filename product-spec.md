@@ -51,14 +51,15 @@ Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every criterion
 | 1 (Oct 26) | Dashboard: incidents, change log, evidence, approve/reject, postmortem editor | Frontend criterion; makes changes documented |
 | 1 (Oct 26) | Cluster-side remediation (patch, rollout undo) through the policy gate: `manual` for every kind except `set_memory_limit` (see the OOM row) | Baseline faults and the auto-remediation path |
 | 1 (Oct 26) | Terraform + Helm on EKS, CI/CD, local run with one command, reviewer deploy, agent team and context docs | Graded criteria |
+| 1 (Oct 26) | Auto-remediation for the cluster OOM scenario: the first remediation kind to graduate to auto mode (memory-limit patch in the demo namespace, validated, verified, rolled back on failure). The scenario is the app outgrowing an unchanged 128Mi limit: the fault changes only the traffic generator, whose requests make the app's report cache grow to 140 MiB, so raising the limit to 256Mi is the right fix. An OOM that follows a revision which lowered the limit is fixed by a rollback instead, which stays manual | The on-call agent fixes an alert end to end; moved up from Phase 2 for the course rubric |
+| 1 (Oct 26) | Observability: OpenTelemetry traces, metrics, and structured logs sharing a trace ID across the incident journey, in Grafana (Tempo, Loki, Prometheus); an alert on user impact (demo app error rate) | Makes the on-call loop visible as one trace; course rubric |
 | 2 (Nov 16) | Codify: agent drafts an HCL pull request adopting the change; CI plan must show no diff | Turns a good console change into code |
 | 2 (Nov 16) | Drift confirmation with a targeted `terraform plan -refresh-only` job | Exact attribute-level diff instead of request parameters |
 | 2 (Nov 16) | Scenarios: demo app's Pod Identity association or role trust policy changed; KMS key policy edited | Harder identity failures |
 | Later | Slack notifications; analytics (changes by principal, time to document, drift reverted vs codified) | Team visibility; moved behind Codify and the eval harness, which show more |
-| 2 (Nov 16) | Auto-remediation for the cluster OOM scenario | Shows the graduated autonomy path |
 | 2 (Nov 16) | Eval harness: `make eval` runs each scenario N times and reports attribution accuracy, time to triage, and cost per triage | Turns a demo of the agent into a measured agent; moved up from Later |
 | Later | Network-path incidents (security groups, ALB target health, DNS, IP exhaustion) | Next domain, built on the same change intake |
-| Later | Production hardening path (a NAT gateway per AZ, fck-nat as a cheaper NAT instance under `/ct/`, Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD); watching more regions through EventBridge forwarding; Argo CD out-of-sync events as a change source; multi-account via an organization trail; headless Claude Code runner; commit tracing; security criterion artifacts | Beyond the course |
+| Later | Production hardening path (a NAT gateway per AZ, fck-nat as a cheaper NAT instance under /ct/, Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD); watching more regions through EventBridge forwarding; Argo CD out-of-sync events as a change source; multi-account via an organization trail; headless Claude Code runner; commit tracing; security criterion artifacts | Beyond the course |
 
 Phase 1 describes drift from CloudTrail request parameters plus the Terraform address of the resource. The exact attribute diff from `terraform plan` arrives in Phase 2.
 
@@ -149,7 +150,7 @@ The S3 state bucket is created once by `scripts/bootstrap-state.sh` (AWS CLI: ve
 
 | Choice | Instead of | Why |
 | --- | --- | --- |
-| Nodes in private subnets, egress through one managed NAT gateway in a public subnet | Public nodes, or a NAT instance (fck-nat) | Nodes get no public IPs. A NAT gateway costs about $0.045/hr plus $0.045/GB, against about $0.009/hr for fck-nat, but AWS operates it, it needs no instance role, and every IAM resource stays under `/ct/`. The difference is a few dollars over the course. One AZ is fine for a demo; production would use one per AZ |
+| Nodes in private subnets, egress through one managed NAT gateway in a public subnet | Public nodes, or a NAT instance (fck-nat) | Nodes get no public IPs. A NAT gateway costs about $0.045/hr plus $0.045/GB, against about $0.009/hr for fck-nat, but AWS operates it, it needs no instance role, and every IAM resource stays under /ct/. The difference is a few dollars over the course. One AZ is fine for a demo; production would use one per AZ |
 | S3 gateway endpoint | S3 traffic through NAT | Free; covers the state bucket, CloudTrail logs, and the demo bucket |
 | No interface endpoints | ECR, STS, SQS interface endpoints | About $7.30 a month each per AZ, and nodes still need internet egress for the Claude and GitHub APIs, so the NAT gateway is cheaper |
 | Graviton everywhere: t4g.medium Spot nodes, arm64 images | x86 | Spot is about half of on-demand and Graviton is cheaper per vCPU; arm64 also matches an Apple Silicon Mac |
@@ -199,7 +200,7 @@ All AWS resources come from community-maintained terraform-aws-modules, pinned t
 
 | Need | Module | Custom settings this project relies on |
 | --- | --- | --- |
-| VPC | `terraform-aws-modules/vpc/aws` | 2 AZs; private subnets for nodes; public subnets only for the NAT gateway and the optional ALB; `enable_nat_gateway = true` and `single_nat_gateway = true`; S3 gateway endpoint; ELB subnet tags |
+| VPC | `terraform-aws-modules/vpc/aws` | 2 AZs; private subnets for nodes; public subnets only for the NAT gateway and the optional ALB; `enable_nat_gateway = true, single_nat_gateway = true`; S3 gateway endpoint; ELB subnet tags |
 | EKS cluster and node group | `terraform-aws-modules/eks/aws` (v21, AWS provider 6) | API authentication mode with access entries; `enable_irsa = false`; Spot t4g.medium managed node group in private subnets; add-ons vpc-cni, coredns, kube-proxy, aws-ebs-csi-driver, and eks-pod-identity-agent (installed before nodes); public and private endpoint access; upgrade policy STANDARD |
 | Pod Identity roles | `terraform-aws-modules/eks-pod-identity/aws` | Built-in policy switches for the Load Balancer Controller, EBS CSI, and VPC CNI; custom policies for `aws-mcp`, the worker's SQS access, and the demo app's S3 read; one association per `namespace:serviceaccount` |
 | GitHub OIDC | `terraform-aws-modules/iam/aws`, OIDC provider and role submodules | Plan role for pull requests, apply role for `main` behind the `consoletrack-apply` environment, app deploy role, revert role |
@@ -264,7 +265,7 @@ Every principal gets its own identity with the smallest permission set that work
 | Demo app | Pod Identity | `s3:GetObject` on its demo bucket (the permission the scenario removes) | Anything else |
 | Frontend, backend | No AWS role | Nothing in AWS | Any AWS API |
 | `k8s-mcp` ServiceAccount | Kubernetes Role in each allowlisted namespace | get, list, watch on pods, pods/log, events, deployments, replicasets, statefulsets | Secrets, ConfigMaps, exec, any write verb |
-| `remediator` ServiceAccount (backend) | Kubernetes Role in each allowlisted namespace | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
+| `remediator` ServiceAccount (backend) | Kubernetes Role in each allowlisted namespace | get, patch on deployments; get, list on replicasets and pods (rollout status, and verify's check for a new OOM kill) | create, delete, update, exec, pods/log, Secrets, ConfigMaps, other namespaces, cluster-scoped resources |
 | GitHub token held by backend | Fine-grained token for `jennasrunbooks/consoletrack` | Dispatch the revert workflow; open pull requests (Phase 2) | Merging, admin, any other repo |
 | Terraform plan role | GitHub OIDC, trust limited to this repo's `consoletrack-plan` environment, used by pull request runs | Read-only describe and list on project resources, read state, write only the lock file | Any resource change; fork PRs get no token |
 | Terraform apply role | GitHub OIDC, trust limited to `main` in the `consoletrack-apply` environment, which requires your approval | Apply the `terraform/consoletrack/global`, `terraform/consoletrack/us-east-1`, and `terraform/demo-app/us-east-1` roots under a permissions boundary | Resources outside the `ct-` and `demo-app-` prefixes, their IAM paths, and the project tags; IAM beyond the boundary |
@@ -347,10 +348,10 @@ ConsoleTrack must be able to tell "nothing changed" apart from "intake is broken
 | changes | id, cloudtrail\_event\_id, event\_time, principal\_arn, session\_name, via (console, cli, cloudshell, sdk, terraform\_outside\_pipeline), source\_ip, service, event\_name, resource\_arn, tf\_address, risk, status, decision, decided\_by, reason | One row per out-of-band write; the change log |
 | incidents | id, fingerprint, alertname, severity, namespace, workload, status, opened\_at, resolved\_at | One row per alert episode |
 | incident\_changes | incident\_id, change\_id, confidence | Links symptoms to causes |
-| agent\_runs | id, subject\_type (change or incident), subject\_id, model, started\_at, finished\_at, input\_tokens, output\_tokens, outcome | Cost and latency analytics |
+| agent\_runs | id, subject\_type (change or incident), subject\_id, model, prompt\_version, escalated, started\_at, finished\_at, input\_tokens, output\_tokens, outcome | Cost and latency analytics |
 | evidence | id, agent\_run\_id, tool\_name, args\_json, result\_excerpt, created\_at | Results truncated and redacted before storage |
 | analyses | id, subject\_type, subject\_id, summary, root\_cause, risk, confidence, postmortem\_md | Postmortem editable by humans |
-| remediations | id, subject\_type, subject\_id, kind (cluster\_patch, rollback, revert\_workflow, codify\_pr), payload\_json, status, decided\_by, external\_url, applied\_at, error | `external_url` links the workflow run or pull request |
+| remediations | id, subject\_type, subject\_id, kind (cluster\_patch, rollback, revert\_workflow, codify\_pr), payload\_json, status, mode (manual, auto), policy, gate\_reason, decided\_by, decided\_at, namespace, workload, before\_json, after\_json, steps, lease\_until, external\_url, applied\_at, error | `external_url` links the workflow run or pull request |
 
 **Environments.** `DATABASE_URL` selects the database: Postgres in Docker Compose locally, a Testcontainers Postgres in integration tests, and CloudNativePG in EKS. Unit tests use a fake repository, not SQLite, so SQL behavior is only tested against real Postgres.
 
@@ -385,7 +386,7 @@ ConsoleTrack must be able to tell "nothing changed" apart from "intake is broken
 
 The agent can only read, and that is enforced by IAM and Kubernetes RBAC on two separate MCP servers, not by the prompt. Anything that changes the cluster or AWS goes through the policy gate (a human approval, or auto mode for the one graduated cluster fix) and is applied by the backend under its own identity.
 
-**Runtime.** A worker in the backend calls the Claude Messages API with the Anthropic Python SDK, connects to the `k8s-mcp` and `aws-mcp` servers as an MCP client (FastMCP, streamable HTTP inside the cluster), and offers its tools to the model. The run ends when the model calls a `submit_analysis` tool whose JSON schema is the structured result, so no free-text parsing is needed. Limits per run: 12 tool calls, 120 seconds, a token budget, and one automatic retry. Triage never runs inside the webhook request: a new incident is queued in the database and a worker claims the oldest one (`FOR UPDATE SKIP LOCKED`, with a 5-minute lease so a crashed run is picked up again). `aws-mcp` is optional: without it (on kind until `aws-mcp` ships) the agent gets only the `k8s-mcp` tools and records the `aws_evidence_unavailable` flag. A run that ends with low confidence is retried once with the escalation model, and `make triage-smoke` checks the real request against the API with one call.
+**Runtime.** A worker in the backend calls the Claude Messages API with the Anthropic Python SDK, connects to the `k8s-mcp` and `aws-mcp` servers as an MCP client (FastMCP, streamable HTTP inside the cluster), and offers its tools to the model. The run ends when the model calls a `submit_analysis` tool whose JSON schema is the structured result, so no free-text parsing is needed. Limits per run: 12 tool calls, 120 seconds, a token budget, and one automatic retry. Triage never runs inside the webhook request: a new incident is queued in the database and a worker claims the oldest one (`FOR UPDATE SKIP LOCKED`, with a 5-minute lease so a crashed run is picked up again). `aws-mcp` is optional: without it (on kind until `aws-mcp` ships) the agent gets only the `k8s-mcp` tools and records the `aws_evidence_unavailable` flag. A run that ends with low confidence is retried once with the escalation model, and `make triage-smoke` checks the real request against the API with one call. Prompts are versioned files (v3 today, earlier versions kept), and every run records its prompt version and whether it was an escalation.
 
 **MCP tools (k8s-mcp, read-only).**
 
@@ -395,7 +396,7 @@ The agent can only read, and that is enforced by IAM and Kubernetes RBAC on two 
 | get\_pods(namespace, selector) | Phase, restarts, last termination reason and exit code | Confirm OOMKilled vs Error |
 | get\_pod\_logs(namespace, pod, container, previous, tail) | Last N lines, capped at 200 | Read the crash message |
 | get\_events(namespace, involved\_object) | Recent warning events | ImagePullBackOff, FailedScheduling, probe failures |
-| get\_rollout\_history(namespace, deployment) | ReplicaSets with revision, image, created time | What changed just before the alert |
+| get\_rollout\_history(namespace, deployment) | The rollout strategy, and each revision's image, per-container resources, created time, desired and ready replicas, and state (current, superseded, or scaling down) | What changed just before the alert |
 | query\_prometheus(promql, minutes) | Instant or short range result | Memory trend before an OOM |
 
 **MCP tools (aws-mcp, read-only).**
@@ -415,7 +416,7 @@ CloudTrail has two quirks the agent is told about. Events can take several minut
 
 - `k8s-mcp` runs with its own ServiceAccount: `get`/`list`/`watch` on pods, pods/log, events, deployments, replicasets, statefulsets, limited to an allowlist of demo namespaces. No access to Secrets or ConfigMaps.
 - Pod logs and events are untrusted input. The system prompt tells the model to treat them as data, and even a successful prompt injection can only produce a proposal.
-- The backend validates every proposed remediation against an allowlist of fields and kinds before showing it, and the backend's apply ServiceAccount can only `patch` deployments in the same namespaces.
+- The backend validates every proposed remediation with a deterministic validator (no model) before anyone sees it. For `set_memory_limit`: the namespace is allowlisted, the target is a Deployment with the named container, only that container's memory limit changes (plus its request, if the request would exceed the new limit), and the new limit is above the current one, at most 2× it, and at most 512Mi. The backend's apply ServiceAccount (`remediator`) can only patch Deployments, and read ReplicaSets and Pods, in the same namespaces.
 - Evidence results are redacted (tokens, keys, connection strings) before they are stored or sent to the model.
 - The system prompt (versioned in `backend/app/agents/prompts/`) asks the agent to flag database migrations and stateful workloads and not to propose a rollback for them.
 
@@ -425,21 +426,31 @@ Cloud-specific guardrails: CloudTrail fields such as request parameters and user
 
 ## Remediation modes
 
-Each alert type maps to a remediation policy. The MVP ships every policy as `manual`; a scenario moves to `auto` only after it has been tested, through a reviewed pull request. Even in `auto`, the agent never touches the cluster: the backend's policy gate approves on the human's behalf and applies through the same `remediator` ServiceAccount.
+Each alert type maps to a remediation policy. Phase 1 ships one policy, `oom-memory-bump`, as `auto` (graduation phase 1, #34); every other policy stays `manual`, and a scenario moves to `auto` only after it has been tested, through a reviewed pull request. The gate runs in the worker; the validator, apply, and verify run in the backend. Even in `auto`, the agent never touches the cluster: the policy gate approves on the human's behalf and the backend applies through the same `remediator` ServiceAccount.
 
 ```yaml
 # helm/charts/consoletrack/values.yaml
 remediation:
-  autoEnabled: false          # global kill switch, also toggled from the dashboard
+  # Global kill switch, also rendered as AUTOFIX_ENABLED on the backend and worker: auto needs both.
+  # `kubectl -n consoletrack set env deploy/worker AUTOFIX_ENABLED=false` turns auto off without a release.
+  autoEnabled: true
   policies:
     - name: oom-memory-bump
       match: {kind: set_memory_limit, namespace: demo}
-      mode: auto              # manual | auto; ships manual, the OOM auto-fix issue (#34) sets auto
+      mode: auto              # graduation phase 1 (#34); manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
       minConfidence: high
       rateLimit: {perWorkload: 1, window: 1h}
-      verify: {waitForResolved: 10m, onFailure: rollback}
+      verify:
+        rolloutTimeout: 3m
+        waitForResolved: 5m
+        errorRatio:           # DemoAppHighErrorRate's expression without the comparison
+          query: >-
+            (sum(rate(demo_client_requests_total{namespace="demo", result!="ok"}[2m])) or vector(0))
+            / sum(rate(demo_client_requests_total{namespace="demo"}[2m]))
+          below: 0.05
+        onFailure: rollback
     - name: default
       match: {}
       mode: manual
@@ -447,13 +458,13 @@ remediation:
 
 **What `auto` adds on top of the manual flow.**
 
-1. The proposal must pass the same allowlist plus the policy's own narrower `allowedChanges` and `bounds`.
-2. The backend runs a server-side dry run of the patch before applying it.
-3. Rate limit per workload, and the global kill switch, are checked first.
-4. After applying, the backend waits for the `resolved` webhook. If it doesn't arrive in time, it rolls back and reopens the incident for a human.
-5. The remediation row records `decided_by = policy:oom-memory-bump`, and the dashboard shows it as auto-applied.
+1. The gate checks, in order: the policy is `auto`; the kind isn't AWS-side; both kill switches are on; the incident is `awaiting_review`; confidence is high; no earlier auto fix failed on this workload; the rate limit; and the validator's checks that need no cluster. The first failure sends the proposal to a human, with the reason recorded in `gate_reason`.
+2. The backend re-validates against the live Deployment, then runs a server-side dry run (`dryRun=All`). A refusal here downgrades the fix to manual.
+3. The backend applies a strategic-merge patch and waits up to 3 minutes for the rollout.
+4. Verify, within 5 minutes: no new OOM kill in the pods running the new limit, and either the `resolved` webhook arrived or the error ratio fell below 0.05. On failure the backend rolls back with the inverse patch, returns the incident to `awaiting_review`, and turns auto off for that workload.
+5. The remediation row records `decided_by = policy:oom-memory-bump`, the mode, the gate reason, the before and after values, and every step, and the dashboard shows it as auto-applied.
 
-**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally.
+**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for \`oom-memory-bump\`: three runs on kind (Oct 21), with \`make eval-oom\` (five runs) to follow; if it doesn't pass 5/5, the policy goes back to \`manual\`. AWS-side kinds (\`revert\_workflow\`, \`codify\_pr\`) can never be \`auto\`: the backend and worker refuse to start with such a policy, and the chart fails to render.
 
 **Headless Claude Code runner (P2).** An alternative agent backend runs `claude -p` in a Kubernetes Job with only the `k8s-mcp` tools allowed and JSON output. It must return the same `submit_analysis` schema, so it passes through the same policy gate and needs no extra cluster permissions.
 
@@ -505,7 +516,7 @@ Integration tests live in `backend/tests/integration/` behind a pytest marker so
 
 A fourth workflow, `revert.yaml`, is dispatched only by the backend. It runs in the `consoletrack-revert` environment, which requires reviewer approval, and plans then applies the `terraform/demo-app/us-east-1` root.
 
-**Which account each workflow deploys to.** Each account has its own directory, `terraform/<account>/...`, and its own GitHub environments (`<account>-plan`, `<account>-apply`, `<account>-revert`). Each environment stores that account's role ARN as an environment secret. The ARN isn't a credential, since OIDC stores no keys, but keeping it secret means the public repo and the workflow logs never show the account ID. Terraform never hardcodes account IDs; it reads them from aws\_caller\_identity. After authenticating, each job masks the bare account ID (from aws sts get-caller-identity), so logs hide it inside every ARN in the plan, not only the full role ARN. The plan comment on PRs replaces the account ID with a placeholder before it is posted, because masking doesn't apply to comments. This is best-effort hygiene, not a security boundary. The recorded CloudTrail fixtures for demo-replay use the placeholder 123456789012. `terraform.yaml` builds a matrix from the account directories a change touches, and each matrix job runs with its account's environments. For the course there is one entry, `consoletrack`, and `terraform/demo-app/us-east-1` uses the hub's roles: `ct-gh-plan-<suffix>`, `ct-gh-apply-<suffix>`, and `ct-gh-revert-<suffix>` (plus `ct-gh-deploy-<suffix>` for app deploys). Each role trusts only this repo, and the apply and revert roles trust only their environment. When `demo-app` becomes its own account, a new `terraform/demo-app/global/` root creates its GitHub OIDC provider and its `demo-app-gh-plan`, `demo-app-gh-apply`, and `demo-app-gh-revert` roles. The demo-app environments then get their own values, and it becomes a second matrix entry with no workflow changes. Each account trusting GitHub directly is preferred over going through the hub. A compromised hub role can't reach the spoke, and each account's CloudTrail shows which workflow run made each change.
+**Which account each workflow deploys to.** Each account has its own directory, `terraform/<account>/...`, and its own GitHub environments (`<account>-plan`, `<account>-apply`, `<account>-revert`). Each environment stores that account's role ARN as an environment secret. The ARN isn't a credential, since OIDC stores no keys, but keeping it secret means the public repo and the workflow logs never show the account ID. Terraform never hardcodes account IDs; it reads them from aws\_caller\_identity. After authenticating, each job masks the bare account ID (from aws sts get-caller-identity), so logs hide it inside every ARN in the plan, not only the full role ARN. The plan comment on PRs replaces the account ID with a placeholder before it is posted, because masking doesn't apply to comments. This is best-effort hygiene, not a security boundary. The recorded CloudTrail fixtures for demo-replay use the placeholder 123456789012. `terraform.yaml` builds a matrix from the account directories a change touches, and each matrix job runs with its account's environments. For the course there is one entry, `consoletrack`, and `terraform/demo-app/us-east-1` uses the hub's roles: `ct-gh-plan-<suffix>`, `ct-gh-apply-<suffix>`, and `ct-gh-revert-<suffix>` (plus `ct-gh-deploy-<suffix>` for app deploys). Each role trusts only this repo, and the apply and revert roles trust only their environment. The trust matches GitHub's immutable-ID subject, `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>` (from `GITHUB_OWNER_ID` and `GITHUB_REPO_ID`), so a deleted or renamed repo can't be re-created to inherit it; a fork whose tokens use the classic `repo:<owner>/<repo>:…` subject leaves both IDs empty. When `demo-app` becomes its own account, a new `terraform/demo-app/global/` root creates its GitHub OIDC provider and its `demo-app-gh-plan`, `demo-app-gh-apply`, and `demo-app-gh-revert` roles. The demo-app environments then get their own values, and it becomes a second matrix entry with no workflow changes. Each account trusting GitHub directly is preferred over going through the hub. A compromised hub role can't reach the spoke, and each account's CloudTrail shows which workflow run made each change.
 
 **Proof of deployment.** The README holds the URL and the dates it is live; keeping the cluster up through the one-week peer-review window costs about $27. Screenshots of the dashboard, Grafana, and a green deploy run stay valid after teardown. A short demo video on YouTube (change detected → reverted; alert fires → incident → approve → resolved) is optional, as time allows; it is not a course requirement.
 
@@ -567,7 +578,7 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 | --- | --- |
 | AWS account | Admin access, ideally a sandbox account; a CLI profile configured |
 | Anthropic API key | With a monthly spend limit set; a full demo uses a handful of triage runs |
-| Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 4 with the helm-diff plugin, Helmfile, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
+| Tools | Terraform 1.11+ (S3 native state locking), AWS CLI v2, kubectl, Helm 4.3 with the helm-diff plugin, Helmfile, Docker or Podman, make, jq; or open `.devcontainer/` with all of them pinned |
 | Budget | About $0.20/hour while up ($0.23 with the ALB); the README states this before any command |
 
 **Steps (README "Quick start" mirrors this exactly).**
@@ -615,7 +626,7 @@ The course rubric was revised on Oct 16, 2026: 12 criteria worth 24 points, with
 | Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki; a redaction test; `docs/observability.md` |
 | Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (failed-request ratio seen by the demo traffic generator, so it fires even when the app is down) → Alertmanager → the backend's webhook |
 | On-call agent | 2 | 2 | An alert opens an incident, the agent diagnoses an OOM kill, the backend applies the validated memory-limit fix in auto mode, verifies it, and resolves the incident; `docs/remediation-graduation.md` |
-| **Total** | **24** | **23** | |
+| **Total** | **24** | **23** |  |
 
 No longer graded but kept, because they make the build reliable: the OpenAPI contract (it keeps the backend and frontend agents consistent), the agent extension pack (the coding agents' guardrails), and the security and permissions notes.
 

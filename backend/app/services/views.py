@@ -18,6 +18,7 @@ from app.schemas import (
     LinkedChange,
     LinkedIncident,
     Remediation,
+    RemediationStep,
 )
 
 
@@ -198,4 +199,11 @@ def _remediation(row: RemediationRow | None) -> Remediation | None:
         created_at=row.created_at,
         applied_at=row.applied_at,
         error=row.error,
+        mode=row.mode,
+        policy=row.policy,
+        gate_reason=row.gate_reason,
+        decided_at=row.decided_at,
+        before=row.before_json,
+        after=row.after_json,
+        steps=[RemediationStep.model_validate(step) for step in row.steps or []],
     )

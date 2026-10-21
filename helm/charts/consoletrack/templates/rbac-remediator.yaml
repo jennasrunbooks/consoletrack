@@ -1,7 +1,8 @@
 {{- /*
 The backend's apply identity (ServiceAccount `remediator`): get and patch Deployments, get and
-list ReplicaSets (for rollout undo), in the allowlisted namespaces only. No create, delete,
-exec, Secrets, or anything cluster-scoped. The backend validates every patch before using it.
+list ReplicaSets (rollout history) and Pods (verify: was the new pod OOMKilled again?), in the
+allowlisted namespaces only. No create, delete, exec, logs, Secrets, or anything cluster-scoped.
+The backend validates every patch before using it (docs/remediation-graduation.md).
 */}}
 {{- range .Values.allowedNamespaces }}
 ---
@@ -18,6 +19,9 @@ rules:
     verbs: [get, patch]
   - apiGroups: [apps]
     resources: [replicasets]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods]
     verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

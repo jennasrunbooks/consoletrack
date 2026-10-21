@@ -6,7 +6,7 @@ This module and `app/db/session.py` are the only code that touches a `Session`.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Any, Self
 
@@ -27,6 +27,9 @@ from app.enums import (
     ACTIVE_INCIDENT_STATUSES,
     CLOSED_CHANGE_STATUSES,
     Confidence,
+    RemediationKind,
+    RemediationMode,
+    RemediationStatus,
     Risk,
     SubjectType,
 )
@@ -314,8 +317,13 @@ class SqlRemediationRepository:
         self.session.flush()
         return row
 
-    def latest_for(self, subject_type: SubjectType, subject_id: int) -> RemediationRow | None:
-        return self.session.scalar(
+    def get(self, remediation_id: int, *, for_update: bool = False) -> RemediationRow | None:
+        return self.session.get(RemediationRow, remediation_id, with_for_update=for_update)
+
+    def latest_for(
+        self, subject_type: SubjectType, subject_id: int, *, for_update: bool = False
+    ) -> RemediationRow | None:
+        query = (
             select(RemediationRow)
             .where(
                 RemediationRow.subject_type == subject_type,
@@ -323,6 +331,43 @@ class SqlRemediationRepository:
             )
             .order_by(RemediationRow.id.desc())
             .limit(1)
+        )
+        return self.session.scalar(query.with_for_update() if for_update else query)
+
+    def auto_for_workload(self, namespace: str, workload: str) -> list[RemediationRow]:
+        return list(
+            self.session.scalars(
+                select(RemediationRow)
+                .where(
+                    RemediationRow.namespace == namespace,
+                    RemediationRow.workload == workload,
+                    RemediationRow.mode == RemediationMode.auto,
+                )
+                .order_by(RemediationRow.id)
+            )
+        )
+
+    def next_to_apply(
+        self, now: datetime, kinds: Collection[RemediationKind]
+    ) -> RemediationRow | None:
+        return self.session.scalar(
+            select(RemediationRow)
+            .where(
+                RemediationRow.kind.in_(list(kinds)),
+                or_(
+                    RemediationRow.status == RemediationStatus.approved,
+                    and_(
+                        RemediationRow.status == RemediationStatus.running,
+                        or_(
+                            RemediationRow.lease_until.is_(None),
+                            RemediationRow.lease_until < now,
+                        ),
+                    ),
+                ),
+            )
+            .order_by(RemediationRow.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
         )
 
 

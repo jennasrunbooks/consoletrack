@@ -21,6 +21,7 @@ ALLOWED = {
     (S.awaiting_review, E.triage_started): S.triaging,
     (S.awaiting_review, E.remediation_approved): S.remediating,
     (S.awaiting_review, E.remediation_rejected): S.closed,
+    (S.remediating, E.remediation_failed): S.awaiting_review,
     (S.open, E.alert_resolved): S.resolved,
     (S.triaging, E.alert_resolved): S.resolved,
     (S.awaiting_review, E.alert_resolved): S.resolved,

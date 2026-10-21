@@ -79,6 +79,15 @@ capabilities:
   value: {{ join "," .Values.allowedNamespaces | quote }}
 - name: REMEDIATION_POLICIES_FILE
   value: /etc/consoletrack/remediation/policies.yaml
+{{- /* The kill switch's second half (backend/app/settings.py): `kubectl set env` turns auto off
+without a release. */}}
+- name: AUTOFIX_ENABLED
+  value: {{ .Values.remediation.autoEnabled | toString | quote }}
+{{- end }}
+
+{{/* kube-prometheus-stack's Prometheus, for k8s-mcp's query_prometheus and the backend's verify. */}}
+{{- define "consoletrack.prometheusUrl" -}}
+{{- .Values.k8sMcp.prometheusUrl | default (printf "http://%s-prometheus.%s.svc.cluster.local:9090" .Values.monitoring.release .Values.monitoring.namespace) }}
 {{- end }}
 
 {{/* An env var from one key of an existing Secret: (dict "name" "X" "secret" "s" "key" "k"). */}}
@@ -129,6 +138,22 @@ startupProbe:
 
 {{/* Fail the render on settings that would deploy something broken or exposed. */}}
 {{- define "consoletrack.validate" -}}
+{{- /* Mirrors backend/app/services/remediation_policy.py, so a bad policy fails the render, not
+the rollout: auto only for a named cluster kind the backend can apply, in a named namespace. */}}
+{{- range .Values.remediation.policies }}
+{{- if eq (.mode | default "manual") "auto" }}
+{{- $kind := (.match | default dict).kind | default "" }}
+{{- if has $kind (list "revert_workflow" "codify_pr") }}
+{{- fail (printf "remediation policy %s: %s changes AWS and can never be auto (docs/remediation-graduation.md)" .name $kind) }}
+{{- end }}
+{{- if ne $kind "set_memory_limit" }}
+{{- fail (printf "remediation policy %s: auto needs match.kind set to set_memory_limit, the only kind the backend applies" .name) }}
+{{- end }}
+{{- if not (.match | default dict).namespace }}
+{{- fail (printf "remediation policy %s: auto needs match.namespace" .name) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if not (has .Values.target (list "eks" "local")) }}
 {{- fail (printf "target must be eks or local, not %q" .Values.target) }}
 {{- end }}

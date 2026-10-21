@@ -1,8 +1,9 @@
 """The consoletrack chart's pieces that `make local` applies to kind (scripts/local-kind.sh).
 
 Rendered with compose/kind-values.yaml and the same --show-only templates as the script: only
-ServiceAccounts, k8s-mcp's read-only RBAC, and an AlertmanagerConfig pointed at the Compose
-backend. Nothing that runs a pod, and no Secret (the script creates consoletrack-webhook).
+ServiceAccounts, k8s-mcp's read-only RBAC, the remediator's patch Role, the remediation policies
+(the script extracts them for Compose), and an AlertmanagerConfig pointed at the Compose backend.
+Nothing that runs a pod, and no Secret (the script creates consoletrack-webhook).
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ KIND_OVERRIDE = REPO / "compose" / "kind.yaml"
 # scripts/local-kind.sh: `render` in cluster_up, then in alerts.
 TEMPLATES = [
     "templates/rbac-k8s-mcp.yaml",
+    "templates/rbac-remediator.yaml",
     "templates/serviceaccounts.yaml",
+    "templates/remediation-policies.yaml",
     "templates/monitoring.yaml",
 ]
 
@@ -57,7 +60,30 @@ def test_the_script_renders_these_templates() -> None:
 
 def test_only_rbac_and_the_alert_route(docs: list[dict]) -> None:
     kinds = {d["kind"] for d in docs}
-    assert kinds == {"ServiceAccount", "Role", "RoleBinding", "AlertmanagerConfig"}
+    assert kinds == {
+        "ServiceAccount",
+        "Role",
+        "RoleBinding",
+        "ConfigMap",
+        "AlertmanagerConfig",
+    }
+    (config_map,) = [d for d in docs if d["kind"] == "ConfigMap"]
+    assert config_map["metadata"]["name"] == "remediation-policies"
+
+
+def test_remediator_patches_demo_only(docs: list[dict]) -> None:
+    roles = [
+        d for d in docs if d["kind"] == "Role" and d["metadata"]["name"] == "remediator"
+    ]
+    assert [r["metadata"]["namespace"] for r in roles] == ["demo"]
+    (binding,) = [
+        d
+        for d in docs
+        if d["kind"] == "RoleBinding" and d["metadata"]["name"] == "remediator"
+    ]
+    assert binding["subjects"] == [
+        {"kind": "ServiceAccount", "name": "remediator", "namespace": "consoletrack"}
+    ]
 
 
 def test_alerts_go_to_the_compose_backend(docs: list[dict]) -> None:

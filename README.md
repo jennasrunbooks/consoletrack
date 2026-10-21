@@ -98,7 +98,7 @@ The intake indicator shows **Replay**, and Revert and Codify are disabled with "
 
 ```bash
 make local-fault FAULT=oom     # or badImage, badProbe; one at a time
-make local-incidents           # after ~4 minutes: the incident, the agent's root cause, and its proposal
+make local-incidents           # after ~4 minutes: the incident, the agent's root cause, its proposal, and (oom) the auto fix's steps
 make local-fault FAULT=off     # the alert resolves, and the incident with it, ~3 minutes later
 make local-incidents           # status: resolved
 ```
@@ -109,7 +109,7 @@ make local-incidents           # status: resolved
 | `badImage` | An image tag that doesn't exist: ImagePullBackOff | `rollback` to the previous revision |
 | `badProbe` | Probes on a path the app doesn't serve: never Ready | `rollback` to the previous revision |
 
-Proposals wait for a human: every policy ships `manual`. The dashboard's Incidents page, where you'd approve one, is still to come; until then `make local-incidents` shows incidents from the API. Each triage is one agent run on `TRIAGE_MODEL`, Haiku by default. On kind it took 8 tool calls and about 35k input tokens, a few cents.
+Only the `oom` fix runs without a human: the `oom-memory-bump` policy is `auto`, so the backend validates the proposal, patches demo-app's limit to 256Mi through its own `remediator` ServiceAccount, verifies the fix, and rolls it back if it doesn't hold ([docs/remediation-graduation.md](docs/remediation-graduation.md)). `AUTOFIX_ENABLED=false` in `.env` makes it wait for a human too. Every other proposal waits for an admin; `rollback` can't be applied by the backend yet (approving answers `501`), so undo the revision by hand or reject it. The dashboard's Incidents page, where you'd approve one, is still to come; until then `make local-incidents` shows incidents from the API, with each remediation step. Each triage is one agent run on `TRIAGE_MODEL`, Haiku by default. On kind it took 8 tool calls and about 35k input tokens, a few cents.
 
 `make local-fault` runs Helmfile's `demoFault` state value on the `demo-app` release. A faulted pod may never become Ready, so `demoFault` also turns off Helmfile's wait and atomic rollback for that sync, which would otherwise undo the fault after the timeout. Don't use `--set faults.oom=true` for this. Run Helmfile outside `make` only with `HELM_DRIVER=configmap`.
 
@@ -263,7 +263,7 @@ The agent calls Claude through the Anthropic SDK and can only use tools on two r
 | `k8s-mcp` | `get_workload`, `get_pods`, `get_pod_logs`, `get_events`, `get_rollout_history`, `query_prometheus` | Its ServiceAccount has `get`/`list`/`watch` in allowlisted namespaces only; no Secrets or ConfigMaps |
 | `aws-mcp` | `get_resource_changes`, `get_principal_activity`, `get_iam_role`, `simulate_access`, `get_security_group`, `lookup_terraform_address` | Its Pod Identity role allows reads only, and the server itself refuses anything outside the watched IAM paths and the demo-app state |
 
-Pod logs, events, and CloudTrail fields are treated as untrusted input, and results are redacted before they're stored or sent to the model. Proposed fixes pass an allowlist validator and a policy gate that ships in `manual` mode for every scenario.
+Pod logs, events, and CloudTrail fields are treated as untrusted input, and results are redacted before they're stored or sent to the model. Proposed fixes pass a deterministic validator and a policy gate: every scenario is `manual` except the OOM memory bump, which runs in `auto` behind a kill switch, a per-workload rate limit, and automatic rollback.
 
 ## Agent extension pack
 

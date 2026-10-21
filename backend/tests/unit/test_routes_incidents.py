@@ -169,22 +169,15 @@ def test_evidence_rejects_unknown_subject_path(viewer: TestClient) -> None:
 # --- Later-issue stubs -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body"),
-    [
-        ("post", "remediation/approve", None),
-        ("post", "remediation/reject", {"reason": "wrong pod"}),
-        ("put", "postmortem", {"postmortem_md": "# Postmortem"}),
-    ],
-)
-def test_incident_writes_are_501_for_admins_and_403_for_viewers(
-    admin: TestClient, viewer: TestClient, make_incident, method: str, path: str, body
+def test_postmortem_is_501_for_admins_and_403_for_viewers(
+    admin: TestClient, viewer: TestClient, make_incident
 ) -> None:
-    url = f"/api/v1/incidents/{make_incident().id}/{path}"
-    response = admin.request(method, url, json=body)
+    url = f"/api/v1/incidents/{make_incident().id}/postmortem"
+    body = {"postmortem_md": "# Postmortem"}
+    response = admin.put(url, json=body)
     assert response.status_code == 501, response.text
     assert response.json()["code"] == "not_implemented"
-    assert viewer.request(method, url, json=body).status_code == 403
+    assert viewer.put(url, json=body).status_code == 403
 
 
 def test_reject_still_validates_its_body(admin: TestClient, make_incident) -> None:
