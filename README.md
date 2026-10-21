@@ -313,7 +313,7 @@ make tf-validate               # terraform init -backend=false + validate for ev
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `ci.yaml` | every PR and push | `lint`, `test`, and `terraform-fmt` jobs (required checks) |
+| `ci.yaml` | every PR and push, plus nightly | `lint`, `test`, and `terraform-fmt` are the required checks. On PRs, a `changes` job runs only the jobs for the areas the PR touches (docs-only: `lint`), and the `full-ci` label runs them all. Every job runs on push to `main` and on manual dispatch, and `local-kind` also runs nightly |
 | `terraform.yaml` | PRs and merges touching `terraform/**` | per-account matrix: plan on PRs, apply on `main` after approval in `<account>-apply` |
 | `deploy.yaml` | green `main` | pushes arm64 images to GHCR, then `helmfile -l tier=app apply` if the cluster is up |
 | `revert.yaml` | the Revert button | re-applies `terraform/demo-app/us-east-1` after approval in `consoletrack-revert` |
