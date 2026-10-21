@@ -1,37 +1,3 @@
-# PROPOSED: a human needs to move this to .github/workflows/terraform.yaml, replacing the current file.
-# (The agent's token has no Workflows permission; see AGENTS.md → Hard rules, rule 4.)
-#
-# Changes from the current .github/workflows/terraform.yaml: `changes` diffs a PR against HEAD^1,
-# the merge commit's first parent (the base branch as it is now), instead of
-# github.event.pull_request.base.sha, which stays at the base the PR was opened on. After main
-# moved, a re-pushed PR also planned the roots that only main had changed (same fix as ci.yaml).
-#
-# The plan job also runs `terraform test` for each changed root that has a tests/ directory (issue #8: the boundary must
-# stay under 6,144 characters, checked in terraform/consoletrack/global/tests). The tests are
-# offline: every AWS call is overridden and the provider endpoints point at a closed port.
-#
-# Terraform CI for every root under terraform/<account>/<scope>/ (product-spec.md → Testing,
-# CI/CD, and deployment). Each account directory is one matrix entry with its own GitHub
-# environments, <account>-plan and <account>-apply, and each environment holds that account's
-# role ARN as the secret AWS_ROLE_ARN. Today there is one entry, `consoletrack`;
-# terraform/demo-app/us-east-1 uses the hub's roles until demo-app moves to its own account.
-#
-#   pull_request touching terraform/**  → fmt -check, validate, terraform test, tflint, plan per
-#                                          changed root,
-#                                          plan posted as a PR comment (account ID replaced)
-#   push to main touching terraform/**  → apply per changed root, after the <account>-apply
-#                                          environment's required reviewer approves
-#   workflow_dispatch with destroy      → destroy one root, behind the same approval
-#
-# Configuration uses the same names as .env, from repository variables (vars.*), so CI runs the
-# same Makefile targets as a laptop. Set: AWS_REGION, NAME_SUFFIX, ENABLE_BUDGET,
-# BUDGET_LIMIT_USD, DOMAIN, DNS_PARENT, K8S_VERSION, USE_SPOT, NODE_INSTANCE_TYPE, EXPOSURE,
-# WATCHED_IAM_PATHS. OPERATOR_ARN is a repository secret: it contains the account ID.
-# BUDGET_EMAIL is a repository secret, passed to Terraform as TF_VAR_budget_email in the plan and
-# apply jobs only, never from a variable or a file in the repo.
-#
-# Every job sets role-session-name: gh-${{ github.run_id }}. The roles' trust policies require
-# the gh- prefix, and the intake's EventBridge rule excludes pipeline calls by it.
 name: terraform
 
 on:
