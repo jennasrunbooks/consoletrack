@@ -1,0 +1,26 @@
+# Tempo 3, single binary (-target=all), for `make local`. Local storage on the container's
+# tmpfs: traces last until the container restarts, which is enough for a demo run and keeps
+# nothing on disk. Based on grafana/tempo example/docker-compose/single-binary at v3.1.1.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /tmp/tempo/wal
+    local:
+      path: /tmp/tempo/blocks
+
+usage_report:
+  reporting_enabled: false

@@ -1,0 +1,49 @@
+# Provisioned for `make local` (docker-compose.yaml → grafana). Fixed UIDs: the Incident journey
+# dashboard and the cross-links below refer to them.
+apiVersion: 1
+
+datasources:
+  # kind's kube-prometheus-stack, at the NodePort k8s-mcp uses. Without kind (LOCAL_KIND=false)
+  # it isn't reachable and the metric panels stay empty; traces and logs still work.
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: ${PROMETHEUS_URL}
+    isDefault: true
+    editable: false
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # "Logs for this span": the Loki lines with this trace's ID, from any ConsoleTrack service.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        customQuery: true
+        query: '{service_name=~".+"} | trace_id="$${__trace.traceId}"'
+      tracesToMetrics:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      # A log line's trace_id (structured metadata) links back to the trace in Tempo.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+          urlDisplayLabel: Open trace

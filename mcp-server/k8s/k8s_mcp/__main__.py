@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
+import sys
 
+from k8s_mcp import telemetry
 from k8s_mcp.kube import KubernetesReader
 from k8s_mcp.prometheus import HttpPrometheus
 from k8s_mcp.server import build_server
@@ -11,8 +12,10 @@ from k8s_mcp.settings import Settings, Transport
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings()
+    # stdio: stdout is the MCP protocol, so the logs go to stderr.
+    stdio = settings.k8s_mcp_transport is Transport.stdio
+    telemetry.setup(settings.telemetry_exporter, stream=sys.stderr if stdio else sys.stdout)
     prometheus = (
         HttpPrometheus(settings.prometheus_url, settings.prometheus_timeout_seconds)
         if settings.prometheus_url

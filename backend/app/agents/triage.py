@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta
 
+from app import telemetry
 from app.agents.prompts import render
 from app.agents.runner import AgentRunner, RunResult
 from app.agents.schema import SubmitAnalysis
@@ -33,6 +35,7 @@ from app.services import triage
 from app.services.policy_gate import GateDecision, PolicyGate
 from app.services.triage import TriageClaim
 from app.settings import Settings
+from app.telemetry import tracer
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +123,39 @@ class IncidentTriage:
         return True
 
     async def triage(self, claim: TriageClaim) -> GateDecision | None:
+        """One `triage.run` span in the incident's trace, around both runs and the gate."""
         model = claim.model or self._settings.triage_model
+        started = time.monotonic()
+        with tracer.start_as_current_span(
+            "triage.run",
+            context=telemetry.context_from(claim.traceparent),
+            attributes={"incident.id": claim.incident_id, "triage.model": model},
+        ) as span:
+            result, escalated, tool_calls = await self._run(claim, model)
+            span.set_attributes(
+                {
+                    "triage.outcome": result.outcome.value,
+                    "triage.escalated": escalated,
+                    "triage.tool_calls": tool_calls,
+                }
+            )
+            telemetry.TRIAGE_DURATION.record(time.monotonic() - started)
+            telemetry.TRIAGE_TOOL_CALLS.record(tool_calls)
+            with self._uow_factory() as uow:
+                remediation = triage.record_triage(
+                    uow,
+                    claim.incident_id,
+                    run_id=result.run_id,
+                    analysis=result.analysis,
+                    stopped=result.detail,
+                    now=self._clock(),
+                )
+            if remediation is None or result.analysis is None:
+                return None
+            return self._submit(claim.incident_id, result.analysis)
+
+    async def _run(self, claim: TriageClaim, model: str) -> tuple[RunResult, bool, int]:
+        """The run, and the escalated re-run if it needs one: (result, escalated, tool calls)."""
         log.info("triage started incident=%s model=%s", claim.incident_id, model)
         try:
             async with self._toolbox_factory(self._settings) as toolbox:
@@ -132,8 +167,12 @@ class IncidentTriage:
                     task_prompt=prompt,
                     toolbox=toolbox,
                 )
-                if self._may_escalate(claim.incident_id, model) and needs_escalation(result):
+                escalated = self._may_escalate(claim.incident_id, model) and needs_escalation(
+                    result
+                )
+                if escalated:
                     result = await self._escalate(claim.incident_id, prompt, toolbox, result)
+                return result, escalated, toolbox.calls
         except ToolsUnavailable as exc:
             log.error("triage incident=%s: tools unavailable: %s", claim.incident_id, exc)
             result = self._runner.failed_start(
@@ -142,18 +181,7 @@ class IncidentTriage:
                 model=model,
                 detail=f"tools unavailable: {exc}",
             )
-        with self._uow_factory() as uow:
-            remediation = triage.record_triage(
-                uow,
-                claim.incident_id,
-                run_id=result.run_id,
-                analysis=result.analysis,
-                stopped=result.detail,
-                now=self._clock(),
-            )
-        if remediation is None or result.analysis is None:
-            return None
-        return self._submit(claim.incident_id, result.analysis)
+            return result, False, 0
 
     def _may_escalate(self, incident_id: int, model: str) -> bool:
         escalation = self._settings.triage_model_escalation
@@ -195,7 +223,15 @@ class IncidentTriage:
         proposal = analysis.proposed_remediation
         if proposal is None:
             return None
-        decision = self._gate.submit_proposal(incident_id, proposal)
+        with tracer.start_as_current_span(
+            "remediation.gate",
+            attributes={"incident.id": incident_id, "remediation.kind": proposal.kind},
+        ) as span:
+            # The gate stores this span's traceparent on the remediation for the apply loop.
+            decision = self._gate.submit_proposal(incident_id, proposal)
+            span.set_attributes(
+                {"remediation.mode": decision.mode.value, "remediation.policy": decision.policy}
+            )
         log.info(
             "proposal incident=%s kind=%s gate=%s policy=%s",
             incident_id,

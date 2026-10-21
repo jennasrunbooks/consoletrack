@@ -103,6 +103,8 @@ make local-fault FAULT=off     # the alert resolves, and the incident with it, ~
 make local-incidents           # status: resolved
 ```
 
+**See the incident as one trace.** Open Grafana at http://localhost:3000 (`GRAFANA_PORT`) and log in as admin with the password `make local` prints. The **Incident journey** dashboard lists each incident's trace, from `alert.receive` through triage, the `mcp.call`s, the gate, and the auto fix to `incident.resolve`, next to the logs and metrics. [docs/observability.md](docs/observability.md) walks through it.
+
 | `FAULT` | What breaks | The agent should propose |
 | --- | --- | --- |
 | `oom` | The traffic generator asks for large reports; the app's report cache outgrows its unchanged 128Mi limit: OOMKilled under traffic, CrashLoopBackOff | `set_memory_limit` to 256Mi |
@@ -136,6 +138,7 @@ kubectl --context kind-consoletrack -n monitoring port-forward svc/kube-promethe
    - The backend, which runs `alembic upgrade head` on start.
    - The dashboard, which also routes `/api` to the backend.
    - `k8s-mcp`, and the triage worker, which calls it and the Claude API.
+   - The observability stack ([docs/observability.md](docs/observability.md)): an OpenTelemetry Collector, Tempo, Loki, and Grafana at http://localhost:3000 with the **Incident journey** dashboard. Metrics go to kind's Prometheus.
 
    It builds the images for your machine (amd64 or arm64), waits for every healthcheck, and binds every port to `127.0.0.1` only.
 3. **Links.** Alertmanager in kind sends the demo app's alerts to the Compose backend, which joins kind's Docker network as `consoletrack-backend`. The script copies the backend's webhook token into kind and checks the connection from the Alertmanager pod. `k8s-mcp` uses a kubeconfig with its ServiceAccount's token, so the chart's read-only RBAC limits it here as it does on EKS. It queries Prometheus on a NodePort that's reachable only on kind's network.
@@ -378,7 +381,7 @@ Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalks
 | Deployment | 2 | <!-- TODO: live URL, dates, demo recording --> EKS via [terraform/](terraform/) and [helm/](helm/); [Deploy to AWS](#deploy-to-aws) |
 | CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
 | Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana |
-| Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `consoletrack` chart's alert rules |
+| Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `demo-app` chart's alert rules ([helm/charts/demo-app/templates/prometheusrule.yaml](helm/charts/demo-app/templates/prometheusrule.yaml)) |
 | On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make demo-oom`: the alert, the diagnosis, the automatic fix |
 
 ## License

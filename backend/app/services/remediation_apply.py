@@ -18,6 +18,10 @@ A refusal before anything is applied downgrades an auto fix to manual (it waits 
 with the reason) and fails a human's approval. Every step is appended to `remediations.steps`
 and committed as it happens, so the incident page shows progress. A backend that dies mid-run
 leaves a `running` row whose lease expires; the next claim rolls back whatever was applied.
+
+Tracing: each claim continues the trace stored on the remediation by the gate, with one span
+per phase: `remediation.validate` (read, validate, dry run), `remediation.apply` (the patch),
+and `remediation.verify` (rollout, verify, and any rollback).
 """
 
 from __future__ import annotations
@@ -25,13 +29,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
+from opentelemetry import trace
+from opentelemetry.trace import Span
 from pydantic import ValidationError
 
+from app import telemetry
 from app.agents.schema import SetMemoryLimit
 from app.cluster import Cluster, ClusterError, RatioSource
 from app.db.repositories import UnitOfWork
@@ -70,10 +78,13 @@ class Stopped(Exception):
 class Claim:
     remediation_id: int
     incident_id: int
+    kind: RemediationKind
     mode: RemediationMode
     payload: dict[str, Any]
     # Set when an earlier claim died after patching: roll that back instead of starting over.
     applied: MemoryPatch | None
+    # The gate's span, which this run's spans continue.
+    traceparent: str | None = None
 
 
 class RemediationApplier:
@@ -109,7 +120,8 @@ class RemediationApplier:
         if claim is None:
             return False
         try:
-            self._run(claim)
+            with telemetry.continuing(claim.traceparent):
+                self._run(claim)
         except Stopped:
             log.warning("remediation=%s left running: backend stopping", claim.remediation_id)
         except Exception as exc:
@@ -137,28 +149,52 @@ class RemediationApplier:
             claim = Claim(
                 remediation_id=row.id,
                 incident_id=row.subject_id,
+                kind=row.kind,
                 mode=row.mode or RemediationMode.manual,
                 payload=dict(row.payload_json),
                 applied=applied,
+                traceparent=row.traceparent,
             )
             uow.commit()
         return claim
 
     def _run(self, claim: Claim) -> None:
         if claim.applied is not None:
-            self._roll_back(claim, claim.applied, "the backend stopped before verify finished")
+            with self._span("remediation.verify", claim):
+                self._roll_back(claim, claim.applied, "the backend stopped before verify finished")
             return
+        with self._span("remediation.validate", claim) as span:
+            patch = self._validate(claim)
+            if patch is None:
+                return
+            span.set_attribute("remediation.result", "passed")
+        with self._span("remediation.apply", claim) as span:
+            try:
+                patched = self._cluster.patch_deployment(
+                    patch.namespace, patch.deployment, patch.body(), dry_run=False
+                )
+            except ClusterError as exc:
+                self._finish_failed(claim, f"patch: {exc}", step="patch")
+                return
+            applied_at = self._clock()
+            self._record(claim, "patch", True, patch.summary(), applied_at=applied_at)
+            span.set_attribute("remediation.result", "applied")
+        with self._span("remediation.verify", claim):
+            self._verify_or_roll_back(claim, patch, patched, applied_at)
+
+    def _validate(self, claim: Claim) -> MemoryPatch | None:
+        """Read, validate, and dry-run the patch; None after a refusal (already recorded)."""
         try:
             proposal = SetMemoryLimit.model_validate(claim.payload)
         except ValidationError:
             self._refuse(claim, "the stored proposal is not a valid set_memory_limit")
-            return
+            return None
         policy = self._policy(claim.payload)
         try:
             deployment = self._cluster.get_deployment(proposal.namespace, proposal.deployment)
         except ClusterError as exc:
             self._refuse(claim, f"couldn't read the Deployment: {exc}", step="read")
-            return
+            return None
         self._record(claim, "read", True, f"{proposal.namespace}/{proposal.deployment}")
         try:
             patch = plan_memory_patch(
@@ -166,7 +202,7 @@ class RemediationApplier:
             )
         except Refused as exc:
             self._refuse(claim, f"validator: {exc}", step="validate")
-            return
+            return None
         self._record(claim, "validate", True, patch.summary(), patch=patch)
         try:
             dry = self._cluster.patch_deployment(
@@ -175,17 +211,14 @@ class RemediationApplier:
             only_memory_changed(deployment, dry, patch)
         except (ClusterError, Refused) as exc:
             self._refuse(claim, f"dry run: {exc}", step="dry_run")
-            return
+            return None
         self._record(claim, "dry_run", True, "server-side dry run accepted the patch")
-        try:
-            patched = self._cluster.patch_deployment(
-                patch.namespace, patch.deployment, patch.body(), dry_run=False
-            )
-        except ClusterError as exc:
-            self._finish_failed(claim, f"patch: {exc}", step="patch")
-            return
-        applied_at = self._clock()
-        self._record(claim, "patch", True, patch.summary(), applied_at=applied_at)
+        return patch
+
+    def _verify_or_roll_back(
+        self, claim: Claim, patch: MemoryPatch, patched: dict[str, Any], applied_at: datetime
+    ) -> None:
+        policy = self._policy(claim.payload)
         try:
             self._wait_for_rollout(patch, patched, policy)
             self._record(claim, "rollout", True, "every replica runs the new limit")
@@ -208,6 +241,17 @@ class RemediationApplier:
             return
         self._record(claim, "verify", True, detail)
         self._finish(claim, RemediationEvent.succeeded, detail)
+
+    @contextmanager
+    def _span(self, name: str, claim: Claim) -> Iterator[Span]:
+        attributes = {
+            "remediation.id": claim.remediation_id,
+            "incident.id": claim.incident_id,
+            "remediation.kind": claim.kind.value,
+            "remediation.mode": claim.mode.value,
+        }
+        with telemetry.tracer.start_as_current_span(name, attributes=attributes) as span:
+            yield span
 
     # --- rollout and verify ----------------------------------------------------------------
 
@@ -303,6 +347,11 @@ class RemediationApplier:
                 # it; otherwise a human looks again.
                 incident_state.apply(incident, IncidentEvent.remediation_failed, now=now)
             uow.commit()
+        # On the phase span that ended the run.
+        trace.get_current_span().set_attribute("remediation.result", event.value)
+        telemetry.REMEDIATIONS.add(
+            1, {"kind": claim.kind.value, "mode": claim.mode.value, "result": event.value}
+        )
         log.info("remediation=%s %s: %s", claim.remediation_id, event.value, reason)
 
     def _record(

@@ -1,0 +1,11 @@
+# The dashboards in observability/grafana/dashboards/ (mounted read-only), loaded on start.
+apiVersion: 1
+
+providers:
+  - name: consoletrack
+    folder: ConsoleTrack
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards
