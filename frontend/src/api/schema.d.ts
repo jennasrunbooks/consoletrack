@@ -293,7 +293,8 @@ export interface paths {
         get?: never;
         /**
          * Save the edited postmortem
-         * @description Requires admin. Replaces the postmortem Markdown on the incident's analysis.
+         * @description Requires admin. Replaces the postmortem Markdown on the incident's latest analysis (the
+         *     agent's draft, or an earlier edit). `409` if the agent hasn't written an analysis yet.
          */
         put: operations["savePostmortem"];
         post?: never;

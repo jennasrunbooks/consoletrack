@@ -4,9 +4,10 @@ React + Vite + TypeScript dashboard for ConsoleTrack. Screens follow
 [`../docs/mockups/`](../docs/mockups/) in both themes; the contract is
 [`../openapi.yaml`](../openapi.yaml).
 
-Built so far (#13): app shell, login, intake indicator, change log (PR 1); incident list and
-incident detail with evidence, Approve/Reject, and Re-run triage (PR 2a). Change detail and the
-postmortem editor come in PR 2b; the change detail route is a placeholder.
+Built for #13: app shell, login, intake indicator, change log (PR 1); incident list and incident
+detail with evidence, Approve/Reject, and Re-run triage (PR 2a); the remediation outcome (PR 2b);
+change detail with Revert, Accept, and Codify (Phase 2), its evidence, and the postmortem editor
+(PR 2c).
 
 ## Commands
 
@@ -18,6 +19,7 @@ postmortem editor come in PR 2b; the change detail route is a placeholder.
 | Regenerate API types after editing `openapi.yaml` | `npm run gen:api` |
 | Lint, typecheck, API types up to date, tests | `make test-frontend` from the repo root (Vitest, then `make test-e2e`; `SKIP_E2E=1` leaves the browser out) |
 | Browser tests (Playwright, Chromium) | `make test-e2e`: starts `npm run dev:mock` on 127.0.0.1:5173; uses `CHROMIUM_PATH` if set, else `npx playwright install chromium` once |
+| Accessibility (axe-core, WCAG 2.1 AA, both themes) | part of `make test-e2e` (`e2e/a11y.spec.ts`) |
 | Regenerate `docs/screenshots/` | `make screenshots` (1440×900 at 2×, both themes) |
 | Production build | `npm run build` → `dist/` |
 | Image (nginx, non-root, :8080, `/healthz`) | `docker buildx build --platform linux/arm64 frontend/` |
@@ -30,9 +32,10 @@ src/api/          the only code that calls the backend
   client.ts       typed calls (openapi-fetch), one ApiError for every non-2xx
 src/auth/         session state from GET /auth/me; login and logout
 src/components/   shell: header, intake indicator, user menu, theme toggle, AdminButton,
-                  Pagination, EvidenceList
-src/pages/        login, change log and incident list (filters in the URL), incident detail
-                  (polls every 5 s while open or triaging), change detail placeholder
+                  Pagination, EvidenceList, AnalysisDetails, Markdown (sanitized)
+src/pages/        login, change log and incident list (filters in the URL), change detail
+                  (Revert/Accept/Codify; polls while detected or reverting), incident detail
+                  (polls every 5 s while open or triaging) with the postmortem editor
 src/lib/          formatting, theme, small data hooks
 src/mocks/        MSW handlers + fixtures shared by tests and `npm run dev:mock`
 src/test/         Vitest setup and render helpers
@@ -46,6 +49,9 @@ e2e/              Playwright specs; fixtures.ts fails any test that requests bey
 - **API text is text.** No `dangerouslySetInnerHTML` or `innerHTML` (ESLint blocks both);
   CloudTrail-sourced fields are attacker-influenced (openapi.yaml → Untrusted text). Links built
   from API values go through `safeHttpUrl`.
+- **Markdown goes through `<Markdown>`.** react-markdown builds React elements (no HTML string),
+  drops raw HTML, and rehype-sanitize applies an allowlist without images; links open with
+  `rel="noopener noreferrer"` and `javascript:` URLs are removed.
 - **The session is the `HttpOnly` cookie.** Nothing stores a token. `localStorage` holds only
   the theme choice, wrapped in try/catch.
 - **Writes are admin-only.** Use `AdminButton`: viewers see it disabled with an "Admin only"

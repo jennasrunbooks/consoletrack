@@ -38,6 +38,13 @@ class NoProposedRemediation(Exception):
         super().__init__(f"incident {incident_id} has no proposed remediation to decide on")
 
 
+class NoAnalysis(Exception):
+    """A postmortem edit before the agent has written an analysis to hold it (HTTP 409)."""
+
+    def __init__(self, incident_id: int) -> None:
+        super().__init__(f"incident {incident_id} has no analysis yet to attach a postmortem to")
+
+
 class UnsupportedRemediation(Exception):
     """A remediation kind the backend can't apply yet (HTTP 501)."""
 

@@ -10,6 +10,12 @@ export type ChangeSummary = Schemas["ChangeSummary"];
 export type ChangePage = Schemas["ChangePage"];
 export type ChangeCounts = Schemas["ChangeCounts"];
 export type ChangeStatus = Schemas["ChangeStatus"];
+export type Change = Schemas["Change"];
+export type ChangeDecision = Schemas["ChangeDecision"];
+export type Drift = Schemas["Drift"];
+export type DriftLine = Schemas["DriftLine"];
+export type LinkedIncident = Schemas["LinkedIncident"];
+export type RevertResponse = Schemas["RevertResponse"];
 export type Risk = Schemas["Risk"];
 export type Via = Schemas["Via"];
 export type IncidentRef = Schemas["IncidentRef"];
@@ -129,6 +135,20 @@ export function listChanges(query: ListChangesQuery, signal?: AbortSignal): Prom
   return unwrap(client.GET("/api/v1/changes", { params: { query }, signal }));
 }
 
+export function getChange(id: number, signal?: AbortSignal): Promise<Change> {
+  return unwrap(client.GET("/api/v1/changes/{id}", { params: { path: { id } }, signal }));
+}
+
+/** Dispatch the gated revert workflow (202); the change moves to `reverting`. */
+export function revertChange(id: number, note: string | null = null): Promise<RevertResponse> {
+  return unwrap(client.POST("/api/v1/changes/{id}/revert", { params: { path: { id } }, body: { note } }));
+}
+
+/** Close the change as `accepted`; the note is required (openapi.yaml → AcceptRequest). */
+export function acceptChange(id: number, note: string): Promise<Change> {
+  return unwrap(client.POST("/api/v1/changes/{id}/accept", { params: { path: { id } }, body: { note } }));
+}
+
 // --- Incidents --------------------------------------------------------------------------------
 
 export function listIncidents(query: ListIncidentsQuery, signal?: AbortSignal): Promise<IncidentPage> {
@@ -153,6 +173,13 @@ export function approveRemediation(id: number, note: string | null = null): Prom
 export function rejectRemediation(id: number, reason: string): Promise<Incident> {
   return unwrap(
     client.POST("/api/v1/incidents/{id}/remediation/reject", { params: { path: { id } }, body: { reason } }),
+  );
+}
+
+/** Replace the postmortem Markdown on the incident's latest analysis. */
+export function savePostmortem(id: number, postmortemMd: string): Promise<Analysis> {
+  return unwrap(
+    client.PUT("/api/v1/incidents/{id}/postmortem", { params: { path: { id } }, body: { postmortem_md: postmortemMd } }),
   );
 }
 

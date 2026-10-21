@@ -12,7 +12,7 @@
   --border-strong: #c9ced6;
   --text: #111827;
   --text-muted: #4b5563;
-  --text-subtle: #6b7280;
+  --text-subtle: #656c79;
   --link: #1d4a7d;
   --focus: #2563eb;
 
@@ -85,7 +85,7 @@
   --violet-bg: #33274f;
   --violet-text: #c6b2f6;
 
-  --accent-bg: #4a86d0;
+  --accent-bg: #3b77c2;
   --accent-text: #ffffff;
   --code-bg: #111317;
 
@@ -1322,6 +1322,286 @@ table.changes {
   border-radius: 50%;
   background: var(--violet-text);
   vertical-align: middle;
+}
+
+/* --- Change detail: drift, decision, revert dialog ----------------------------------------- */
+
+.risk-unknown {
+  border: 1px dashed var(--border-strong);
+  color: var(--text-muted);
+}
+
+.drift {
+  margin: 0;
+  padding: 6px 0;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 14.5px;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.drift li {
+  display: flex;
+  gap: 24px;
+  padding: 5px 16px;
+}
+
+.drift-mark {
+  flex: none;
+  width: 1ch;
+}
+
+.drift-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.drift-added {
+  background: var(--high-bg);
+  color: var(--high-text);
+}
+
+.drift-removed {
+  background: var(--medium-bg);
+  color: var(--medium-text);
+}
+
+.decision > * + *,
+.accept-form > * + *,
+.decision-status > * + * {
+  margin-top: 10px;
+}
+
+.accept-form {
+  margin-top: 18px;
+}
+
+.accept-form label {
+  display: block;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.decision-status {
+  padding: 12px 14px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.decision-status.pending {
+  border-left-color: var(--violet-text);
+  background: var(--violet-bg);
+}
+
+.decision-status.ok {
+  border-left-color: var(--live);
+}
+
+.decision-status.failed {
+  border-left-color: var(--high-text);
+  background: var(--high-bg);
+  color: var(--high-text);
+}
+
+.decision-note {
+  margin: 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
+.button-phase {
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+}
+
+.notice-warning {
+  background: var(--medium-bg);
+  color: var(--medium-text);
+}
+
+.request-params summary {
+  color: var(--link);
+  cursor: pointer;
+}
+
+.request-params pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 24px 28px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--panel-shadow);
+}
+
+.dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.dialog h2 {
+  margin-bottom: 12px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.dialog form > * + * {
+  margin-top: 12px;
+}
+
+.dialog label {
+  display: block;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* --- Postmortem ----------------------------------------------------------------------------- */
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 14px;
+}
+
+.card-head h2 {
+  margin-bottom: 0;
+}
+
+.postmortem-form > * + * {
+  margin-top: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  margin-bottom: -1px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: none;
+  color: var(--text-muted);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  border-color: var(--border);
+  border-bottom-color: var(--surface);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.postmortem-source {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.postmortem-preview {
+  min-height: 120px;
+  padding: 4px 2px;
+}
+
+.markdown {
+  line-height: 1.6;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: 20px 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.markdown h1 {
+  font-size: 20px;
+}
+
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown pre,
+.markdown blockquote,
+.markdown table {
+  margin: 0 0 12px;
+}
+
+.markdown ul,
+.markdown ol {
+  padding-left: 22px;
+}
+
+.markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.markdown pre {
+  padding: 10px 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--code-bg);
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.markdown table {
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
 }
 
 /* --- Login -------------------------------------------------------------------------------- */
