@@ -1,3 +1,24 @@
+# Terraform CI for every root under terraform/<account>/<scope>/ (product-spec.md → Testing,
+# CI/CD, and deployment). Each account directory is one matrix entry with its own GitHub
+# environments, <account>-plan and <account>-apply, and each environment holds that account's
+# role ARN as the secret AWS_ROLE_ARN. Today there is one entry, `consoletrack`;
+# terraform/demo-app/us-east-1 uses the hub's roles until demo-app moves to its own account.
+#
+#   pull_request touching terraform/**  → fmt -check, validate, tflint, plan per changed root,
+#                                          plan posted as a PR comment (account ID replaced)
+#   push to main touching terraform/**  → apply per changed root, after the <account>-apply
+#                                          environment's required reviewer approves
+#   workflow_dispatch with destroy      → destroy one root, behind the same approval
+#
+# Configuration uses the same names as .env, from repository variables (vars.*), so CI runs the
+# same Makefile targets as a laptop. Set: AWS_REGION, NAME_SUFFIX, ENABLE_BUDGET,
+# BUDGET_LIMIT_USD, DOMAIN, DNS_PARENT, K8S_VERSION, USE_SPOT, NODE_INSTANCE_TYPE, EXPOSURE,
+# WATCHED_IAM_PATHS. OPERATOR_ARN is a repository secret: it contains the account ID.
+# BUDGET_EMAIL is a repository secret, passed to Terraform as TF_VAR_budget_email in the plan and
+# apply jobs only, never from a variable or a file in the repo.
+#
+# Every job sets role-session-name: gh-${{ github.run_id }}. The roles' trust policies require
+# the gh- prefix, and the intake's EventBridge rule excludes pipeline calls by it.
 name: terraform
 
 on:
