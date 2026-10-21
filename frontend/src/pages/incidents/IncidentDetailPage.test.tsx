@@ -162,7 +162,10 @@ describe("incident detail", () => {
     expect(fix.getByText("Auto")).toBeInTheDocument();
     expect(fix.getByText("Succeeded")).toBeInTheDocument();
     expect(fix.getByText(/approved by policy:oom-memory-bump/)).toBeInTheDocument();
-    expect(fix.getByText("limits.memory 128Mi → 256Mi")).toBeInTheDocument();
+    expect(fix.getByText("Fixed automatically: memory limit 128Mi → 256Mi")).toBeInTheDocument();
+    expect(fix.getByText(/policy oom-memory-bump applies it/)).toBeInTheDocument();
+    const changes = within(fix.getByRole("list", { name: "Changes" }));
+    expect(changes.getByText("memory limit 128Mi → 256Mi")).toBeInTheDocument();
     const steps = within(fix.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
     expect(steps.map((li) => li.querySelector(".apply-step-name")!.textContent)).toEqual([
       "claimed",
@@ -176,6 +179,32 @@ describe("incident detail", () => {
     ]);
     expect(steps[6]).toHaveTextContent("the alert resolved");
     expect(screen.queryByText("Refreshing every 5 s")).toBeNull();
+  });
+
+  it("shows a rollback when verify failed: the rollback step and no Fixed line", async () => {
+    const incident = mockDb.incidents.find((i) => i.id === 11)!;
+    const r = incident.remediation!;
+    const at = r.steps.at(-1)!.at;
+    const reason = "verify: demo-app was OOM-killed again; rolled back (memory limit back to 128Mi)";
+    Object.assign(incident, { status: "awaiting_review", resolved_at: null, time_to_resolve_seconds: null });
+    Object.assign(r, {
+      status: "failed",
+      error: reason,
+      steps: [
+        ...r.steps.slice(0, 6),
+        { step: "verify", at, ok: false, detail: "demo-app was OOM-killed again" },
+        { step: "rollback", at, ok: true, detail: "memory limit back to 128Mi" },
+        { step: "failed", at, ok: false, detail: reason },
+      ],
+    });
+    await renderIncident(11);
+    const fix = within(card("Proposed fix"));
+    expect(fix.getByText("Rolled back: memory limit back to 128Mi")).toHaveClass("failed");
+    expect(fix.queryByText(/^Fixed/)).toBeNull();
+    const steps = within(fix.getByRole("list", { name: "Steps" })).getAllByRole("listitem");
+    expect(steps[6]).toHaveClass("failed");
+    expect(steps[7]).toHaveTextContent("rollback");
+    expect(steps[7]).toHaveClass("ok");
   });
 
   it("requires a reason to reject, and sends it", async () => {

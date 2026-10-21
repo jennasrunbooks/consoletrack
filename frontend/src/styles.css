@@ -1441,3 +1441,22 @@ table.changes {
     transition: none !important;
   }
 }
+
+.remediation-result {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-weight: 600;
+}
+
+.remediation-result.ok {
+  border-left: 3px solid var(--live);
+  background: var(--neutral-bg);
+  color: var(--text);
+}
+
+.remediation-result.failed {
+  border-left: 3px solid var(--high-text);
+  background: var(--high-bg);
+  color: var(--high-text);
+}

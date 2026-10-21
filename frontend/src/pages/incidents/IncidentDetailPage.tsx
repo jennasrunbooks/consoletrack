@@ -35,7 +35,7 @@ import {
 import { useNow } from "../../lib/useNow";
 import { useResource } from "../../lib/useResource";
 import { SeverityPill } from "./IncidentListPage";
-import { valueChanges } from "./remediation";
+import { changeText, remediationResult, valueChanges } from "./remediation";
 import { timelineSteps } from "./timeline";
 
 /** While an incident is open or triaging the page polls, so the analysis appears without a reload. */
@@ -301,6 +301,7 @@ function RemediationPanel({
   const decidable = r.status === "proposed" && incident.status === "awaiting_review";
   const applicable = APPLY_KINDS.includes(r.kind);
   const changed = valueChanges(r.before, r.after);
+  const result = remediationResult(r);
 
   const run = async (action: "approve" | "reject") => {
     setBusy(action);
@@ -332,6 +333,11 @@ function RemediationPanel({
 
   return (
     <div className="remediation">
+      {result && (
+        <p className={`remediation-result ${result.kind === "fixed" ? "ok" : "failed"}`} role="status">
+          {result.text}
+        </p>
+      )}
       <p className="remediation-fix mono">{proposedFix(r)}</p>
       {why && <p className="remediation-reason">{why}</p>}
       <p className="muted small">
@@ -362,9 +368,7 @@ function RemediationPanel({
       {changed.length > 0 && (
         <ul className="value-changes mono small" aria-label="Changes">
           {changed.map((c) => (
-            <li key={c.path}>
-              {c.path} {c.before ?? "unset"} → {c.after ?? "unset"}
-            </li>
+            <li key={c.path}>{changeText(c)}</li>
           ))}
         </ul>
       )}
