@@ -76,6 +76,44 @@ export const VIA_LABELS: Record<Via, string> = {
   terraform_outside_pipeline: "terraform, outside pipeline",
 };
 
+/** Where a change was made, for the change detail page's facts (openapi.yaml → Via). */
+export const VIA_DETAIL: Record<Via, string> = {
+  console: "AWS console",
+  cli: "AWS CLI",
+  cloudshell: "AWS CloudShell",
+  sdk: "AWS SDK",
+  terraform_outside_pipeline: "Terraform, outside the pipeline",
+};
+
+/** "made in the AWS console", for the line under a change's title. */
+export const VIA_PHRASE: Record<Via, string> = {
+  console: "made in the AWS console",
+  cli: "made with the AWS CLI",
+  cloudshell: "made in AWS CloudShell",
+  sdk: "made with an AWS SDK",
+  terraform_outside_pipeline: "made with Terraform outside the pipeline",
+};
+
+/**
+ * The resource part of an ARN, for display: `…:security-group/sg-0a1b` → `sg-0a1b`,
+ * `arn:aws:s3:::demo-app-data` → `demo-app-data`, `…:role/demo-app/demo-app` → `role/demo-app/demo-app`.
+ */
+export function resourceId(arn: string): string {
+  const resource = arn.split(":").slice(5).join(":");
+  if (!resource) return arn;
+  const [type, ...rest] = resource.split("/");
+  if (rest.length === 0) return resource;
+  return type === "role" || type === "user" || type === "policy" ? resource : rest.join("/");
+}
+
+/** A UTC timestamp as "Oct 14, 2026 14:52:07 UTC", the way CloudTrail reports it. */
+export function utcTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const day = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  return `${day} ${date.toISOString().slice(11, 19)} UTC`;
+}
+
 export const INTAKE_LABELS: Record<IntakeState, string> = {
   live: "Live",
   delayed: "Delayed",

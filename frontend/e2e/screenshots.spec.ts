@@ -25,6 +25,37 @@ for (const theme of ["light", "dark"] as const) {
       await page.screenshot({ path: `${OUT}change-log${suffix}.png`, fullPage: true, animations: "disabled" });
     });
 
+    // Matches docs/mockups/change-details.png.
+    test("change details", async ({ page }) => {
+      await logIn(page, "admin");
+      await page.goto("/changes/42");
+      await expect(page.getByRole("heading", { level: 1, name: /SSH opened/ })).toBeVisible();
+      await expect(page.getByText(/^get_resource_changes\(/)).toBeVisible();
+      await expect(page.locator(".intake-button")).toHaveAttribute("data-state", "live");
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: `${OUT}change-details${suffix}.png`, fullPage: true, animations: "disabled" });
+    });
+
+    test("postmortem editor", async ({ page }) => {
+      await logIn(page, "admin");
+      await page.goto("/incidents/14");
+      await page.getByRole("button", { name: "Edit postmortem" }).click();
+      await page.getByRole("tab", { name: "Preview" }).click();
+      const card = page.locator("section.card").filter({ has: page.getByRole("heading", { name: "Postmortem", exact: true }) });
+      await page.evaluate(() => document.fonts.ready);
+      // A full-page capture clipped to the card: an element screenshot scrolls, and the sticky
+      // header would cover the card's top.
+      const box = (await card.boundingBox())!;
+      const scrollY = await page.evaluate(() => window.scrollY);
+      const pad = 16;
+      await page.screenshot({
+        path: `${OUT}postmortem${suffix}.png`,
+        fullPage: true,
+        animations: "disabled",
+        clip: { x: box.x - pad, y: box.y + scrollY - pad, width: box.width + 2 * pad, height: box.height + 2 * pad },
+      });
+    });
+
     test("incidents", async ({ page }) => {
       await logIn(page, "admin");
       await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Incidents" }).click();

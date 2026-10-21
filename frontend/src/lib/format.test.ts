@@ -1,4 +1,13 @@
-import { changeLabel, duration, incidentTitle, principalLabel, relativeTime, safeHttpUrl } from "./format";
+import {
+  changeLabel,
+  duration,
+  incidentTitle,
+  principalLabel,
+  relativeTime,
+  resourceId,
+  safeHttpUrl,
+  utcTime,
+} from "./format";
 
 describe("changeLabel", () => {
   it("pads to four digits", () => {
@@ -65,5 +74,19 @@ describe("safeHttpUrl", () => {
     expect(safeHttpUrl("javascript:alert(1)")).toBeNull();
     expect(safeHttpUrl("not a url")).toBeNull();
     expect(safeHttpUrl(null)).toBeNull();
+  });
+});
+
+describe("change detail helpers", () => {
+  it("shortens an ARN to the resource", () => {
+    expect(resourceId("arn:aws:ec2:us-east-1:123456789012:security-group/sg-0a1b2c3d")).toBe("sg-0a1b2c3d");
+    expect(resourceId("arn:aws:s3:::demo-app-data")).toBe("demo-app-data");
+    expect(resourceId("arn:aws:iam::123456789012:role/demo-app/demo-app")).toBe("role/demo-app/demo-app");
+    expect(resourceId("not-an-arn")).toBe("not-an-arn");
+  });
+
+  it("formats a CloudTrail time in UTC", () => {
+    expect(utcTime("2026-10-14T14:52:07Z")).toBe("Oct 14, 2026 14:52:07 UTC");
+    expect(utcTime("garbage")).toBe("garbage");
   });
 });
