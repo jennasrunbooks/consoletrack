@@ -510,7 +510,7 @@ Integration tests live in `backend/tests/integration/` behind a pytest marker so
 
 **GitHub Actions.**
 
-1. `ci.yaml` on every PR and push: ruff, eslint, all automated test layers, and arm64 image builds on native arm64 runners. An amd64 variant is built only so reviewers on x86 machines can run Compose locally; the cluster runs arm64 only.
+1. `ci.yaml` on every PR and push: ruff, eslint, all automated test layers, and arm64 image builds on native arm64 runners. A `changes` job picks the layers each PR touches: lint always runs, docs-only PRs run nothing else, and a change to shared files (`Makefile`, `.github/**`, `agent-hooks/**`, `openapi.yaml`, lock files) or the `full-ci` label runs everything. Every layer runs on push to `main` and on manual dispatch, and the kind end-to-end test also runs nightly. An amd64 variant is built only so reviewers on x86 machines can run Compose locally; the cluster runs arm64 only.
 2. `deploy.yaml` after CI passes on `main`: deploy role through GitHub OIDC → push arm64 images to GHCR tagged with the commit SHA → if the cluster exists, `helmfile -l tier=app apply` (atomic, waits for rollout) → smoke test `/readyz` through a port-forward from the runner. If the cluster is down the job logs a skip and stays green.
 3. `terraform.yaml` for Terraform. On pull requests that touch `terraform/**`, the plan role (GitHub OIDC) runs `fmt`, `validate`, tflint, and `terraform plan` for each changed root and posts the plans as a PR comment. Because the roots are siblings, a change to `demo-app/` plans only that root. After merge to `main`, the apply role applies in the `consoletrack-apply` environment once you approve the run. Manual dispatch remains for `destroy`.
 
