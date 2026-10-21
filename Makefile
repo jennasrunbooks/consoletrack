@@ -103,6 +103,8 @@ LOCAL_CLUSTER := consoletrack
 LOCAL_KIND ?= true
 # Compose with kind's additions: the backend on kind's network, and k8s-mcp (the `kind` profile).
 COMPOSE_KIND = $(COMPOSE) -f docker-compose.yaml -f compose/kind.yaml --profile kind
+# `make local` rebuilds the images unless SKIP_BUILD=1.
+LOCAL_BUILD = $(if $(filter 1,$(SKIP_BUILD)),,--build)
 
 # Every release, ours and third-party (product-spec.md → Cluster add-ons). Terraform is AWS-only.
 HELMFILE_STATE := helm/helmfile.yaml.gotmpl
@@ -418,14 +420,18 @@ domain-destroy: env-check-aws ## Remove the zone (stub)
 # The kind half (scripts/local-kind.sh) goes around Compose: the cluster, add-ons, demo app, the
 # kubeconfigs (k8s-mcp's and the backend's remediator), and the remediation policies before it,
 # the webhook token and AlertmanagerConfig after it (they need the running backend). The worker and aws-mcp join with #9 and #10 PR 2; see #15.
+# SKIP_BUILD=1 uses the images already loaded instead of building them (Compose still builds any
+# that are missing); CI's `local-kind` job sets it after building them with its layer cache.
 local: env-check-local ## Compose stack plus the `consoletrack` kind cluster with Prometheus and the demo app, no AWS (LOCAL_KIND=false: Compose only)
 ifeq ($(LOCAL_KIND),true)
+ifneq ($(SKIP_BUILD),1)
 	$(MAKE) --no-print-directory demo-app-image
+endif
 	scripts/local-kind.sh cluster
-	$(COMPOSE_KIND) up --build --wait
+	$(COMPOSE_KIND) up $(LOCAL_BUILD) --wait
 	scripts/local-kind.sh alerts
 else
-	$(COMPOSE) up --build --wait
+	$(COMPOSE) up $(LOCAL_BUILD) --wait
 endif
 	@echo "make $@: dashboard http://localhost:$(or $(DASHBOARD_PORT),8080), API http://localhost:$(or $(BACKEND_PORT),8000)"
 	@if pw=$$($(COMPOSE) exec -T backend cat /run/consoletrack/admin-password 2>/dev/null); then \
