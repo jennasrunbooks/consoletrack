@@ -206,3 +206,4 @@ remediation:
     - name: default
       match: {}
       mode: manual
+# CI timing probe (Helm). Do not merge.
