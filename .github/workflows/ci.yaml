@@ -56,11 +56,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
+          # HEAD and its parents, for `git diff HEAD^1 HEAD`.
+          fetch-depth: 2
       - id: areas
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           FULL_CI_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: |
           set -euo pipefail
@@ -70,8 +70,10 @@ jobs:
             push | workflow_dispatch) full=true ;;
             schedule) ;;
             pull_request)
-              # HEAD is the PR merged into its base, so this is the PR's own change.
-              files=$(git diff --name-only "$BASE_SHA" HEAD)
+              # HEAD is the PR merged into the base branch as it is now, and HEAD^1 is that base.
+              # Not pull_request.base.sha: it stays at the base the PR was opened on, so after main
+              # moves the diff would also hold main's new commits.
+              files=$(git diff --name-only HEAD^1 HEAD)
               if [ "$FULL_CI_LABEL" = true ]; then full=true; fi
               ;;
             *) echo "::error::unexpected event $EVENT"; exit 1 ;;
