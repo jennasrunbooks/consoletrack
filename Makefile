@@ -444,8 +444,11 @@ endif
 
 kubeconfig: env-check-aws ## aws eks update-kubeconfig under the context alias KUBE_CONTEXT (humans only)
 	$(check_human)
-	@cluster=$$($(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 output -raw cluster_name) || \
-		{ echo "make $@: no cluster_name output; run make up first" >&2; exit 1; }; \
+	@# With an empty state Terraform prints a "No outputs found" warning on stdout and exits 0, so
+	@# check that what came back is a cluster name.
+	@cluster=$$($(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 output -raw cluster_name 2>/dev/null); \
+	case "$$cluster" in ""|*[!A-Za-z0-9_-]*) \
+		echo "make $@: no cluster_name output; run make up first" >&2; exit 1 ;; esac; \
 	aws eks update-kubeconfig --name "$$cluster" --region $(AWS_REGION) --alias $(KUBE_CONTEXT) | \
 		sed -E 's/[0-9]{12}/***/g'
 
@@ -475,14 +478,15 @@ else
 	kubectl --context $(KUBE_CONTEXT) -n consoletrack port-forward --address 127.0.0.1 svc/frontend $(OPEN_PORT):8080
 endif
 
-# Terraform asks for yes three times: demo-app (if present), the node group, then the rest.
+# Terraform asks for yes once per step that has something to destroy: demo-app (if present), the
+# node group, then the rest.
 # The Helmfile half is scripts/down-cluster.sh: app, any Gateway, wait for the load balancers,
 # add-ons, then the PVCs. helm-values runs source=none: .env alone is enough to destroy, and the
 # Terraform outputs may already be gone.
 down: env-check-aws ## Destroy the releases, wait for load balancers and ENIs, then demo-app and consoletrack/us-east-1; keep global and state
 	$(check_human)
 	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/us-east-1
-	@if $(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 output -raw cluster_name >/dev/null 2>&1; then \
+	@if $(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 state list 2>/dev/null | grep -q '^module\.eks\.aws_eks_cluster\.'; then \
 		$(MAKE) --no-print-directory kubeconfig; \
 	else echo "make $@: no cluster in the Terraform state; the Helmfile steps are skipped if the context is unreachable"; fi
 	$(MAKE) --no-print-directory helm-values HELM_VALUES_SOURCE=none
@@ -494,11 +498,16 @@ down: env-check-aws ## Destroy the releases, wait for load balancers and ENIs, t
 	@# Nodes first, while the VPC CNI's Pod Identity role still exists: if the role goes before the
 	@# nodes do, aws-node can't release its ENIs, and they block the node security group and the
 	@# subnets for good. Whatever still leaks is removed before the rest of the root.
-	$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1 TARGET='$(NODE_GROUP_ADDR)'
+	@# A step with nothing in the state is skipped: terraform destroy would still ask for yes.
+	@if $(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 state list 2>/dev/null | grep -qF '$(NODE_GROUP_ADDR)'; then \
+		$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1 TARGET='$(NODE_GROUP_ADDR)'; \
+	else echo "make $@: no node group in the Terraform state; skipped"; fi
 	CLEAN_ENIS_WAIT=600 scripts/delete-leftover-enis.sh
-	@$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1 || \
+	@if $(TERRAFORM) -chdir=terraform/consoletrack/us-east-1 state list 2>/dev/null | grep -Ev '(^|\.)data\.' | grep -q .; then \
+		$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1 || \
 		{ echo "make $@: the destroy failed. If a subnet or security group has a dependency, run make clean-enis" \
-			"(and make verify-clean to see what is left), then make down again" >&2; exit 1; }
+			"(and make verify-clean to see what is left), then make down again" >&2; exit 1; }; \
+	else echo "make $@: consoletrack/us-east-1 has nothing in its state; skipped"; fi
 	@echo "make $@: done. consoletrack/global and the state bucket are kept; run make verify-clean."
 
 down-all: env-check-aws env-check-tf ## down, plus the global root and the state bucket, after a typed confirmation
