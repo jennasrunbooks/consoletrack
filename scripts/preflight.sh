@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `make preflight`: the checks that fail cheaply, before `make up` spends 20 minutes on Terraform.
 # Tools on PATH, the AWS identity (account ID masked), ANTHROPIC_API_KEY set, the helm-diff plugin,
-# and EXPOSURE=alb's inputs. Read-only; never prints a secret or the account ID.
+# EXPOSURE=alb's inputs, and the images at IMAGE_TAG in GHCR. Read-only; never prints a secret or the account ID.
 #
 # Not here yet (#83): Spot quota, the Kubernetes version in your region, and the CAA records check.
 set -euo pipefail
@@ -37,6 +37,20 @@ fi
 if [[ "${EXPOSURE:-}" == alb ]]; then
 	[[ -n "${DOMAIN:-}" ]] || problem "EXPOSURE=alb needs DOMAIN"
 	[[ -n "${ALLOWED_CIDRS:-}" ]] || problem "EXPOSURE=alb needs ALLOWED_CIDRS"
+fi
+
+# The tag `make deploy` rolls out must exist in GHCR, or every pod sits in ImagePullBackOff. The
+# images are public, so this needs no login; skipped where Docker isn't installed.
+if [[ -n "${IMAGE_TAG:-}" ]] && command -v docker >/dev/null; then
+	owner=${GHCR_OWNER:-jennasrunbooks}
+	for name in backend frontend k8s-mcp demo-app; do
+		ref="ghcr.io/$owner/consoletrack-$name:$IMAGE_TAG"
+		if docker manifest inspect "$ref" >/dev/null 2>&1; then
+			echo "preflight: $ref found"
+		else
+			problem "$ref doesn't exist (or is private): run make images at this commit, or set IMAGE_TAG to a pushed tag"
+		fi
+	done
 fi
 
 if ((fail)); then
