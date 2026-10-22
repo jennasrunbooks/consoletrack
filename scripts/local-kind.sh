@@ -254,8 +254,10 @@ sync_demo_app() {
 # demo-app's memory under the OOM fault, with the limit raised so it never OOMs (#79): its
 # working set (what the kernel's OOM killer and the container limit count), RSS, and the report
 # cache's own gauge, once a minute and as peaks over the last 5 minutes. The worker is stopped
-# meanwhile (no triage, no auto fix); on exit, even an interrupted one, the fault goes off, which
-# also puts the 128Mi limit back, and the worker starts again.
+# meanwhile (no triage, no auto fix). On exit, even an interrupted one, demo-app's Deployment is
+# recreated with the fault off and the chart's 128Mi limit, and the worker starts again. Recreated,
+# not just synced: the 512Mi and 128Mi revisions would stay in the rollout history, and the next
+# OOM triage would read "limit lowered from 512Mi" and propose a rollback (#79).
 measure() {
 	local minute kind_compose
 	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-measure\` (HELM_DRIVER=configmap)"
@@ -294,8 +296,10 @@ measure_cleanup() {
 	trap - EXIT
 	# Each step even if the one before fails: the worker must never stay stopped.
 	set +e
-	echo "local-kind: putting it back: fault off (128Mi limit), worker started"
-	sync_demo_app >/dev/null || failed="the demo-app sync (\`make local-fault FAULT=off\`)"
+	echo "local-kind: putting it back: demo-app recreated (fault off, 128Mi, one revision), worker started"
+	kc -n demo delete deployment demo-app --ignore-not-found --wait >/dev/null ||
+		failed="deleting the demo-app Deployment"
+	sync_demo_app >/dev/null || failed="${failed:+$failed and }the demo-app sync (\`make local-fault FAULT=off\`)"
 	$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind \
 		start worker || failed="${failed:+$failed and }starting the worker"
 	if [ -n "$failed" ]; then

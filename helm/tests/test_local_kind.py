@@ -287,6 +287,9 @@ def test_measure_samples_then_puts_everything_back(tmp_path: Path) -> None:
     # The limit goes through Helm too: a kubectl change would conflict with the restoring sync.
     assert "--state-values-set demoMemoryLimit=512Mi" in order[1]
     assert not any(" set resources " in c for c in calls)
+    # Recreated rather than synced, so the measurement's revisions don't stay in the rollout
+    # history for the next triage to read as a lowered limit.
+    assert "-n demo delete deployment demo-app" in order[-3]
     assert order[-2].startswith("helmfile ") and "demoFault" not in order[-2]
     assert "start worker" in order[-1]
     # The queries go through the API server's proxy to Prometheus, URL-encoded.
