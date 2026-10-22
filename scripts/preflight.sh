@@ -3,7 +3,7 @@
 # Tools on PATH, the AWS identity (account ID masked), ANTHROPIC_API_KEY set, the helm-diff plugin,
 # and EXPOSURE=alb's inputs. Read-only; never prints a secret or the account ID.
 #
-# Not here yet: Spot quota, the Kubernetes version in your region, and the CAA records check.
+# Not here yet (#83): Spot quota, the Kubernetes version in your region, and the CAA records check.
 set -euo pipefail
 
 fail=0

@@ -497,7 +497,7 @@ verify-clean: env-check-aws ## List project=consoletrack load balancers, ENIs, E
 ##@ Custom domain
 
 domain: env-check-aws ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+	$(call todo,#82)
 
 gh-secrets: ## Set each GitHub environment's AWS_ROLE_ARN from the global root's outputs (humans only)
 	$(call check_env,GITHUB_REPO)
@@ -517,10 +517,10 @@ domain-zone: env-check-aws env-check-tf ## Apply only the Route 53 zone and prin
 	@$(TERRAFORM) -chdir=terraform/consoletrack/global output -raw domain_ns_instructions; echo
 
 domain-cert: env-check-aws ## Wait for delegation, then issue the ACM certificate (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+	$(call todo,#82)
 
 domain-destroy: env-check-aws ## Remove the zone (stub)
-	$(call todo,the EKS + deploy pipeline workstream; no issue yet)
+	$(call todo,#82)
 
 ##@ Demo and evaluation
 
