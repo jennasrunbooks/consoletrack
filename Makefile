@@ -150,7 +150,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
-	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets \
+	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets gh-deploy-config \
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
 	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
@@ -417,6 +417,7 @@ up: env-check-up ## Create the platform, add-ons, and app; safe to rerun (run ma
 	$(MAKE) --no-print-directory create-secrets
 	$(MAKE) --no-print-directory deploy
 	@echo "make $@: done. Run make open for the dashboard (admin password: printed above on first run)."
+	@echo "make $@: next: make gh-deploy-config (so deploy.yaml can deploy to this cluster)"
 
 images: ## Build every image for linux/arm64 and push to GHCR as IMAGE_TAG (humans; run before the first make up)
 	$(check_human)
@@ -501,6 +502,11 @@ domain: env-check-aws ## Zone and certificate in one run (DNS_PARENT=route53) (s
 gh-secrets: ## Set each GitHub environment's AWS_ROLE_ARN from the global root's outputs (humans only)
 	$(call check_env,GITHUB_REPO)
 	scripts/gh-env-secrets.sh
+
+gh-deploy-config: ## Set deploy.yaml's repo variables and consoletrack-deploy secrets from .env + Terraform outputs (humans only; rerun after make down → make up)
+	$(check_human)
+	$(call check_env,GITHUB_REPO)
+	scripts/gh-deploy-config.sh
 
 domain-zone: env-check-aws env-check-tf ## Apply only the Route 53 zone and print the NS records (humans only)
 	@if [ -z "$(strip $(DOMAIN))" ]; then echo "make $@: DOMAIN is empty; set it in .env" >&2; exit 1; fi
