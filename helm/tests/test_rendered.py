@@ -14,6 +14,7 @@ import pytest
 import yaml
 from conftest import (
     APP_CHARTS,
+    AWS_MCP_ENABLED,
     DuplicateKeyLoader,
     chart_of,
     helm_template,
@@ -75,8 +76,10 @@ def name(workload: dict, container: dict) -> str:
 def test_renders_our_workloads(ours: list[dict], config: str) -> None:
     names = {d["metadata"]["name"] for d in ours if d["kind"] == "Deployment"}
     assert names >= {
-        "backend", "worker", "frontend", "k8s-mcp", "aws-mcp", "demo-app", "demo-app-loadgen",
+        "backend", "worker", "frontend", "k8s-mcp", "demo-app", "demo-app-loadgen",
     }  # fmt: skip
+    # aws-mcp has no image yet (#9): not deployed, or the release never becomes Ready.
+    assert ("aws-mcp" in names) is AWS_MCP_ENABLED
     has_canary = any(
         d["kind"] == "CronJob" and d["metadata"]["name"] == "canary" for d in ours
     )
@@ -297,14 +300,14 @@ def test_backend_and_worker_read_the_policies_and_the_kill_switch(
         assert ("REMEDIATION_APPLY_ENABLED" in env) is (workload == "backend")
 
 
-def test_worker_offers_aws_mcp_except_on_kind(ours: list[dict], config: str) -> None:
+def test_worker_offers_aws_mcp_once_it_ships(ours: list[dict], config: str) -> None:
     ((_, _, worker, _),) = [
         c for c in containers(ours) if c[0]["metadata"]["name"] == "worker" and not c[3]
     ]
     env = {e["name"]: e.get("value") for e in worker["env"]}
     assert env["K8S_MCP_URL"] == "http://k8s-mcp:8080/mcp"
-    # kind runs the agent with k8s-mcp only until aws-mcp ships (#9).
-    expected = "" if config == "local" else "http://aws-mcp:8080/mcp"
+    # The agent runs with k8s-mcp only until aws-mcp ships (#9).
+    expected = "http://aws-mcp:8080/mcp" if AWS_MCP_ENABLED else ""
     assert env["AWS_MCP_URL"] == expected
 
 

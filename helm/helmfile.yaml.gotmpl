@@ -200,10 +200,11 @@ releases:
           triageModelEscalation: {{ .Values.triageModelEscalation | quote }}
           grafanaUrl: {{ .Values.grafanaUrl | quote }}
         awsMcp:
+          enabled: {{ .Values.awsMcpEnabled }}
           mode: {{ if eq .Values.target "local" }}fixtures{{ else }}live{{ end }}
         worker:
-          # No AWS tools for the triage agent on kind until aws-mcp ships (#9).
-          awsMcp: {{ ne .Values.target "local" }}
+          # No AWS tools for the triage agent until aws-mcp ships (#9).
+          awsMcp: {{ .Values.awsMcpEnabled }}
         postgres:
           storage:
             storageClass: {{ .Values.storageClass }}
