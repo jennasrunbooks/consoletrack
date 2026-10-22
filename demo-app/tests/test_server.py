@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def rss_bytes() -> int:
 def test_allocate_touches_every_page() -> None:
     buf = server.allocate(2)
     assert len(buf) == 2 * MIB
-    assert all(buf[i] == 1 for i in range(0, len(buf), server.PAGE))
+    assert all(buf[i] != 0 for i in range(0, len(buf), server.PAGE))
 
 
 @pytest.mark.skipif(not STATUS.exists(), reason="needs Linux /proc")
@@ -65,6 +66,33 @@ def test_the_cache_is_bounded() -> None:
         app.work({"X-Demo-Report": "large"})
     assert len(app.cache.reports) == 3  # 7 // 2
     assert app.registry.get_sample_value("demo_app_report_cache_bytes") == 6 * MIB
+
+
+def test_a_full_cache_reuses_its_buffers() -> None:
+    """Full, the cache writes each new report into the oldest buffer: no allocation or free per
+    request, from any request thread, so memory stays at the cache (#79)."""
+    app, httpd = server.build(Config(port=0, report_mi=1, report_cache_mi=4), host="127.0.0.1")
+    httpd.server_close()
+    for _ in range(4):
+        app.work({"X-Demo-Report": "large"})
+    buffers = {id(r) for r in app.cache.reports}
+    first = app.cache.reports[0]
+    before = bytes(first[0 : server.PAGE * 2 : server.PAGE])
+
+    threads = [
+        threading.Thread(target=app.work, args=({"X-Demo-Report": "large"},)) for _ in range(20)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert {id(r) for r in app.cache.reports} == buffers
+    assert len(app.cache.reports) == 4
+    # The oldest buffer was rewritten (a new report), not just moved.
+    assert bytes(first[0 : server.PAGE * 2 : server.PAGE]) != before
+    assert all(first[i] != 0 for i in range(0, len(first), server.PAGE))
+    assert app.registry.get_sample_value("demo_app_report_cache_bytes") == 4 * MIB
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Demo-Report": "small"}, {"X-Other": "large"}])

@@ -150,6 +150,8 @@ def test_high_error_rate_alert_routes_to_consoletrack() -> None:
         "severity": "critical",
         "namespace": "demo",
         "workload": "demo-app",
+        # The consoletrack AlertmanagerConfig sends only alerts with this label (#79).
+        "consoletrack_incident": "true",
     }
     assert rule["for"] == "1m"
     assert 'namespace="demo"' in rule["expr"]

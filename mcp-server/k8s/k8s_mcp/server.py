@@ -101,7 +101,8 @@ def build_server(
         container, creation time, desired and ready replicas, and state (current, superseded, or
         scaling_down). Use it to see what
         changed just before an alert. A superseded revision scaled to 0 is normal, not a
-        failure."""
+        failure. A revision with `remediation` set was made by ConsoleTrack's own remediation
+        (its fix or its rollback), not by a human."""
         audit("get_rollout_history", namespace)
         return tools.get_rollout_history(namespace, deployment)
 

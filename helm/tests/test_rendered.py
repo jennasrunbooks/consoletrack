@@ -83,6 +83,27 @@ def test_renders_our_workloads(ours: list[dict], config: str) -> None:
     assert has_canary == (config != "local")
 
 
+def test_only_user_impact_rules_open_incidents(ours: list[dict], config: str) -> None:
+    """The consoletrack AlertmanagerConfig routes only rules labelled consoletrack_incident (#79):
+    the user-impact alert and the canary (EKS only). Every rule of ours is one of those."""
+    rules = [
+        rule
+        for d in ours
+        if d["kind"] == "PrometheusRule"
+        for group in d["spec"]["groups"]
+        for rule in group["rules"]
+        if "alert" in rule
+    ]
+    incidents = {
+        r["alert"] for r in rules if r["labels"].get("consoletrack_incident") == "true"
+    }
+    expected = {"DemoAppHighErrorRate"}
+    if config != "local":
+        expected.add("ConsoleTrackCanaryMissing")
+    assert incidents == expected
+    assert all(r["labels"].get("consoletrack_incident") == "true" for r in rules)
+
+
 def test_no_secret_objects(ours: list[dict]) -> None:
     assert [d["metadata"]["name"] for d in ours if d["kind"] == "Secret"] == []
 

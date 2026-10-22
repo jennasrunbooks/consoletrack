@@ -5,9 +5,15 @@ chain (Pod Identity on EKS) and answers 503 when it can't: the identity scenario
 (kind), boto3 is never imported, so there are no AWS calls at all.
 
 A `GET /` with `X-Demo-Report: large` also builds a report and keeps it in an in-memory cache,
-`report_mi` MiB each, oldest evicted past `report_cache_mi`. The cache is bounded, but its bound
-is above a 128Mi limit: the OOM scenario, driven by the traffic generator asking for reports, so
+`report_mi` MiB each, at most `report_cache_mi` in all. The cache is bounded, but its bound is
+above a 128Mi limit: the OOM scenario, driven by the traffic generator asking for reports, so
 the app's own Deployment never changes (the app outgrew its limit; nothing rolled out).
+
+Once the cache is full, a new report is written into the oldest one's buffer instead of a new
+allocation, so memory stops at the cache plus the app. Allocating a fresh buffer and freeing the
+oldest on every request (each on its own request thread) left freed memory in glibc's per-thread
+arenas that Python never returned: the process grew past the cache by an amount that varied from
+run to run, and the 2x fix (256Mi) sometimes OOMed too (#79).
 """
 
 from __future__ import annotations
@@ -37,9 +43,13 @@ REPORT_HEADER = "X-Demo-Report"
 def allocate(mib: int) -> bytearray:
     """Allocate `mib` MiB and write to every page so it is resident, not just reserved: memory
     that is only reserved wouldn't count against the container's limit."""
-    buf = bytearray(mib * MIB)
+    return write_report(bytearray(mib * MIB))
+
+
+def write_report(buf: bytearray) -> bytearray:
+    """ "Build" a report in `buf`, in place: every page written, nothing allocated."""
     for i in range(0, len(buf), PAGE):
-        buf[i] = 1
+        buf[i] = (buf[i] + 1) % 256 or 1
     return buf
 
 
@@ -68,7 +78,8 @@ def _error_code(exc: Exception) -> str:
 
 
 class ReportCache:
-    """Reports held in memory, oldest evicted once they'd pass `cap_mi`."""
+    """Reports held in memory, at most `cap_mi` MiB. Full, it rewrites the oldest report's buffer
+    in place: no allocation or free per request, so memory doesn't drift above the cap."""
 
     def __init__(self, report_mi: int, cap_mi: int, registry: CollectorRegistry) -> None:
         self.report_mi = report_mi
@@ -82,11 +93,12 @@ class ReportCache:
     def add(self) -> None:
         if self.max_reports == 0:
             return
-        report = allocate(self.report_mi)
         with self.lock:
+            if len(self.reports) < self.max_reports:
+                report = allocate(self.report_mi)
+            else:
+                report = write_report(self.reports.popleft())
             self.reports.append(report)
-            while len(self.reports) > self.max_reports:
-                self.reports.popleft()
             self.size.set(sum(len(r) for r in self.reports))
 
 

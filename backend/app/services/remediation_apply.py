@@ -19,6 +19,13 @@ with the reason) and fails a human's approval. Every step is appended to `remedi
 and committed as it happens, so the incident page shows progress. A backend that dies mid-run
 leaves a `running` row whose lease expires; the next claim rolls back whatever was applied.
 
+Annotations (#79): the patch and the rollback both carry `consoletrack.io/remediation: <id>` and
+`consoletrack.io/action: patch|rollback` on the Deployment. The Deployment controller copies them
+to the ReplicaSet it makes current, so that revision says it is ConsoleTrack's own (k8s-mcp's
+get_rollout_history shows it, and triage must not read it as a human change). Once the
+controller has seen the change, they are removed from the Deployment again: left there, they
+would be copied to the next human rollout's ReplicaSet too.
+
 Tracing: each claim continues the trace stored on the remediation by the gate, with one span
 per phase: `remediation.validate` (read, validate, dry run), `remediation.apply` (the patch),
 and `remediation.verify` (rollout, verify, and any rollback).
@@ -68,6 +75,11 @@ APPLY_KINDS = frozenset({RemediationKind.set_memory_limit})
 POLL_SECONDS = 10.0
 # On top of the rollout and verify windows, so a live run never loses its claim.
 LEASE_SLACK = timedelta(minutes=5)
+# Copied by the Deployment controller to the ReplicaSet it makes current (k8s-mcp reads them).
+REMEDIATION_ANNOTATION = "consoletrack.io/remediation"
+ACTION_ANNOTATION = "consoletrack.io/action"
+# How long to wait for the controller to see a rollback before removing the annotations anyway.
+ANNOTATION_SETTLE = timedelta(seconds=30)
 
 
 class Stopped(Exception):
@@ -171,7 +183,10 @@ class RemediationApplier:
         with self._span("remediation.apply", claim) as span:
             try:
                 patched = self._cluster.patch_deployment(
-                    patch.namespace, patch.deployment, patch.body(), dry_run=False
+                    patch.namespace,
+                    patch.deployment,
+                    self._body(claim, patch, "patch"),
+                    dry_run=False,
                 )
             except ClusterError as exc:
                 self._finish_failed(claim, f"patch: {exc}", step="patch")
@@ -206,7 +221,7 @@ class RemediationApplier:
         self._record(claim, "validate", True, patch.summary(), patch=patch)
         try:
             dry = self._cluster.patch_deployment(
-                patch.namespace, patch.deployment, patch.body(), dry_run=True
+                patch.namespace, patch.deployment, self._body(claim, patch, "patch"), dry_run=True
             )
             only_memory_changed(deployment, dry, patch)
         except (ClusterError, Refused) as exc:
@@ -221,6 +236,8 @@ class RemediationApplier:
         policy = self._policy(claim.payload)
         try:
             self._wait_for_rollout(patch, patched, policy)
+            # Rolled out: the controller has made the new ReplicaSet current and annotated it.
+            self._clear_annotations(patch, generation=0)
             self._record(claim, "rollout", True, "every replica runs the new limit")
             detail = self._verify(claim, patch, policy, applied_at)
         except _Failed as exc:
@@ -258,7 +275,7 @@ class RemediationApplier:
     def _wait_for_rollout(
         self, patch: MemoryPatch, patched: dict[str, Any], policy: Policy
     ) -> None:
-        generation = (patched.get("metadata") or {}).get("generation") or 0
+        generation = _generation(patched)
         deadline = self._clock() + policy.verify.rollout_timeout
         while True:
             deployment = self._cluster.get_deployment(patch.namespace, patch.deployment)
@@ -314,13 +331,17 @@ class RemediationApplier:
 
     def _roll_back(self, claim: Claim, patch: MemoryPatch, reason: str) -> None:
         try:
-            self._cluster.patch_deployment(
-                patch.namespace, patch.deployment, patch.undo_body(), dry_run=False
+            undone = self._cluster.patch_deployment(
+                patch.namespace,
+                patch.deployment,
+                self._body(claim, patch, "rollback"),
+                dry_run=False,
             )
         except ClusterError as exc:
             self._record(claim, "rollback", False, f"rollback failed, a human must fix it: {exc}")
             self._finish(claim, RemediationEvent.failed, f"{reason}; rollback failed: {exc}")
             return
+        self._clear_annotations(patch, generation=_generation(undone))
         undone = f"memory limit back to {patch.before['limits']['memory']}"
         self._record(claim, "rollback", True, undone)
         self._finish(claim, RemediationEvent.failed, f"{reason}; rolled back ({undone})")
@@ -376,6 +397,39 @@ class RemediationApplier:
                 row.applied_at = applied_at
             uow.commit()
 
+    def _body(self, claim: Claim, patch: MemoryPatch, action: str) -> dict[str, Any]:
+        """The patch (or its undo) with the annotations that mark the revision as ConsoleTrack's."""
+        body = patch.body() if action == "patch" else patch.undo_body()
+        annotations = {REMEDIATION_ANNOTATION: str(claim.remediation_id), ACTION_ANNOTATION: action}
+        return {**body, "metadata": {"annotations": annotations}}
+
+    def _clear_annotations(self, patch: MemoryPatch, *, generation: int) -> None:
+        """Remove the annotations from the Deployment once the controller has seen `generation`
+        (0: it already has), so they stay on this revision's ReplicaSet only."""
+        deadline = self._clock() + ANNOTATION_SETTLE
+        while generation:
+            try:
+                deployment = self._cluster.get_deployment(patch.namespace, patch.deployment)
+            except ClusterError:
+                break
+            observed = (deployment.get("status") or {}).get("observedGeneration") or 0
+            if observed >= generation or self._clock() >= deadline:
+                break
+            self._sleep()
+        clear = {
+            "metadata": {"annotations": {REMEDIATION_ANNOTATION: None, ACTION_ANNOTATION: None}}
+        }
+        try:
+            self._cluster.patch_deployment(patch.namespace, patch.deployment, clear, dry_run=False)
+        except ClusterError as exc:
+            # Harmless for this revision; a later rollout's ReplicaSet would inherit them.
+            log.warning(
+                "couldn't remove the remediation annotations from %s/%s: %s",
+                patch.namespace,
+                patch.deployment,
+                exc,
+            )
+
     def _policy(self, payload: dict[str, Any]) -> Policy:
         return self._config.policy_for(RemediationKind.set_memory_limit, payload.get("namespace"))
 
@@ -394,6 +448,10 @@ def _step(row: Any, step: str, at: datetime, ok: bool, detail: str) -> None:
     # A new list, so SQLAlchemy sees the JSONB change.
     entry = {"step": step, "at": at.isoformat(), "ok": ok, "detail": detail}
     row.steps = [*(row.steps or []), entry]
+
+
+def _generation(deployment: dict[str, Any]) -> int:
+    return (deployment.get("metadata") or {}).get("generation") or 0
 
 
 def _patch_from_row(

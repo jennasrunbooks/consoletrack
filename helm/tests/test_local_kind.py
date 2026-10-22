@@ -101,6 +101,17 @@ def test_alerts_go_to_the_compose_backend(docs: list[dict]) -> None:
     assert credentials == {"name": "consoletrack-webhook", "key": "token"}
 
 
+def test_only_user_impact_alerts_open_incidents(docs: list[dict]) -> None:
+    """#79: KubePodCrashLooping opened a second incident for one OOM episode. Only rules labelled
+    consoletrack_incident="true" reach the backend; everything else stays in Alertmanager."""
+    (config,) = [d for d in docs if d["kind"] == "AlertmanagerConfig"]
+    route = config["spec"]["route"]
+    matchers = {m["name"]: (m["matchType"], m["value"]) for m in route["matchers"]}
+    assert matchers["consoletrack_incident"] == ("=", "true")
+    assert matchers["namespace"][0] == "=~"
+    assert route["groupBy"] == ["namespace", "workload"]
+
+
 def test_in_cluster_url_by_default() -> None:
     docs = helm_template(
         "consoletrack",

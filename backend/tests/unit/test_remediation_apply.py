@@ -87,9 +87,20 @@ def test_auto_fix_applies_and_verifies(store: FakeStore, make_incident: Any, clo
 
     assert row.status is RemediationStatus.succeeded
     assert cluster.limit == "256Mi"
-    # Dry run first, then the same patch for real.
-    assert [dry for _, dry in cluster.patches] == [True, False]
+    # Dry run first, then the same patch for real, then the annotations off the Deployment.
+    assert [dry for _, dry in cluster.patches] == [True, False, False]
     assert cluster.patches[0][0] == cluster.patches[1][0]
+    # The new revision is marked as this remediation's patch (#79); the Deployment isn't, so a
+    # later human rollout's ReplicaSet won't be.
+    assert cluster.revision_annotations == [
+        {"consoletrack.io/remediation": str(row.id), "consoletrack.io/action": "patch"}
+    ]
+    assert cluster.patches[2][0] == {
+        "metadata": {
+            "annotations": {"consoletrack.io/remediation": None, "consoletrack.io/action": None}
+        }
+    }
+    assert cluster.obj["metadata"]["annotations"] == {}
     assert row.before_json == {"limits": {"memory": "128Mi"}, "requests": {"memory": "128Mi"}}
     assert row.after_json == {"limits": {"memory": "256Mi"}, "requests": {"memory": "128Mi"}}
     assert row.applied_at is not None and row.lease_until is None
@@ -130,9 +141,49 @@ def test_verify_fails_on_a_new_oom_kill_and_rolls_back(
     assert "OOMKilled again" in (row.error or "") and "rolled back" in (row.error or "")
     # The inverse patch put the faulted values back.
     assert cluster.limit == "128Mi"
-    assert [dry for _, dry in cluster.patches] == [True, False, False]
+    # Dry run, patch, clear; then the rollback and its clear.
+    assert [dry for _, dry in cluster.patches] == [True, False, False, False, False]
+    # Both revisions say they're ConsoleTrack's: triage must not read the rollback as a human
+    # lowering the limit, or propose rolling back to the revision that just OOMed (#79).
+    assert cluster.revision_annotations == [
+        {"consoletrack.io/remediation": str(row.id), "consoletrack.io/action": "patch"},
+        {"consoletrack.io/remediation": str(row.id), "consoletrack.io/action": "rollback"},
+    ]
+    assert cluster.obj["metadata"]["annotations"] == {}
     assert steps(row)[-3:] == [("verify", False), ("rollback", True), ("failed", False)]
     assert incident.status is IncidentStatus.awaiting_review
+
+
+def test_a_failed_annotation_clear_doesnt_fail_the_fix(
+    store: FakeStore, make_incident: Any, clock: Clock, caplog: pytest.LogCaptureFixture
+) -> None:
+    _, row = auto_approved(store, make_incident, clock)
+    cluster = FakeCluster(clock=clock)
+    cluster.fail_on.add("clear")
+    applier(store, cluster, clock).run_next()
+    assert row.status is RemediationStatus.succeeded
+    assert "couldn't remove the remediation annotations" in caplog.text
+
+
+def test_the_rollback_clears_its_annotations_even_if_the_controller_lags(
+    store: FakeStore, make_incident: Any, clock: Clock
+) -> None:
+    """The rollback waits up to ANNOTATION_SETTLE for the controller to see it, then clears the
+    Deployment's annotations regardless, so a later human rollout never inherits them."""
+
+    class LaggingAfterRollback(FakeCluster):
+        def get_deployment(self, namespace: str, name: str) -> dict[str, Any]:
+            if len(self.revision_annotations) == 2:  # the rollback is in; never observed
+                self.rollout_polls = None
+            return super().get_deployment(namespace, name)
+
+    _, row = auto_approved(store, make_incident, clock)
+    cluster = LaggingAfterRollback(clock=clock, oom_after_patch=True)
+    applier(store, cluster, clock).run_next()
+    assert row.status is RemediationStatus.failed
+    status = cluster.obj["status"]
+    assert status["observedGeneration"] < cluster.obj["metadata"]["generation"]
+    assert cluster.obj["metadata"]["annotations"] == {}
 
 
 def test_after_a_failed_auto_fix_that_workload_gets_no_more_auto_attempts(

@@ -68,7 +68,9 @@ outgrew a limit that didn't change (the demo fault: traffic fills a report cache
 unchanged 128Mi limit, with no new revision), it proposes `set_memory_limit`, and this policy
 can apply it. When the newest revision *lowered* the limit, it proposes `rollback` to the
 previous revision instead. That one goes to the `default` policy, so an admin undoes the revision
-by hand or rejects the proposal.
+by hand or rejects the proposal. Since prompt v4 (#79), a revision marked `remediation` in the rollout
+history (the apply loop's own fix or rollback, from the `consoletrack.io/remediation` and
+`consoletrack.io/action` annotations) is neither a human change nor a revision to roll back to.
 
 ## The gate's checks
 
