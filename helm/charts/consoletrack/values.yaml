@@ -115,6 +115,10 @@ k8sMcp:
     limits: {cpu: 250m, memory: 256Mi}
 
 awsMcp:
+  # Render the aws-mcp Deployment and Service. Helmfile sets this from awsMcpEnabled, false until
+  # aws-mcp ships with an image (#9): a Deployment without one never becomes Ready and fails the
+  # whole release. Keep it in step with worker.awsMcp.
+  enabled: true
   replicas: 1
   port: 8080
   # live, or fixtures (recorded responses for demo-replay; local only).
