@@ -7,13 +7,18 @@ from datetime import datetime
 from app.db.models import IncidentRow, RemediationRow
 from app.db.repositories import IncidentFilters, UnitOfWork
 from app.enums import RemediationMode, RemediationStatus, SubjectType
-from app.schemas import Incident, IncidentPage
+from app.schemas import Analysis, Incident, IncidentPage
 from app.services import incident_state, remediation_state
-from app.services.errors import NoProposedRemediation, NotFound, UnsupportedRemediation
+from app.services.errors import (
+    NoAnalysis,
+    NoProposedRemediation,
+    NotFound,
+    UnsupportedRemediation,
+)
 from app.services.incident_state import IncidentEvent
 from app.services.remediation_apply import APPLY_KINDS
 from app.services.remediation_state import RemediationEvent
-from app.services.views import incident_detail, incident_summaries
+from app.services.views import analysis_detail, incident_detail, incident_summaries
 
 
 def list_incidents(
@@ -66,6 +71,23 @@ def reject_remediation(
     _approval_step(row, now, f"rejected by {actor}: {reason.strip()}")
     uow.commit()
     return incident_detail(uow, incident)
+
+
+def save_postmortem(uow: UnitOfWork, incident_id: int, *, postmortem_md: str) -> Analysis:
+    """Replace the postmortem on the incident's latest analysis (the agent's draft, or an earlier
+    edit). An incident without an analysis has nowhere to keep one yet."""
+    incident = uow.incidents.get(incident_id, for_update=True)
+    if incident is None:
+        raise NotFound("incident", incident_id)
+    row = uow.analyses.latest_for(SubjectType.incident, incident_id)
+    if row is None:
+        raise NoAnalysis(incident_id)
+    row.postmortem_md = postmortem_md
+    uow.commit()
+    result = analysis_detail(uow, row)
+    if result is None:  # its agent run is missing, which the foreign key rules out in Postgres
+        raise NoAnalysis(incident_id)
+    return result
 
 
 def _proposed(uow: UnitOfWork, incident_id: int) -> tuple[IncidentRow, RemediationRow]:

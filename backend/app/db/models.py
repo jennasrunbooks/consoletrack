@@ -166,6 +166,9 @@ class IncidentRow(TimestampMixin, Base):
     # triage pending. `triage_model` is the re-run's model override (null = TRIAGE_MODEL).
     triage_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     triage_model: Mapped[str | None] = mapped_column(String(128))
+    # The W3C traceparent of the `incident.open` span: the worker and later alerts for this
+    # incident continue that trace (app/telemetry.py). Null for incidents opened before 0005.
+    traceparent: Mapped[str | None] = mapped_column(String(64))
 
 
 class IncidentChangeRow(TimestampMixin, Base):
@@ -293,3 +296,5 @@ class RemediationRow(TimestampMixin, Base):
     )
     # The backend that claimed it to apply holds it until then; a crashed backend's claim expires.
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The W3C traceparent of the `remediation.gate` span: the apply loop continues that trace.
+    traceparent: Mapped[str | None] = mapped_column(String(64))

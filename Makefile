@@ -553,9 +553,15 @@ endif
 	else \
 		echo "make $@: log in as admin with the password for ADMIN_PASSWORD_HASH in $(ENV_FILE)"; \
 	fi
+	@echo "make $@: Grafana (Incident journey: traces, logs, metrics) http://localhost:$(or $(GRAFANA_PORT),3000)"
+	@if pw=$$($(COMPOSE) exec -T grafana cat /var/lib/grafana/admin-password 2>/dev/null); then \
+		echo "make $@: log in to Grafana as admin with the generated password: $$pw"; \
+	else \
+		echo "make $@: log in to Grafana as admin with GRAFANA_ADMIN_PASSWORD from $(ENV_FILE)"; \
+	fi
 ifeq ($(LOCAL_KIND),true)
-	@echo "make $@: kind context kind-$(LOCAL_CLUSTER); Grafana: kubectl --context kind-$(LOCAL_CLUSTER)" \
-		"-n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80"
+	@echo "make $@: kind context kind-$(LOCAL_CLUSTER); kind's own Grafana: kubectl --context kind-$(LOCAL_CLUSTER)" \
+		"-n monitoring port-forward svc/kube-prometheus-stack-grafana 3001:80"
 endif
 
 local-fault: ## Turn a demo-app fault on in kind (FAULT=oom|badImage|badProbe), or off (FAULT=off)

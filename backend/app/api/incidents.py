@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from app.api.deps import Admin, AppSettings, Now, Uow, Viewer
-from app.api.errors import NotImplementedYet, error_responses
+from app.api.errors import error_responses
 from app.db.repositories import IncidentFilters
 from app.enums import IncidentStatus
 from app.schemas import (
@@ -113,8 +113,6 @@ def reject_remediation(
     response_model=Analysis,
     responses=WRITE_ERRORS,
 )
-def save_postmortem(id: IncidentId, body: PostmortemRequest, _: Admin) -> Analysis:
+def save_postmortem(id: IncidentId, body: PostmortemRequest, uow: Uow, _: Admin) -> Analysis:
     """Save the edited postmortem. Requires admin."""
-    raise NotImplementedYet(
-        "PUT /api/v1/incidents/{id}/postmortem", "the postmortem editor (#13, PR 2)"
-    )
+    return incidents.save_postmortem(uow, id, postmortem_md=body.postmortem_md)

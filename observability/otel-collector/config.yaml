@@ -1,0 +1,53 @@
+# OpenTelemetry Collector for `make local` (docker-compose.yaml → otel-collector).
+# The backend, the worker, and k8s-mcp send OTLP/HTTP here (TELEMETRY_EXPORTER=otlp).
+# Traces go to Tempo and logs to Loki. Metrics go nowhere by default (plain Compose has no
+# Prometheus); compose/kind.yaml adds kind.yaml, which sends them to kind's Prometheus.
+# The apps already drop every attribute outside their allowlist (backend/app/telemetry.py),
+# so nothing here filters content; see docs/observability.md → Privacy.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Below the container's mem_limit (docker-compose.yaml), so the collector refuses data
+  # instead of being OOMKilled.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 160
+    spike_limit_mib: 40
+  batch: {}
+
+exporters:
+  otlp_http/tempo:
+    endpoint: http://tempo:4318
+  # Loki's native OTLP endpoint: service.name becomes the `service_name` label, and the trace
+  # and span IDs become structured metadata (trace_id, span_id) for Tempo's trace-to-logs.
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: warn
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/loki]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]

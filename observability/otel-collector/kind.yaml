@@ -1,0 +1,19 @@
+# Merged over config.yaml when `make local` runs with kind (compose/kind.yaml passes both
+# --config files): metrics go to kind's Prometheus by remote write, at the NodePort k8s-mcp
+# also uses (helm/values/kube-prometheus-stack-local.yaml enables the receiver).
+exporters:
+  prometheus_remote_write:
+    endpoint: http://consoletrack-control-plane:30090/api/v1/write
+    # The apps name metrics with their Prometheus names (ct_http_requests_total, ..._seconds);
+    # no suffixes are added on the way.
+    translation_strategy: UnderscoreEscapingWithoutSuffixes
+    # service.name becomes the `job` label; no other resource attributes become labels.
+    target_info:
+      enabled: false
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus_remote_write]

@@ -145,7 +145,7 @@ def test_login_validates_the_body(anon: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_login_logs_username_and_ip_never_the_password(
+def test_login_logs_the_username_never_the_ip_or_password(
     app: FastAPI, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO, logger="app.services.auth")
@@ -153,11 +153,10 @@ def test_login_logs_username_and_ip_never_the_password(
     log_in(client, "admin", "wrong-password-123")
     log_in(client, "admin", ADMIN_PASSWORD)
     messages = [record.getMessage() for record in caplog.records]
-    assert messages == [
-        "login failed username='admin' ip=198.51.100.7",
-        "login succeeded username='admin' ip=198.51.100.7",
-    ]
+    assert messages == ["login failed username='admin'", "login succeeded username='admin'"]
     text = caplog.text
+    # Logs reach telemetry (docs/observability.md → Privacy): no client IP addresses.
+    assert "198.51.100.7" not in text
     assert "wrong-password-123" not in text and ADMIN_PASSWORD not in text
     assert ADMIN_HASH not in text and TEST_SESSION_SECRET not in text
 
@@ -193,7 +192,7 @@ def test_rate_limited_attempts_are_logged(app: FastAPI, caplog: pytest.LogCaptur
     client = browser(app, ip="192.0.2.5")
     for _ in range(6):
         log_in(client, "admin", "guess")
-    assert caplog.records[-1].getMessage() == "login rate-limited username='admin' ip=192.0.2.5"
+    assert caplog.records[-1].getMessage() == "login rate-limited username='admin'"
 
 
 def test_limiter_window_slides_and_success_clears_only_the_username() -> None:

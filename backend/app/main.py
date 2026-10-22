@@ -7,6 +7,9 @@ always comes from `settings`: the app refuses to start without a `SESSION_SECRET
 
 With REMEDIATION_APPLY_ENABLED the backend also runs the remediation apply loop
 (`app/services/remediation_apply.py`) in its lifespan: the only process that patches the cluster.
+
+Telemetry (`app/telemetry.py`) is set up once per process as `consoletrack-api`, the first time
+an app is built; tests install in-memory providers first, which this leaves alone.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from datetime import datetime
 from fastapi import FastAPI
 from pydantic import SecretStr
 
+from app import telemetry
 from app.api import auth, changes, evidence, incidents, ops, webhooks
 from app.api.deps import utcnow
 from app.api.errors import register_error_handlers
@@ -47,6 +51,7 @@ def create_app(
     applier: RemediationApplier | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
+    telemetry.setup(telemetry.API, settings)
     secret = settings.session_secret.get_secret_value() if settings.session_secret else ""
     if len(secret.encode()) < MIN_SECRET_BYTES:
         raise RuntimeError(
@@ -109,6 +114,7 @@ def create_app(
     app.state.metrics = Metrics()
 
     register_error_handlers(app)
+    telemetry.instrument_app(app)
     for router in (
         auth.router,
         changes.router,

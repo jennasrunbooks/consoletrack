@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from app import telemetry
 from app.agents.changes import ChangeAnalysis
 from app.agents.model import AnthropicClient
 from app.agents.runner import AgentRunner, RunLimits
@@ -105,11 +105,8 @@ async def _poll(triage: IncidentTriage, *, poll_seconds: float, heartbeat_file: 
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
     settings = get_settings()
+    telemetry.setup(telemetry.WORKER, settings)
     if not settings.aws_mcp_url:
         log.info("AWS_MCP_URL is empty: triage runs with k8s-mcp tools only")
     agents = build_agents(settings)

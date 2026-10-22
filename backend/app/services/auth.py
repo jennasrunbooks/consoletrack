@@ -190,21 +190,22 @@ def login(
     client_ip: str,
     now: datetime,
 ) -> User:
-    """Check the rate limit, then the password. Logs the outcome, never the password."""
+    """Check the rate limit, then the password. Logs the outcome and the username, never the
+    password or the client's IP address (docs/observability.md → Privacy)."""
     user_key, ip_key = f"user:{username}", f"ip:{client_ip}"
     try:
         limiter.check((user_key, ip_key), now)
     except TooManyLoginAttempts:
-        log.warning("login rate-limited username=%r ip=%s", username, client_ip)
+        log.warning("login rate-limited username=%r", username)
         raise
     try:
         user = authenticator.verify(username, password)
     except InvalidCredentials:
         limiter.record_failure((user_key, ip_key), now)
-        log.warning("login failed username=%r ip=%s", username, client_ip)
+        log.warning("login failed username=%r", username)
         raise
     # A success resets the username's count but not the IP's, so logging in as viewer can't
     # reset the counter for guesses at admin from the same address.
     limiter.clear(user_key)
-    log.info("login succeeded username=%r ip=%s", username, client_ip)
+    log.info("login succeeded username=%r", username)
     return user

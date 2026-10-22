@@ -18,9 +18,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from fastmcp import Client
+from opentelemetry.trace import SpanKind
 
 from app.agents.schema import TOOL_NAME
 from app.settings import Settings
+from app.telemetry import tracer
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +101,8 @@ class Toolbox:
         self.aws_available = aws_available
         self._owner: dict[str, ToolProvider] = {}
         self._definitions: list[dict[str, Any]] = []
+        # Evidence calls made through this toolbox, over every run that shares it.
+        self.calls = 0
 
     async def load(self) -> Toolbox:
         for provider in self.providers:
@@ -118,7 +122,20 @@ class Toolbox:
         provider = self._owner.get(tool)
         if provider is None:
             return ToolResult(f"unknown tool {tool!r}", is_error=True)
-        return await provider.call(tool, arguments)
+        self.calls += 1
+        # The tool's name and the result's size only: arguments and results are evidence, and
+        # never reach telemetry. FastMCP's client span below this one carries the traceparent
+        # to the server in the request's _meta.
+        with tracer.start_as_current_span(
+            "mcp.call",
+            kind=SpanKind.CLIENT,
+            attributes={"mcp.server": provider.name, "mcp.tool": tool},
+        ) as span:
+            result = await provider.call(tool, arguments)
+            span.set_attributes(
+                {"mcp.result_bytes": len(result.text.encode()), "mcp.error": result.is_error}
+            )
+            return result
 
 
 @asynccontextmanager

@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from app import telemetry
 from app.agents.schema import Proposal, Rollback, SetMemoryLimit
 from app.db.models import IncidentRow, RemediationRow
 from app.db.repositories import UnitOfWork
@@ -119,6 +120,8 @@ class ConfiguredPolicyGate:
                     reason="no proposed remediation to decide on",
                 )
             row.namespace, row.workload = namespace, workload
+            # The worker's `remediation.gate` span: the apply loop continues this trace.
+            row.traceparent = telemetry.current_traceparent()
             reason = self._refusal(uow, row, incident, proposal, policy, now)
             if reason is None:
                 mode, reason = RemediationMode.auto, f"policy {policy.name} applies it"

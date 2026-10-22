@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # All interfaces inside the container; the Service and NetworkPolicy decide who reaches it.
     k8s_mcp_host: str = "0.0.0.0"
     k8s_mcp_port: int = 8080
+
+    # Telemetry (k8s_mcp/telemetry.py): none, otlp (OTEL_EXPORTER_OTLP_ENDPOINT), or console.
+    telemetry_exporter: Literal["none", "otlp", "console"] = "none"
 
     @field_validator("k8s_allowed_namespaces", mode="before")
     @classmethod
