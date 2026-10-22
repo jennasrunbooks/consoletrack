@@ -113,3 +113,91 @@ def test_in_cluster_url_by_default() -> None:
     assert webhook["url"] == (
         "http://backend.consoletrack.svc.cluster.local:8000/api/v1/alerts/webhook"
     )
+
+
+# --- the alert-path check in `scripts/local-kind.sh alerts` ------------------------------------
+
+FAKE_KUBECTL = """#!/usr/bin/env bash
+# Answers what `alerts` asks: the Alertmanager pod's name, and each `exec` (the wget probe) with
+# the next exit code from $PROBE_CODES. Everything else (create, apply) succeeds quietly.
+case " $* " in
+*" get pods "*) echo pod/alertmanager-kube-prometheus-stack-alertmanager-0 ;;
+*" exec "*)
+	code=$(head -n 1 "$PROBE_CODES"); sed -i.bak 1d "$PROBE_CODES"
+	echo "exec" >> "$PROBE_CALLS"; exit "${code:-0}" ;;
+*) cat > /dev/null ;;
+esac
+"""
+FAKE_HELM = "#!/usr/bin/env bash\necho 'kind: AlertmanagerConfig'\n"
+
+
+def run_alerts(
+    tmp_path: Path, codes: list[int]
+) -> tuple[subprocess.CompletedProcess[str], int]:
+    """Runs the real `alerts` step with fake kubectl and helm; returns the result and the number
+    of probe attempts."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("kubectl", FAKE_KUBECTL), ("helm", FAKE_HELM)):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    (tmp_path / "codes").write_text("".join(f"{code}\n" for code in codes))
+    (tmp_path / "calls").write_text("")
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "PROBE_CODES": str(tmp_path / "codes"),
+        "PROBE_CALLS": str(tmp_path / "calls"),
+        # The token from the environment, so the script never asks Compose for it.
+        "ALERT_WEBHOOK_TOKEN": "test-token",
+        "LOCAL_KIND_PROBE_DELAY": "0",
+    }
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts/local-kind.sh"), "alerts"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,  # the tests assert the exit code
+    )
+    return result, len((tmp_path / "calls").read_text().splitlines())
+
+
+def test_alerts_check_passes_when_alertmanager_reaches_the_backend(
+    tmp_path: Path,
+) -> None:
+    result, attempts = run_alerts(tmp_path, [0])
+    assert result.returncode == 0, result.stderr
+    assert attempts == 1
+    assert "Alertmanager reaches the Compose backend" in result.stdout
+
+
+def test_alerts_check_retries_a_crashed_wget(tmp_path: Path) -> None:
+    """busybox wget in the Alertmanager image sometimes segfaults (exit 139) on a working path."""
+    result, attempts = run_alerts(tmp_path, [139, 0])
+    assert result.returncode == 0, result.stderr
+    assert attempts == 2
+    assert "crashed (exit 139); retrying" in result.stderr
+
+
+def test_alerts_check_warns_but_goes_on_when_every_attempt_crashed(
+    tmp_path: Path,
+) -> None:
+    """A crash says nothing about the network, so make local carries on (and prints its URLs
+    and passwords) with a warning and the manual check."""
+    result, attempts = run_alerts(tmp_path, [139] * 5)
+    assert result.returncode == 0, result.stderr
+    assert attempts == 5
+    assert "warning: couldn't check the alert path" in result.stderr
+    assert "alerts/webhook" in result.stderr
+
+
+def test_alerts_check_fails_when_alertmanager_cant_reach_the_backend(
+    tmp_path: Path,
+) -> None:
+    result, attempts = run_alerts(tmp_path, [1, 139, 1, 1, 1])
+    assert result.returncode == 1
+    assert attempts == 5
+    assert (
+        "Alertmanager can't reach http://consoletrack-backend:8000 (exit 1)"
+        in result.stderr
+    )

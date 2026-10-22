@@ -185,16 +185,43 @@ alerts() {
 	# from `demo` to the Compose backend (compose/kind-values.yaml → monitoring.webhookUrl).
 	render templates/monitoring.yaml | kc apply -f -
 
-	# Alertmanager's own pod, so this checks the path alerts take: pod DNS, kind's network, and
-	# the backend's alias on it. The alertmanager image is busybox-based (wget).
 	local pod
 	pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
 	[ -n "$pod" ] || die "no Alertmanager pod in monitoring"
-	if kc -n monitoring exec "$pod" -c alertmanager -- wget -q -T 5 -O /dev/null "$backend_url/readyz"; then
-		echo "local-kind: Alertmanager reaches the Compose backend at $backend_url"
-	else
-		die "Alertmanager can't reach $backend_url; is the backend on kind's network (compose/kind.yaml)?"
+	probe_backend "$pod"
+}
+
+# From Alertmanager's own pod, so this checks the path alerts take: pod DNS, kind's network, and
+# the backend's alias on it. The alertmanager image is busybox-based (wget), and that wget
+# sometimes crashes (exit 139, a segfault) on a path that works. So each attempt is retried, and
+# a crash (exit >= 128, killed by a signal) says nothing about the network: only a real failure
+# (wget or kubectl exiting 1-127) stops make local. If every attempt crashed, it warns and goes on.
+probe_attempts=${LOCAL_KIND_PROBE_ATTEMPTS:-5}
+probe_delay=${LOCAL_KIND_PROBE_DELAY:-2}
+probe_backend() {
+	local pod=$1 attempt rc failed=0 crashed=0
+	for attempt in $(seq 1 "$probe_attempts"); do
+		rc=0
+		kc -n monitoring exec "$pod" -c alertmanager -- \
+			wget -q -T 5 -O /dev/null "$backend_url/readyz" || rc=$?
+		if [ "$rc" -eq 0 ]; then
+			echo "local-kind: Alertmanager reaches the Compose backend at $backend_url"
+			return 0
+		elif [ "$rc" -ge 128 ]; then
+			crashed=$rc
+			echo "local-kind: attempt $attempt: wget in the Alertmanager pod crashed (exit $rc); retrying" >&2
+		else
+			failed=$rc
+			echo "local-kind: attempt $attempt: Alertmanager can't reach $backend_url yet (exit $rc)" >&2
+		fi
+		[ "$attempt" -eq "$probe_attempts" ] || sleep "$probe_delay"
+	done
+	if [ "$failed" -ne 0 ]; then
+		die "Alertmanager can't reach $backend_url (exit $failed); is the backend on kind's network (compose/kind.yaml)?"
 	fi
+	echo "local-kind: warning: couldn't check the alert path: wget in the Alertmanager pod crashed" \
+		"on every attempt (exit $crashed). The connection itself may be fine; after a fault," \
+		"\`docker compose logs backend | grep alerts/webhook\` should show 202 Accepted." >&2
 }
 
 # demoFault also turns off Helmfile's wait and atomic for this sync (helm/helmfile.yaml.gotmpl): a
