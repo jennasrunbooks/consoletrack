@@ -10,10 +10,10 @@ above a 128Mi limit: the OOM scenario, driven by the traffic generator asking fo
 the app's own Deployment never changes (the app outgrew its limit; nothing rolled out).
 
 Once the cache is full, a new report is written into the oldest one's buffer instead of a new
-allocation, so memory stops at the cache plus the app. Allocating a fresh buffer and freeing the
-oldest on every request (each on its own request thread) left freed memory in glibc's per-thread
-arenas that Python never returned: the process grew past the cache by an amount that varied from
-run to run, and the 2x fix (256Mi) sometimes OOMed too (#79).
+allocation, so the cache allocates nothing more and memory stays at the cache plus the app, by
+construction. Measured on kind with 512Mi (make local-measure, #79), the earlier allocate-and-free
+per request also held flat at the cache plus the app (160 MiB with a 140 MiB cache): this rules
+out per-request allocations as a cause of the 2x fix's OOM, rather than fixing one.
 """
 
 from __future__ import annotations

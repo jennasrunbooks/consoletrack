@@ -419,7 +419,10 @@ def test_an_invalid_stored_proposal_is_downgraded(
 def pod(limit: str, reason: str | None, finished: str | None = None) -> dict[str, Any]:
     status: dict[str, Any] = {"name": "demo-app", "state": {"running": {}}}
     if reason:
-        status["lastState"] = {"terminated": {"reason": reason, "finishedAt": finished}}
+        status["restartCount"] = 1
+        status["lastState"] = {
+            "terminated": {"reason": reason, "finishedAt": finished, "exitCode": 137}
+        }
     return {
         "metadata": {"name": f"demo-app-{limit}"},
         "spec": {"containers": [{"name": "demo-app", "resources": {"limits": {"memory": limit}}}]},
@@ -438,7 +441,7 @@ def test_only_new_pods_oom_kills_after_the_patch_count() -> None:
     assert _oom_killed_since([pod("256Mi", "Error", after)], "demo-app", new, since) is None
     assert _oom_killed_since([pod("256Mi", "OOMKilled", before)], "demo-app", new, since) is None
     assert _oom_killed_since([pod("256Mi", "OOMKilled", after)], "demo-app", new, since) == (
-        "demo-app-256Mi"
+        "demo-app-256Mi (killed at 2026-10-16T12:01:00Z, exit code 137, 1 restarts)"
     )
     # No timestamp: assume the worst.
     assert _oom_killed_since([pod("256Mi", "OOMKilled")], "demo-app", new, since)

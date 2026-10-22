@@ -266,8 +266,9 @@ measure() {
 	echo "local-kind: baseline, no fault: working set $(promql_mib "max($working_set)")"
 	trap measure_cleanup EXIT
 	$kind_compose stop worker
-	sync_demo_app --state-values-set demoFault=oom
-	kc -n demo set resources deployment/demo-app -c demo-app --limits=memory=512Mi
+	# Through Helm, not kubectl: Helm 4 applies server-side, and a field another manager changed
+	# (kubectl set resources) would make the sync that puts it back fail with a conflict.
+	sync_demo_app --state-values-set demoFault=oom --state-values-set demoMemoryLimit=512Mi
 	kc -n demo rollout status deployment/demo-app --timeout=3m
 	echo "local-kind: oom fault on, limit 512Mi; sampling for $measure_minutes minutes"
 	for minute in $(seq 1 "$measure_minutes"); do
@@ -289,10 +290,19 @@ rss='container_memory_rss{namespace="demo",container="demo-app"}'
 report_cache='demo_app_report_cache_bytes{namespace="demo"}'
 
 measure_cleanup() {
+	local rc=$? failed=""
 	trap - EXIT
+	# Each step even if the one before fails: the worker must never stay stopped.
+	set +e
 	echo "local-kind: putting it back: fault off (128Mi limit), worker started"
-	sync_demo_app >/dev/null
-	$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind start worker
+	sync_demo_app >/dev/null || failed="the demo-app sync (\`make local-fault FAULT=off\`)"
+	$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind \
+		start worker || failed="${failed:+$failed and }starting the worker"
+	if [ -n "$failed" ]; then
+		echo "local-kind: couldn't put everything back: $failed failed; rerun it by hand" >&2
+		exit 1
+	fi
+	exit "$rc"
 }
 
 # An instant PromQL query through the API server's service proxy (no port-forward), in MiB.

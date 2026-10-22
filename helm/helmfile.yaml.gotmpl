@@ -43,6 +43,11 @@ exports this; anything else running helmfile must too. */}}
 {{- if not (has $fault (list "" "oom" "badImage" "badProbe")) }}
 {{- fail (printf "demoFault must be empty, oom, badImage, or badProbe, not %q" $fault) }}
 {{- end }}
+{{- /* demo-app's memory limit for one sync, through Helm (make local-measure: 512Mi). Empty: the chart's. */}}
+{{- $memoryLimit := .Values.demoMemoryLimit | default "" }}
+{{- if and $memoryLimit (not (regexMatch "^[0-9]+Mi$" $memoryLimit)) }}
+{{- fail (printf "demoMemoryLimit must be empty or like 512Mi, not %q" $memoryLimit) }}
+{{- end }}
 {{- if kindIs "string" $cidrs }}{{ $cidrs = splitList "," $cidrs | compact }}{{ end }}
 
 repositories:
@@ -160,6 +165,11 @@ releases:
           oom: {{ eq $fault "oom" }}
           badImage: {{ eq $fault "badImage" }}
           badProbe: {{ eq $fault "badProbe" }}
+        {{- if $memoryLimit }}
+        resources:
+          limits:
+            memory: {{ $memoryLimit }}
+        {{- end }}
 
   - name: consoletrack
     namespace: consoletrack

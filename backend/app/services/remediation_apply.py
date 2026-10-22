@@ -486,7 +486,8 @@ def _rolled_out(deployment: dict[str, Any], generation: int) -> bool:
 def _oom_killed_since(
     pods: list[dict[str, Any]], container: str, limit: int, since: datetime
 ) -> str | None:
-    """A pod running the new limit whose container was OOMKilled after the patch."""
+    """A pod running the new limit whose container was OOMKilled after the patch: its name and
+    what the kubelet reported, so a failed verify says which kill it saw (#79)."""
     for pod in pods:
         if not _runs_limit(pod, container, limit):
             continue
@@ -499,7 +500,12 @@ def _oom_killed_since(
                     continue
                 finished = _timestamp(terminated.get("finishedAt"))
                 if finished is None or finished >= since:
-                    return (pod.get("metadata") or {}).get("name", "?")
+                    name = (pod.get("metadata") or {}).get("name", "?")
+                    when = terminated.get("finishedAt") or "an unknown time"
+                    return (
+                        f"{name} (killed at {when}, exit code {terminated.get('exitCode', '?')},"
+                        f" {status.get('restartCount', 0)} restarts)"
+                    )
     return None
 
 

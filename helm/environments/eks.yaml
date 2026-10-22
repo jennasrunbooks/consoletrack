@@ -31,6 +31,8 @@ imageTag: ""
 
 # A demo-app fault (empty, oom, badImage, badProbe), set per run: --state-values-set demoFault=oom.
 demoFault: ""
+# demo-app's memory limit for one sync (make local-measure sets 512Mi); empty: the chart's.
+demoMemoryLimit: ""
 
 # aws-mcp ships with #9. Until it has an image, don't deploy it or point the worker at it; set
 # true then (it's also the only place `make images` needs its Dockerfile to exist).

@@ -228,6 +228,12 @@ case " $* " in
 esac
 """
 RECORDER = '#!/usr/bin/env bash\necho "$(basename "$0") $*" >> "$CALLS"\n'
+# helmfile: records its calls; with FAIL_SECOND_SYNC set, the second sync (the restore) fails.
+FAKE_HELMFILE = (
+    RECORDER
+    + 'n=$(grep -c "^helmfile " "$CALLS")\n'
+    + '[ -n "${FAIL_SECOND_SYNC:-}" ] && [ "$n" -ge 2 ] && exit 1\nexit 0\n'
+)
 
 
 def run_measure(
@@ -237,7 +243,7 @@ def run_measure(
     bin_dir.mkdir()
     for name, body in (
         ("kubectl", MEASURE_KUBECTL),
-        ("helmfile", RECORDER),
+        ("helmfile", FAKE_HELMFILE),
         ("docker", RECORDER),
     ):
         (bin_dir / name).write_text(body)
@@ -278,10 +284,9 @@ def test_measure_samples_then_puts_everything_back(tmp_path: Path) -> None:
     ]
     assert "stop worker" in order[0]
     assert order[1].startswith("helmfile ") and "demoFault=oom" in order[1]
-    assert (
-        "set resources deployment/demo-app -c demo-app --limits=memory=512Mi"
-        in order[2]
-    )
+    # The limit goes through Helm too: a kubectl change would conflict with the restoring sync.
+    assert "--state-values-set demoMemoryLimit=512Mi" in order[1]
+    assert not any(" set resources " in c for c in calls)
     assert order[-2].startswith("helmfile ") and "demoFault" not in order[-2]
     assert "start worker" in order[-1]
     # The queries go through the API server's proxy to Prometheus, URL-encoded.
@@ -312,6 +317,18 @@ def test_measure_puts_everything_back_when_it_fails(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert calls[-2].startswith("helmfile ") and "demoFault" not in calls[-2]
     assert "start worker" in calls[-1]
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_starts_the_worker_even_if_the_restoring_sync_fails(
+    tmp_path: Path,
+) -> None:
+    """The first real run hit a Helm conflict while putting the fault back, and the exit trap
+    stopped there, leaving the worker stopped."""
+    result, calls = run_measure(tmp_path, FAIL_SECOND_SYNC="1")
+    assert result.returncode == 1
+    assert "start worker" in calls[-1]
+    assert "couldn't put everything back: the demo-app sync" in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
