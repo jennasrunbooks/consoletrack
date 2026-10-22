@@ -15,6 +15,8 @@
 #                                   turn one demo-app fault on, or all off (`make local-fault`)
 #   scripts/local-kind.sh incidents the incidents, with the agent's root cause and proposal, from
 #                                   the local API (`make local-incidents`)
+#   scripts/local-kind.sh measure   demo-app's memory under the OOM fault with a 512Mi limit
+#                                   (`make local-measure`, #79)
 #
 # Only kube-prometheus-stack and demo-app are installed. Compose provides Postgres (so no
 # CloudNativePG), the backend and dashboard (so no consoletrack release, Gateway API CRDs, or
@@ -235,14 +237,71 @@ fault() {
 	*) die "usage: make local-fault FAULT=oom|badImage|badProbe|off" ;;
 	esac
 	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-fault\` (HELM_DRIVER=configmap)"
-	# ${args[@]+...}: an empty array under set -u fails in macOS's bash 3.2.
-	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
-		-l name=demo-app sync ${args[@]+"${args[@]}"}
+	sync_demo_app ${args[@]+"${args[@]}"}
 	if [ "$1" = off ]; then
 		echo "local-kind: fault off; the alert resolves and its incident follows in about 3 minutes"
 	else
 		echo "local-kind: $1 on; expect an incident in about 4 minutes (make local-incidents)"
 	fi
+}
+
+sync_demo_app() {
+	# ${@+...}: an empty array under set -u fails in macOS's bash 3.2.
+	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
+		-l name=demo-app sync ${@+"$@"}
+}
+
+# demo-app's memory under the OOM fault, with the limit raised so it never OOMs (#79): its
+# working set (what the kernel's OOM killer and the container limit count), RSS, and the report
+# cache's own gauge, once a minute and as peaks over the last 5 minutes. The worker is stopped
+# meanwhile (no triage, no auto fix); on exit, even an interrupted one, the fault goes off, which
+# also puts the 128Mi limit back, and the worker starts again.
+measure() {
+	local minute kind_compose
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-measure\` (HELM_DRIVER=configmap)"
+	for tool in curl jq; do
+		command -v "$tool" >/dev/null || die "$tool is not installed"
+	done
+	kind_compose="$compose -f $repo_root/docker-compose.yaml -f $repo_root/compose/kind.yaml --profile kind"
+	echo "local-kind: baseline, no fault: working set $(promql_mib "max($working_set)")"
+	trap measure_cleanup EXIT
+	$kind_compose stop worker
+	sync_demo_app --state-values-set demoFault=oom
+	kc -n demo set resources deployment/demo-app -c demo-app --limits=memory=512Mi
+	kc -n demo rollout status deployment/demo-app --timeout=3m
+	echo "local-kind: oom fault on, limit 512Mi; sampling for $measure_minutes minutes"
+	for minute in $(seq 1 "$measure_minutes"); do
+		sleep "$measure_interval"
+		echo "local-kind: minute $minute: working set $(promql_mib "max($working_set)")," \
+			"RSS $(promql_mib "max($rss)"), report cache $(promql_mib "max($report_cache)")"
+	done
+	echo "local-kind: peaks over the last 5 minutes:"
+	echo "  working set  $(promql_mib "max(max_over_time(${working_set}[5m]))")"
+	echo "  RSS          $(promql_mib "max(max_over_time(${rss}[5m]))")"
+	echo "  report cache $(promql_mib "max(max_over_time(${report_cache}[5m]))")"
+}
+
+measure_minutes=${MEASURE_MINUTES:-7}
+measure_interval=${MEASURE_INTERVAL:-60}
+# Series, wrapped as max(series) now or max(max_over_time(series[5m])) for the peaks.
+working_set='container_memory_working_set_bytes{namespace="demo",container="demo-app"}'
+rss='container_memory_rss{namespace="demo",container="demo-app"}'
+report_cache='demo_app_report_cache_bytes{namespace="demo"}'
+
+measure_cleanup() {
+	trap - EXIT
+	echo "local-kind: putting it back: fault off (128Mi limit), worker started"
+	sync_demo_app >/dev/null
+	$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind start worker
+}
+
+# An instant PromQL query through the API server's service proxy (no port-forward), in MiB.
+promql_mib() {
+	local query
+	query=$(jq -rn --arg q "$1" '$q | @uri')
+	kc get --raw "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query?query=$query" |
+		jq -r '.data.result[0].value[1] // null
+			| if . == null then "no data" else "\(tonumber / 1048576 | floor) MiB" end'
 }
 
 # Until the dashboard's Incidents page lands: log in as admin with the generated local password
@@ -281,5 +340,6 @@ cluster) cluster_up ;;
 alerts) alerts ;;
 fault) fault "${2:-}" ;;
 incidents) incidents ;;
-*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents" ;;
+measure) measure ;;
+*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents|measure" ;;
 esac

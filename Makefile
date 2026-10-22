@@ -161,7 +161,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -574,6 +574,9 @@ local-fault: ## Turn a demo-app fault on in kind (FAULT=oom|badImage|badProbe), 
 
 local-incidents: ## Local incidents with the agent's root cause and proposal (until the dashboard's Incidents page)
 	scripts/local-kind.sh incidents
+
+local-measure: ## demo-app's memory under the OOM fault with the limit at 512Mi: per minute, then 5-minute peaks (~8 min; MEASURE_MINUTES)
+	scripts/local-kind.sh measure
 
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
 	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(LOCAL_CLUSTER); then \

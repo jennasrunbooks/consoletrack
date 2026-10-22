@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -212,3 +213,109 @@ def test_alerts_check_fails_when_alertmanager_cant_reach_the_backend(
         "Alertmanager can't reach http://consoletrack-backend:8000 (exit 1)"
         in result.stderr
     )
+
+
+# --- `scripts/local-kind.sh measure` (make local-measure, #79) ---------------------------------
+
+MEASURE_KUBECTL = """#!/usr/bin/env bash
+echo "kubectl $*" >> "$CALLS"
+case " $* " in
+*" get --raw "*)
+	# 150 MiB for every query, or nothing for the cache gauge when NO_CACHE is set.
+	case "$*" in *demo_app_report_cache_bytes*) [ -n "${NO_CACHE:-}" ] && { echo '{"data":{"result":[]}}'; exit 0; } ;; esac
+	echo '{"data":{"result":[{"value":[0,"157286400"]}]}}' ;;
+*" rollout status "*) [ -z "${FAIL_ROLLOUT:-}" ] || exit 1 ;;
+esac
+"""
+RECORDER = '#!/usr/bin/env bash\necho "$(basename "$0") $*" >> "$CALLS"\n'
+
+
+def run_measure(
+    tmp_path: Path, **env: str
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (
+        ("kubectl", MEASURE_KUBECTL),
+        ("helmfile", RECORDER),
+        ("docker", RECORDER),
+    ):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    calls = tmp_path / "calls"
+    calls.write_text("")
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts/local-kind.sh"), "measure"],
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "CALLS": str(calls),
+            "HELM_DRIVER": "configmap",
+            "MEASURE_MINUTES": "2",
+            "MEASURE_INTERVAL": "0",
+            **env,
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,  # the tests assert the exit code
+    )
+    return result, calls.read_text().splitlines()
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_samples_then_puts_everything_back(tmp_path: Path) -> None:
+    result, calls = run_measure(tmp_path)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "baseline, no fault: working set 150 MiB" in out
+    assert "minute 2: working set 150 MiB, RSS 150 MiB, report cache 150 MiB" in out
+    assert "working set  150 MiB" in out and "report cache 150 MiB" in out
+    # In order: worker stopped, fault on, limit raised ... fault off, worker started.
+    order = [
+        c
+        for c in calls
+        if not c.startswith("kubectl --context kind-consoletrack get --raw")
+    ]
+    assert "stop worker" in order[0]
+    assert order[1].startswith("helmfile ") and "demoFault=oom" in order[1]
+    assert (
+        "set resources deployment/demo-app -c demo-app --limits=memory=512Mi"
+        in order[2]
+    )
+    assert order[-2].startswith("helmfile ") and "demoFault" not in order[-2]
+    assert "start worker" in order[-1]
+    # The queries go through the API server's proxy to Prometheus, URL-encoded.
+    raw = [c for c in calls if " get --raw " in c]
+    assert all(
+        "/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query?query=" in c
+        for c in raw
+    )
+    queries = [urllib.parse.unquote(c.split("query=", 1)[1]) for c in raw]
+    assert (
+        'max(container_memory_working_set_bytes{namespace="demo",container="demo-app"})'
+        in queries
+    )
+    # A peak is max over pods of each pod's max over time: valid PromQL, not max(...)[5m].
+    assert (
+        'max(max_over_time(container_memory_working_set_bytes{namespace="demo",container="demo-app"}[5m]))'
+        in queries
+    )
+    assert (
+        'max(max_over_time(demo_app_report_cache_bytes{namespace="demo"}[5m]))'
+        in queries
+    )
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_puts_everything_back_when_it_fails(tmp_path: Path) -> None:
+    result, calls = run_measure(tmp_path, FAIL_ROLLOUT="1")
+    assert result.returncode != 0
+    assert calls[-2].startswith("helmfile ") and "demoFault" not in calls[-2]
+    assert "start worker" in calls[-1]
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_says_when_a_series_is_missing(tmp_path: Path) -> None:
+    result, _ = run_measure(tmp_path, NO_CACHE="1")
+    assert result.returncode == 0, result.stderr
+    assert "report cache no data" in result.stdout
