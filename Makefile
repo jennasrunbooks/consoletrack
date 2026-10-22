@@ -418,9 +418,12 @@ up: env-check-up ## Create the platform, add-ons, and app; safe to rerun (run ma
 	else echo "make $@: demo-app/us-east-1 skipped (no Terraform yet)"; fi
 	$(MAKE) --no-print-directory kubeconfig
 	$(MAKE) --no-print-directory addons
-	$(MAKE) --no-print-directory create-secrets
+	@umask 077; CREATE_SECRETS_BANNER_FILE="$(LOGIN_BANNER)" $(MAKE) --no-print-directory create-secrets
 	$(MAKE) --no-print-directory deploy
-	@echo "make $@: done. Run make open for the dashboard (admin password: printed above on first run)."
+	@# The Helmfile output buries the admin login, so print it again last. It stays in the file
+	@# if a later step fails, and the next make up prints it from there.
+	@if [ -f "$(LOGIN_BANNER)" ]; then cat "$(LOGIN_BANNER)"; rm -f "$(LOGIN_BANNER)"; fi
+	@echo "make $@: done. Run make open for the dashboard."
 	@echo "make $@: next: make gh-deploy-config (so deploy.yaml can deploy to this cluster)"
 
 images: ## Build every image for linux/arm64 and push to GHCR as IMAGE_TAG (humans; run before the first make up)
@@ -460,6 +463,8 @@ deploy: env-check-tf helm-values ## helmfile -l tier=app apply at IMAGE_TAG: the
 	$(HELMFILE_EKS) -l tier=app --state-values-set imageTag=$(IMAGE_TAG) apply
 
 OPEN_PORT ?= 8080
+# Where `make up` keeps the one-time admin login until it prints it at the end (mode 0600, removed after).
+LOGIN_BANNER = $(or $(TMPDIR),/tmp)/consoletrack-admin-login.$(or $(USER),user)
 open: ## Port-forward the dashboard to 127.0.0.1:8080 and print the URL (EXPOSURE=alb prints the HTTPS URL)
 ifeq ($(EXPOSURE),alb)
 	@echo "make $@: EXPOSURE=alb: the dashboard is at https://$(DOMAIN) (from ALLOWED_CIDRS only)"

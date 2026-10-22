@@ -16,6 +16,7 @@
 #                         generated and printed once, on first creation only.
 #   VIEWER_PASSWORD_HASH  optional; empty means the viewer can't log in (.env.example)
 #   KUBE_CONTEXT          the kubectl context; never the current one (default consoletrack-eks)
+#   CREATE_SECRETS_BANNER_FILE  also write the login banner to this file (make up reprints it)
 #   CREATE_SECRETS_HASH   command that hashes the password on stdin (default: make hash-password)
 set -euo pipefail
 
@@ -104,11 +105,26 @@ fi
 
 # --- the one-time password ----------------------------------------------------------------------
 if [[ -n "$admin_password" ]]; then
-	echo
-	echo "create-secrets: the admin password is shown once and stored only as a hash:"
-	echo
-	echo "  admin / $admin_password"
-	echo
-	echo "To choose your own, set ADMIN_PASSWORD_HASH (make hash-password) before the first run,"
-	echo "or delete the consoletrack-auth Secret and run make create-secrets again."
+	banner=$(
+		cat <<BANNER
+
+================================================================
+  CONSOLETRACK ADMIN LOGIN (shown once; only its hash is stored)
+
+      username:  admin
+      password:  $admin_password
+
+  Save it now. To choose your own, set ADMIN_PASSWORD_HASH
+  (make hash-password) before the first run, or delete the
+  consoletrack-auth Secret and run make create-secrets again
+  (then: kubectl rollout restart deploy/backend -n consoletrack).
+================================================================
+BANNER
+	)
+	echo "$banner"
+	# `make up` points this at a private file and prints it again as its last output, because
+	# the Helmfile output after this step buries it.
+	if [[ -n "${CREATE_SECRETS_BANNER_FILE:-}" ]]; then
+		(umask 077 && echo "$banner" >"$CREATE_SECRETS_BANNER_FILE")
+	fi
 fi

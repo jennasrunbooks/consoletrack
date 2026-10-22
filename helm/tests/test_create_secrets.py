@@ -86,7 +86,8 @@ def test_creates_each_secret_and_prints_the_admin_password_once(stub: Path) -> N
         assert (stub / "state" / name).exists()
     password = (stub / "hashed").read_text().strip()
     assert len(password) == 24
-    assert f"admin / {password}" in first.stdout
+    assert f"password:  {password}" in first.stdout
+    assert "username:  admin" in first.stdout
 
     # Values only on stdin: not one argument of any kubectl call carries them.
     argv = (stub / "argv").read_text()
@@ -120,7 +121,7 @@ def test_rerun_creates_nothing_and_prints_no_password(stub: Path) -> None:
     (stub / "hashed").unlink()
     again = run(stub)
     assert again.returncode == 0, again.stderr
-    assert "admin /" not in again.stdout
+    assert "password:" not in again.stdout
     assert not (stub / "hashed").exists()
     assert " create secret " not in (stub / "argv").read_text()
     assert again.stdout.count("left as is") == 3
@@ -131,7 +132,7 @@ def test_own_hashes_are_used_and_no_password_is_generated(stub: Path) -> None:
     viewer = "$argon2id$v=19$m=8,t=1,p=1$own$viewer"
     result = run(stub, ADMIN_PASSWORD_HASH=admin, VIEWER_PASSWORD_HASH=viewer)
     assert result.returncode == 0, result.stderr
-    assert "admin /" not in result.stdout
+    assert "password:" not in result.stdout
     assert not (stub / "hashed").exists()
     auth = (stub / "stdin-consoletrack-auth").read_text()
     assert f"admin-password-hash={admin}\nviewer-password-hash={viewer}\n" in auth
@@ -149,3 +150,12 @@ def test_missing_api_key_stops_before_creating_anything(stub: Path) -> None:
     assert result.returncode == 1
     assert "ANTHROPIC_API_KEY" in result.stderr
     assert not (stub / "state" / "consoletrack-api-key").exists()
+
+
+def test_the_banner_is_also_written_to_a_private_file(stub: Path) -> None:
+    banner = stub / "banner"
+    result = run(stub, CREATE_SECRETS_BANNER_FILE=str(banner))
+    assert result.returncode == 0, result.stderr
+    password = (stub / "hashed").read_text().strip()
+    assert password in banner.read_text()
+    assert stat.S_IMODE(banner.stat().st_mode) == 0o600
