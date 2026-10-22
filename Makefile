@@ -138,6 +138,10 @@ ROOT ?=
 TF_DIR = terraform/$(ROOT)
 # The backend's bucket and region come from .env; each root's backend.tf sets its own key.
 TF_BACKEND_ARGS = -backend-config=bucket=ct-tfstate-$(NAME_SUFFIX) -backend-config=region=$(AWS_REGION)
+# TARGET=<address> limits tf-apply and tf-destroy to one resource (terraform -target), e.g. to remove
+# a node group before its replacement is created. Single-quoted, so index brackets and quotes survive.
+TARGET ?=
+TARGET_ARG = $(if $(strip $(TARGET)),-target='$(TARGET)')
 check_root = @case " $(TF_ROOTS) " in *" terraform/$(ROOT) "*) ;; \
 	*) echo "make $@: set ROOT to one of: $(patsubst terraform/%,%,$(TF_ROOTS))" >&2; exit 1 ;; esac
 # Applies are for a human at a terminal: refuse in CI and without a TTY. Terraform then shows
@@ -379,15 +383,15 @@ tf-plan: env-check-tf ## terraform plan ROOT=… with TF_VAR_* from .env (writes
 	$(check_root)
 	$(TERRAFORM) -chdir=$(TF_DIR) plan -input=false -out=tfplan
 
-tf-apply: env-check-tf ## terraform apply ROOT=… after Terraform's own yes prompt (humans only)
+tf-apply: env-check-tf ## terraform apply ROOT=… [TARGET=<address>] after Terraform's own yes prompt (humans only)
 	$(check_root)
 	$(check_human)
-	$(TERRAFORM) -chdir=$(TF_DIR) apply
+	$(TERRAFORM) -chdir=$(TF_DIR) apply $(TARGET_ARG)
 
-tf-destroy: env-check-tf ## terraform destroy ROOT=… after Terraform's own yes prompt (humans only)
+tf-destroy: env-check-tf ## terraform destroy ROOT=… [TARGET=<address>] after Terraform's own yes prompt (humans only)
 	$(check_root)
 	$(check_human)
-	$(TERRAFORM) -chdir=$(TF_DIR) destroy
+	$(TERRAFORM) -chdir=$(TF_DIR) destroy $(TARGET_ARG)
 
 tf-output: env-check-tf ## terraform output ROOT=<account>/<scope> [OUTPUT=<name>] (read-only; sensitive values stay hidden)
 	$(check_root)
