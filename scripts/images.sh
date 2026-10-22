@@ -38,6 +38,13 @@ if [[ "${IMAGES_SKIP_LOGIN:-}" != 1 ]]; then
 	if [[ "$user" == *-agent ]]; then
 		die "gh is authenticated as $user; unset GH_TOKEN and run this as yourself"
 	fi
+	# Fail now, not after the first build: a push without write:packages is denied at the very end.
+	# Classic tokens list their scopes in X-OAuth-Scopes; fine-grained ones send none, so skip then.
+	scopes=$(gh api -i user 2>/dev/null | tr -d '\r' | sed -n 's/^[Xx]-[Oo][Aa]uth-[Ss]copes: //p')
+	if [[ -n "$scopes" && ",${scopes// /}," != *"write:packages"* ]]; then
+		die "the gh token lacks write:packages (has: $scopes). Run: gh auth refresh -h github.com -s write:packages
+(authorize it for the org if SSO asks), or docker login ghcr.io with a PAT and set IMAGES_SKIP_LOGIN=1"
+	fi
 	gh auth token | "$docker" login ghcr.io -u "$user" --password-stdin >/dev/null
 	echo "images: logged in to ghcr.io as $user"
 fi
