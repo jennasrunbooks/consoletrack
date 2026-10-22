@@ -56,7 +56,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "noValue": "0"
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -90,15 +99,28 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "noValue": "0"
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
-      "options": {}
+      "options": {
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none"
+      }
     },
     {
       "id": 4,
-      "type": "bargauge",
+      "type": "stat",
       "title": "Remediations by mode and result",
       "description": "Finished remediations (ct_remediations_total).",
       "datasource": {
@@ -124,13 +146,23 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "noValue": "0"
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
       "options": {
-        "orientation": "horizontal",
-        "displayMode": "basic"
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none"
       }
     },
     {
@@ -170,7 +202,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -203,7 +244,17 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
         "overrides": []
       },
       "options": {}
@@ -211,8 +262,8 @@
     {
       "id": 7,
       "type": "stat",
-      "title": "Time to resolve p50 / p95",
-      "description": "From the alert's start to its resolved notification (ct_time_to_resolve_seconds).",
+      "title": "Time to resolve avg / p50 / p95",
+      "description": "From the alert's start to its resolved notification (ct_time_to_resolve_seconds). The percentiles interpolate within histogram buckets; avg is exact.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -224,6 +275,15 @@
         "h": 5
       },
       "targets": [
+        {
+          "refId": "Z",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(ct_time_to_resolve_seconds_sum) / sum(ct_time_to_resolve_seconds_count)",
+          "legendFormat": "avg"
+        },
         {
           "refId": "A",
           "datasource": {
@@ -245,7 +305,16 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s"
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -326,7 +395,9 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
         },
         "overrides": []
       },
