@@ -138,6 +138,8 @@ ROOT ?=
 TF_DIR = terraform/$(ROOT)
 # The backend's bucket and region come from .env; each root's backend.tf sets its own key.
 TF_BACKEND_ARGS = -backend-config=bucket=ct-tfstate-$(NAME_SUFFIX) -backend-config=region=$(AWS_REGION)
+# The managed node group, destroyed first by `make down` (see there).
+NODE_GROUP_ADDR := module.eks.module.eks_managed_node_group["default"]
 # TARGET=<address> limits tf-apply and tf-destroy to one resource (terraform -target), e.g. to remove
 # a node group before its replacement is created. Single-quoted, so index brackets and quotes survive.
 TARGET ?=
@@ -159,7 +161,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
 	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
-	images kubeconfig tf-destroy \
+	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
 	local local-down local-fault local-incidents demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
@@ -473,6 +475,7 @@ else
 	kubectl --context $(KUBE_CONTEXT) -n consoletrack port-forward --address 127.0.0.1 svc/frontend $(OPEN_PORT):8080
 endif
 
+# Terraform asks for yes three times: demo-app (if present), the node group, then the rest.
 # The Helmfile half is scripts/down-cluster.sh: app, any Gateway, wait for the load balancers,
 # add-ons, then the PVCs. helm-values runs source=none: .env alone is enough to destroy, and the
 # Terraform outputs may already be gone.
@@ -488,7 +491,14 @@ down: env-check-aws ## Destroy the releases, wait for load balancers and ENIs, t
 		$(MAKE) --no-print-directory tf-init ROOT=demo-app/us-east-1 && \
 		$(MAKE) --no-print-directory tf-destroy ROOT=demo-app/us-east-1; \
 	else echo "make $@: demo-app/us-east-1 skipped (no Terraform yet)"; fi
-	$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1
+	@# Nodes first, while the VPC CNI's Pod Identity role still exists: if the role goes before the
+	@# nodes do, aws-node can't release its ENIs, and they block the node security group and the
+	@# subnets for good. Whatever still leaks is removed before the rest of the root.
+	$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1 TARGET='$(NODE_GROUP_ADDR)'
+	CLEAN_ENIS_WAIT=600 scripts/delete-leftover-enis.sh
+	@$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/us-east-1 || \
+		{ echo "make $@: the destroy failed. If a subnet or security group has a dependency, run make clean-enis" \
+			"(and make verify-clean to see what is left), then make down again" >&2; exit 1; }
 	@echo "make $@: done. consoletrack/global and the state bucket are kept; run make verify-clean."
 
 down-all: env-check-aws env-check-tf ## down, plus the global root and the state bucket, after a typed confirmation
@@ -501,6 +511,10 @@ down-all: env-check-aws env-check-tf ## down, plus the global root and the state
 	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global
 	$(MAKE) --no-print-directory tf-destroy ROOT=consoletrack/global
 	DELETE_STATE_BUCKET_CONFIRMED=1 scripts/delete-state-bucket.sh
+
+clean-enis: env-check-aws ## Delete the available aws-K8S-* network interfaces a destroyed node group left in the project VPC (humans only; make down runs it)
+	$(check_human)
+	scripts/delete-leftover-enis.sh
 
 verify-clean: env-check-aws ## List project=consoletrack load balancers, ENIs, EBS volumes, Elastic IPs, and NAT gateways; fail if any remain
 	$(check_human)
