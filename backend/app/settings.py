@@ -19,6 +19,16 @@ class IntakeMode(StrEnum):
     replay = "replay"
 
 
+class TelemetryExporter(StrEnum):
+    # Spans and metrics stay in the process; logs still go to stdout as JSON (unit tests, kind
+    # without the observability stack).
+    none = "none"
+    # OTLP/HTTP to OTEL_EXPORTER_OTLP_ENDPOINT, the OpenTelemetry Collector (docs/observability.md).
+    otlp = "otlp"
+    # Spans printed to stdout, for debugging.
+    console = "console"
+
+
 class Settings(BaseSettings):
     # The process environment holds plenty of unrelated variables (AWS_PROFILE, TF_VAR_*, ...).
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
@@ -87,6 +97,11 @@ class Settings(BaseSettings):
     remediation_apply_enabled: bool = False
     remediation_poll_seconds: float = 5
     prometheus_url: str | None = None
+
+    # Telemetry (app/telemetry.py, docs/observability.md). The OTLP endpoint is the SDK's own
+    # OTEL_EXPORTER_OTLP_ENDPOINT, read by the exporters, not by this class.
+    telemetry_exporter: TelemetryExporter = TelemetryExporter.none
+    log_level: str = "INFO"
 
     @property
     def allowed_namespaces(self) -> frozenset[str]:

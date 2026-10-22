@@ -39,6 +39,8 @@ class TriageClaim:
     opened_at: datetime
     # The re-run's model override; None = TRIAGE_MODEL.
     model: str | None
+    # `incident.open`'s span, which the triage run continues (app/telemetry.py).
+    traceparent: str | None = None
 
 
 def request_triage(row: IncidentRow, *, now: datetime, model: str | None = None) -> None:
@@ -86,6 +88,7 @@ def claim_next(uow: UnitOfWork, *, now: datetime, lease: timedelta) -> TriageCla
         annotations=dict(row.annotations),
         opened_at=row.opened_at,
         model=row.triage_model,
+        traceparent=row.traceparent,
     )
 
 

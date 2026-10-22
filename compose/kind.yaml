@@ -34,3 +34,10 @@ services:
       AUTOFIX_ENABLED: ${AUTOFIX_ENABLED:-true}
     volumes:
       - ./kind-remediation-policies.yaml:/etc/consoletrack/remediation/policies.yaml:ro
+  # Metrics to kind's Prometheus by remote write (observability/otel-collector/kind.yaml), and
+  # Grafana's Prometheus datasource, both at the NodePort on kind's network.
+  otel-collector:
+    command: ["--config=/etc/otelcol/config.yaml", "--config=/etc/otelcol/kind.yaml"]
+    networks: [default, kind]
+  grafana:
+    networks: [default, kind]

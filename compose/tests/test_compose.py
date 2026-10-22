@@ -6,6 +6,7 @@ the file itself with `docker compose config` wherever Docker is installed.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -22,6 +23,10 @@ SECRET_NAME = re.compile(r"SECRET|TOKEN|PASSWORD|API_KEY|HASH")
 # The only literal credential: Postgres inside Compose, also in .env.example's DATABASE_URL.
 LOCAL_ONLY = {("postgres", "POSTGRES_PASSWORD")}
 ACCOUNT_ID = re.compile(r"\b\d{12}\b")
+OBSERVABILITY = COMPOSE.parent / "observability"
+# What compose/kind.yaml adds for the observability stack: kind's network, so the collector and
+# Grafana reach Prometheus's NodePort, and the collector's metrics config.
+OBSERVABILITY_ON_KIND = {"otel-collector", "grafana"}
 
 
 @pytest.mark.parametrize("name", sorted(SERVICES))
@@ -59,7 +64,7 @@ def test_kind_override_adds_only_networks_and_the_remediation_wiring() -> None:
     """compose/kind.yaml publishes nothing. It joins the backend to kind's network and gives the
     backend and worker the remediation settings and the files scripts/local-kind.sh writes,
     read-only: the remediator kubeconfig (backend only) and the policies."""
-    assert set(KIND_SERVICES) == {"backend", "worker"}
+    assert set(KIND_SERVICES) == {"backend", "worker", *OBSERVABILITY_ON_KIND}
     backend, worker = KIND_SERVICES["backend"], KIND_SERVICES["worker"]
     assert set(backend) == {"networks", "environment", "volumes"}
     assert set(worker) == {"environment", "volumes"}
@@ -95,3 +100,103 @@ def test_no_account_ids() -> None:
     for path in [COMPOSE, *compose_dir.glob("*.conf"), *compose_dir.glob("*.yaml")]:
         found = set(ACCOUNT_ID.findall(path.read_text())) - {"123456789012"}
         assert not found, path
+
+
+def test_kind_override_sends_metrics_to_kinds_prometheus() -> None:
+    collector, grafana = KIND_SERVICES["otel-collector"], KIND_SERVICES["grafana"]
+    assert set(collector) == {"command", "networks"}
+    assert collector["command"] == [
+        "--config=/etc/otelcol/config.yaml",
+        "--config=/etc/otelcol/kind.yaml",
+    ]
+    assert grafana == {"networks": ["default", "kind"]}
+    assert collector["networks"] == ["default", "kind"]
+    base = yaml.safe_load((OBSERVABILITY / "otel-collector/config.yaml").read_text())
+    kind = yaml.safe_load((OBSERVABILITY / "otel-collector/kind.yaml").read_text())
+    # Plain Compose has no Prometheus: metrics stop at the collector.
+    assert base["service"]["pipelines"]["metrics"]["exporters"] == ["debug"]
+    assert kind["service"]["pipelines"]["metrics"]["exporters"] == [
+        "prometheus_remote_write"
+    ]
+    remote_write = kind["exporters"]["prometheus_remote_write"]
+    assert (
+        remote_write["endpoint"]
+        == "http://consoletrack-control-plane:30090/api/v1/write"
+    )
+
+
+def test_observability_mounts_exist_read_only() -> None:
+    for name in ("otel-collector", "tempo", "loki", "grafana"):
+        for volume in SERVICES[name].get("volumes", []):
+            source, _target, *mode = volume.split(":")
+            if source.startswith("./"):
+                assert (COMPOSE.parent / source).exists(), (name, source)
+                assert mode == ["ro"], (name, volume)
+
+
+def test_apps_export_otlp_to_the_collector() -> None:
+    for name in ("backend", "worker", "k8s-mcp"):
+        env = SERVICES[name]["environment"]
+        assert env["TELEMETRY_EXPORTER"] == "${TELEMETRY_EXPORTER:-otlp}", name
+        assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://otel-collector:4318", name
+
+
+def test_grafana_never_uses_the_default_admin_password() -> None:
+    env = SERVICES["grafana"]["environment"]
+    assert "GF_SECURITY_ADMIN_PASSWORD" not in env
+    assert env["GF_AUTH_ANONYMOUS_ENABLED"] == "false"
+    # Unset GRAFANA_ADMIN_PASSWORD means a generated one, never Grafana's admin/admin default.
+    entrypoint = (OBSERVABILITY / "grafana/entrypoint.sh").read_text()
+    assert "/dev/urandom" in entrypoint
+    assert "export GF_SECURITY_ADMIN_PASSWORD" in entrypoint
+
+
+def test_the_incident_journey_dashboard_uses_the_provisioned_datasources() -> None:
+    dashboard = json.loads(
+        (OBSERVABILITY / "grafana/dashboards/incident-journey.json").read_text()
+    )
+    datasources = yaml.safe_load(
+        (
+            OBSERVABILITY / "grafana/provisioning/datasources/datasources.yaml"
+        ).read_text()
+    )["datasources"]
+    uids = {ds["uid"] for ds in datasources}
+    assert uids == {"prometheus", "tempo", "loki"}
+    for panel in dashboard["panels"]:
+        if panel["type"] != "row":
+            assert panel["datasource"]["uid"] in uids, panel["title"]
+    tempo = next(ds for ds in datasources if ds["uid"] == "tempo")
+    assert tempo["jsonData"]["tracesToLogsV2"]["datasourceUid"] == "loki"
+
+
+def _paths(node: object) -> list[str]:
+    """Every absolute path value in a config file."""
+    if isinstance(node, dict):
+        return [p for value in node.values() for p in _paths(value)]
+    if isinstance(node, list):
+        return [p for value in node for p in _paths(value)]
+    return [node] if isinstance(node, str) and node.startswith("/") else []
+
+
+@pytest.mark.parametrize(
+    ("name", "config", "default_root"),
+    [("tempo", "tempo/tempo.yaml", "/var/tempo"), ("loki", "loki/loki.yaml", "/tmp")],
+)
+def test_storage_is_writable_on_a_read_only_root(
+    name: str, config: str, default_root: str
+) -> None:
+    """Both run with a read-only root filesystem: every path they write, and the directory their
+    unconfigured modules default to, must be on a tmpfs (Tempo 3's live-store failed to start
+    writing /var/tempo/live-store)."""
+    service = SERVICES[name]
+    assert service["read_only"] is True
+    mounts = dict(f"{entry}:".split(":")[:2] for entry in service["tmpfs"])
+    tmpfs = set(mounts)
+    assert default_root in tmpfs, name
+    # They run as uid 10001; a tmpfs other than /tmp is root's 0755 unless the mode says so.
+    for mount, options in mounts.items():
+        assert mount == "/tmp" or "mode=1777" in options.split(","), (name, mount)
+    for path in _paths(yaml.safe_load((OBSERVABILITY / config).read_text())):
+        assert any(path == mount or path.startswith(f"{mount}/") for mount in tmpfs), (
+            path
+        )
