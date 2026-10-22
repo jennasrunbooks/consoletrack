@@ -379,3 +379,17 @@ def test_exported_exceptions_keep_only_their_type(recorded: Recorded) -> None:
     assert event.attributes["exception.type"] == "RuntimeError"
     assert span.status.description is None
     assert span_problems([span]) == []
+
+
+def test_http_client_request_urls_are_not_logged() -> None:
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    try:
+        telemetry.configure_logging("INFO")
+        for name in ("httpx", "httpx2"):
+            assert not logging.getLogger(name).isEnabledFor(logging.INFO), name
+            assert logging.getLogger(name).isEnabledFor(logging.WARNING), name
+    finally:
+        root.handlers, root.level = handlers, level
+        for name in ("httpx", "httpx2"):
+            logging.getLogger(name).setLevel(logging.NOTSET)

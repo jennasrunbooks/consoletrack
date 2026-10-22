@@ -55,7 +55,9 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "noValue": "0"
+        },
         "overrides": []
       },
       "options": {}
@@ -87,7 +89,9 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "noValue": "0"
+        },
         "overrides": []
       },
       "options": {}
@@ -119,7 +123,9 @@
         }
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "noValue": "0"
+        },
         "overrides": []
       },
       "options": {
@@ -296,7 +302,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "5xx ratio",
-      "description": "Share of API responses that were 5xx.",
+      "description": "Share of API responses that were 5xx; 0 when there were none.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -314,7 +320,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(ct_http_requests_total{status_code=~\"5..\"}[2m])) / sum(rate(ct_http_requests_total[2m]))",
+          "expr": "(sum(rate(ct_http_requests_total{status_code=~\"5..\"}[2m])) or vector(0)) / sum(rate(ct_http_requests_total[2m]))",
           "legendFormat": "5xx"
         }
       ],

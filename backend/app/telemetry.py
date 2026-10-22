@@ -375,6 +375,8 @@ class HttpMetrics:
 # Loggers whose records never go through the OTel log pipeline: the exporters' own HTTP stack
 # would otherwise log about exporting its logs.
 _NOT_EXPORTED = ("opentelemetry", "urllib3", "requests")
+# HTTP clients (the Anthropic SDK, the MCP client, Prometheus queries): warnings only.
+_QUIET = ("httpx", "httpx2")
 _SEVERITY = (
     (logging.CRITICAL, SeverityNumber.FATAL),
     (logging.ERROR, SeverityNumber.ERROR),
@@ -454,3 +456,6 @@ def configure_logging(level: str, logger_provider: LoggerProvider | None = None)
     root = logging.getLogger()
     root.handlers = handlers
     root.setLevel(level.upper())
+    # The HTTP clients log every request's full URL, query string included, at INFO.
+    for name in _QUIET:
+        logging.getLogger(name).setLevel(logging.WARNING)
