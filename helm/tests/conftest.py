@@ -27,6 +27,18 @@ CONFIGS = ("eks", "eks-alb", "local")
 APP_CHARTS = ("consoletrack", "demo-app")
 OUR_CHARTS = (*APP_CHARTS, "cluster-defaults")
 
+# Mirrors helm/environments/eks.yaml: no aws-mcp Deployment, and the worker isn't pointed at it,
+# until it ships (#9). The tests below follow this one value.
+AWS_MCP_ENABLED = bool(
+    yaml.safe_load((HELM_DIR / "environments" / "eks.yaml").read_text())[
+        "awsMcpEnabled"
+    ]
+)
+_AWS_MCP = {
+    "awsMcp": {"enabled": AWS_MCP_ENABLED},
+    "worker": {"awsMcp": AWS_MCP_ENABLED},
+}
+
 _EKS_AWS = {
     "nameSuffix": "test",
     "clusterName": "ct-eks-use1-test",
@@ -46,8 +58,8 @@ _LOCAL = {
     "target": "local",
     "image": {"tag": "local"},
     "app": {"intakeMode": "replay"},
-    "awsMcp": {"mode": "fixtures"},
-    "worker": {"awsMcp": False},
+    "awsMcp": {"mode": "fixtures", "enabled": AWS_MCP_ENABLED},
+    "worker": {"awsMcp": AWS_MCP_ENABLED},
     "postgres": {"storage": {"storageClass": "standard"}},
 }
 
@@ -60,7 +72,7 @@ _FALLBACK = {
             "demo-app",
             {"aws": {"bucket": "demo-app-data-use1-test"}},
         ),
-        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS}),
+        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS, **_AWS_MCP}),
         ("cluster-defaults", "kube-system", "cluster-defaults", {}),
     ],
     "eks-alb": [
@@ -70,7 +82,12 @@ _FALLBACK = {
             "demo-app",
             {"aws": {"bucket": "demo-app-data-use1-test"}},
         ),
-        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS, **_ALB}),
+        (
+            "consoletrack",
+            "consoletrack",
+            "consoletrack",
+            {"aws": _EKS_AWS, **_AWS_MCP, **_ALB},
+        ),
         (
             "cluster-defaults",
             "kube-system",
