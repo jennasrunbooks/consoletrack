@@ -444,9 +444,12 @@ create-secrets: env-check-aws ## Create the consoletrack-api-key, -auth, and -we
 	$(check_human)
 	scripts/create-secrets.sh
 
+# --skip-diff-on-install: helm-diff validates the rendered manifests against the cluster, which fails
+# for a chart whose CRDs it brings itself (kube-prometheus-stack: "no matches for kind Prometheus")
+# until it is installed. Releases that already exist are still diffed.
 addons: env-check-aws helm-values ## helmfile -l tier=addons apply: Gateway API CRDs and third-party charts (humans only)
 	$(check_human)
-	$(HELMFILE_EKS) -l tier=addons apply
+	$(HELMFILE_EKS) -l tier=addons apply --skip-diff-on-install
 
 # CI runs this too (deploy.yaml, role ct-gh-deploy-<suffix>), so no check_human and no AWS_PROFILE.
 deploy: env-check-tf helm-values ## helmfile -l tier=app apply at IMAGE_TAG: the consoletrack and demo-app releases
