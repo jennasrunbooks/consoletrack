@@ -20,7 +20,7 @@ datasources:
     url: http://tempo:3200
     editable: false
     jsonData:
-      # "Logs for this span": the Loki lines with this trace's ID, from any ConsoleTrack service.
+      # "Related logs" on a span: the Loki lines with this trace's ID, from any ConsoleTrack service.
       tracesToLogsV2:
         datasourceUid: loki
         spanStartTimeShift: -5m

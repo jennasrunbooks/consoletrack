@@ -106,11 +106,29 @@ The dashboard's journey panels (incidents opened and resolved, remediations, tri
 
 ## Opening the trace in Grafana
 
-1. `make local`, then `make local-fault FAULT=oom`. After about 4 minutes the incident opens, and the auto fix runs about 20 seconds later. Then `make local-fault FAULT=off`.
-2. Open http://localhost:3000 and log in as `admin` with the password `make local` printed. The **Incident journey** dashboard opens.
-3. In **Incident traces**, click the trace ID. The trace view shows `alert.receive` → `incident.open` → `triage.run` with its `mcp.call`s and k8s-mcp's `tools/call` spans → `remediation.gate` → `remediation.validate` / `apply` / `verify`, and, once the alert resolves, `alert.receive` → `incident.resolve`.
-4. On any span, **Logs for this span** opens the Loki lines with that trace ID. A log line's **Open trace** link goes back.
+1. `make local`, then `make local-fault FAULT=oom`. About 4 minutes later the incident opens; triage takes about 20 seconds, and the auto fix runs right after. Once verify passes, the alert resolves on its own.
+2. Open http://localhost:3000 and log in as `admin` with the password `make local` printed (or `docker compose exec -T grafana cat /var/lib/grafana/admin-password`). The **Incident journey** dashboard opens.
+3. In **Incident traces**, click the trace ID. The trace view shows `alert.receive` → `incident.open` → `triage.run` with its `mcp.call`s and k8s-mcp's `tools/call` spans → `remediation.gate` → `remediation.validate` / `apply` / `verify` and, once the alert resolves, `alert.receive` → `incident.resolve`. A span only appears once it ends, so reload the trace (**Run query**) after the incident resolves. Collapse the `mcp.call` rows (the arrows next to **Service & Operation**) to fit the whole journey on one screen.
+4. Click a span, e.g. `triage.run`, and then **Related logs**: Loki opens next to the trace with every line that carries the trace ID. A log line's **Open trace** link goes back.
 
-You can also search in **Explore → Tempo** with TraceQL, e.g. `{ name = "triage.run" && span.triage.escalated = true }`.
+You can also search in **Explore → Tempo** with TraceQL, e.g. `{ name = "alert.receive" && span.alert.status = "firing" }` or `{ name = "triage.run" && span.triage.escalated = true }`. Set the time range to cover the incident: Explore searches only that window.
 
-Screenshots of the trace, trace-to-logs, and the dashboard come from a Docker run (the devcontainer has no Docker); they're in the PR for #33.
+### Screenshots
+
+From a `make local` run with `FAULT=oom` on kind, where the auto fix succeeded (#33).
+
+The whole journey in one trace, with the tool calls collapsed. The apply loop's spans (`consoletrack-api`) continue the worker's trace from the remediation row, and `incident.resolve` arrives with the resolved notification about three minutes later:
+
+![The incident's trace from alert.receive to incident.resolve](screenshots/observability-trace-resolve.png)
+
+The triage expanded: each `mcp.call` with FastMCP's client span and k8s-mcp's server span below it, and the Anthropic SDK's `anthropic.messages.create` spans between them:
+
+![triage.run with its mcp.call spans reaching k8s-mcp](screenshots/observability-trace.png)
+
+**Related logs** on `triage.run`: Loki's lines for the trace, including the apply loop's. The span's attributes are only the allowlisted ones:
+
+![Trace to logs: triage.run and its Loki lines side by side](screenshots/observability-trace-to-logs.png)
+
+The **Incident journey** dashboard after that run:
+
+![The Incident journey dashboard](screenshots/observability-dashboard.png)
