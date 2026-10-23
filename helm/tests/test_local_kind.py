@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -221,13 +220,28 @@ def test_alerts_check_fails_when_alertmanager_cant_reach_the_backend(
 MEASURE_KUBECTL = """#!/usr/bin/env bash
 echo "kubectl $*" >> "$CALLS"
 case " $* " in
+*" port-forward "*)
+	# Like kubectl: announce the local port, then hold the forward open until killed.
+	[ -z "${FAIL_FORWARD:-}" ] || { echo "error: unable to forward port"; exit 1; }
+	echo "Forwarding from 127.0.0.1:19090 -> 9090"
+	echo $$ > "$CALLS.forward-pid"
+	exec sleep 60 ;;
 *" get deployment demo-app "*) echo -n ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234 ;;
-*" get --raw "*)
-	# 150 MiB for every query, or nothing for the cache gauge when NO_CACHE is set.
-	case "$*" in *demo_app_report_cache_bytes*) [ -n "${NO_CACHE:-}" ] && { echo '{"data":{"result":[]}}'; exit 0; } ;; esac
-	echo '{"data":{"result":[{"value":[0,"157286400"]}]}}' ;;
 *" rollout status "*) [ -z "${FAIL_ROLLOUT:-}" ] || exit 1 ;;
 esac
+"""
+# Prometheus behind the port-forward: 150 MiB for every query (1 for the reachability check),
+# or nothing for the cache gauge when NO_CACHE is set. Records each query as sent.
+PROMETHEUS_CURL = r"""#!/usr/bin/env bash
+q=""
+for a in "$@"; do case "$a" in query=*) q=${a#query=} ;; esac; done
+echo "curl ${*: -1} $q" >> "$CALLS"
+case "$q" in
+"vector(1)") v=1 ;;
+*demo_app_report_cache_bytes*) [ -n "${NO_CACHE:-}" ] && { echo '{"data":{"result":[]}}'; exit 0; }; v=157286400 ;;
+*) v=157286400 ;;
+esac
+echo "{\"data\":{\"result\":[{\"value\":[0,\"$v\"]}]}}"
 """
 RECORDER = '#!/usr/bin/env bash\necho "$(basename "$0") $*" >> "$CALLS"\n'
 # helmfile: records its calls; with FAIL_SECOND_SYNC set, the second sync (the restore) fails.
@@ -245,6 +259,7 @@ def run_measure(
     bin_dir.mkdir()
     for name, body in (
         ("kubectl", MEASURE_KUBECTL),
+        ("curl", PROMETHEUS_CURL),
         ("helmfile", FAKE_HELMFILE),
         ("docker", RECORDER),
     ):
@@ -278,12 +293,10 @@ def test_measure_samples_then_puts_everything_back(tmp_path: Path) -> None:
     assert "baseline, no fault: working set 150 MiB" in out
     assert "minute 2: working set 150 MiB, RSS 150 MiB, report cache 150 MiB" in out
     assert "working set  150 MiB" in out and "report cache 150 MiB" in out
-    # In order: worker stopped, fault on, limit raised ... fault off, worker started.
-    order = [
-        c
-        for c in calls
-        if not c.startswith("kubectl --context kind-consoletrack get --raw")
-    ]
+    # In order: Prometheus forwarded, worker stopped, fault on, limit raised ... fault off,
+    # worker started.
+    assert " port-forward svc/kube-prometheus-stack-prometheus :9090" in calls[0]
+    order = [c for c in calls if not c.startswith("curl ")][1:]
     assert "stop worker" in order[0]
     assert order[1].startswith("helmfile ") and "demoFault=oom" in order[1]
     # The limit goes through Helm too: a kubectl change would conflict with the restoring sync.
@@ -294,26 +307,44 @@ def test_measure_samples_then_puts_everything_back(tmp_path: Path) -> None:
     assert "-n demo delete deployment demo-app" in order[-3]
     assert order[-2].startswith("helmfile ") and "demoFault" not in order[-2]
     assert "start worker" in order[-1]
-    # The queries go through the API server's proxy to Prometheus, URL-encoded.
-    raw = [c for c in calls if " get --raw " in c]
+    # Queries go to Prometheus through the port-forward, not the API server's service proxy,
+    # which the EKS control plane can't use to reach port 9090.
+    queries = [c for c in calls if c.startswith("curl ")]
     assert all(
-        "/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query?query=" in c
-        for c in raw
+        c.startswith("curl http://127.0.0.1:19090/api/v1/query ") for c in queries
     )
-    queries = [urllib.parse.unquote(c.split("query=", 1)[1]) for c in raw]
+    sent = [c.split(" ", 2)[2] for c in queries]
+    assert sent[0] == "vector(1)"  # the reachability check, before anything changes
     assert (
         'max(container_memory_working_set_bytes{namespace="demo",container="demo-app"})'
-        in queries
+        in sent
     )
     # A peak is max over pods of each pod's max over time: valid PromQL, not max(...)[5m].
     assert (
         'max(max_over_time(container_memory_working_set_bytes{namespace="demo",container="demo-app"}[5m]))'
-        in queries
+        in sent
     )
     assert (
-        'max(max_over_time(demo_app_report_cache_bytes{namespace="demo"}[5m]))'
-        in queries
+        'max(max_over_time(demo_app_report_cache_bytes{namespace="demo"}[5m]))' in sent
     )
+    # The port-forward is stopped, not left running after the script exits (or a zombie, which
+    # holds nothing).
+    status = Path(
+        f"/proc/{(tmp_path / 'calls.forward-pid').read_text().strip()}/status"
+    )
+    assert not status.exists() or "zombie" in status.read_text()
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_stops_before_changing_anything_when_prometheus_is_unreachable(
+    tmp_path: Path,
+) -> None:
+    """The first EKS run sampled empty values for minutes: the service proxy couldn't reach
+    Prometheus. Now the check comes first and nothing is touched."""
+    result, calls = run_measure(tmp_path, FAIL_FORWARD="1")
+    assert result.returncode == 1
+    assert "couldn't port-forward to Prometheus" in result.stderr
+    assert not any(c.startswith(("helmfile ", "docker ")) for c in calls)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
@@ -376,7 +407,7 @@ case " $* " in
 *" rollout history "*) printf 'deployment.apps/demo-app\nREVISION  CHANGE-CAUSE\n1         <none>\n' ;;
 *" get pods "*) echo pod/alertmanager-kube-prometheus-stack-alertmanager-0 ;;
 *" amtool "*) pop "$ALERTS" | tr '|' '\n' ;;
-*" get --raw "*) echo '{"data":{"result":[{"value":[0,"0"]}]}}' ;;
+*" port-forward "*) echo "Forwarding from 127.0.0.1:19090 -> 9090"; exec sleep 60 ;;
 esac
 exit 0
 """
@@ -385,6 +416,10 @@ OOM_CURL = r"""#!/usr/bin/env bash
 pop() { local first; first=$(head -n 1 "$1"); [ "$(wc -l < "$1")" -gt 1 ] && sed -i.bak 1d "$1"; echo "$first"; }
 url=${*: -1}
 case "$url" in
+*/api/v1/query)
+	# Prometheus: 1 for the reachability check, 0 errors otherwise.
+	case "$*" in *"query=vector(1)"*) v=1 ;; *) v=0 ;; esac
+	echo "{\"data\":{\"result\":[{\"value\":[0,\"$v\"]}]}}" ;;
 */auth/login) cat > /dev/null; exit 0 ;;
 */api/v1/incidents\?*) pop "$LISTS" ;;
 */api/v1/incidents/*) pop "$DETAILS" ;;

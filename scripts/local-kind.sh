@@ -293,8 +293,9 @@ measure() {
 	if [ "$measure_target" = eks ]; then
 		echo "local-kind: measuring on $context, demo-app image tag $(live_image_tag)"
 	fi
-	echo "local-kind: baseline, no fault: working set $(promql_mib "max($working_set)")"
+	start_prometheus
 	trap measure_cleanup EXIT
+	echo "local-kind: baseline, no fault: working set $(promql_mib "max($working_set)")"
 	if [ "$measure_target" = local ]; then
 		$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind stop worker
 	fi
@@ -335,6 +336,7 @@ measure_cleanup() {
 	trap - EXIT
 	# Each step even if the one before fails: the worker must never stay stopped.
 	set +e
+	stop_prometheus
 	echo "local-kind: putting it back: demo-app recreated (fault off, 128Mi, one revision)"
 	recreate_demo_app || failed="recreating demo-app"
 	if [ "$measure_target" = local ]; then
@@ -348,13 +350,50 @@ measure_cleanup() {
 	exit "$rc"
 }
 
-# An instant PromQL query through the API server's service proxy (no port-forward): the first
-# series' value, or "no data".
+# Prometheus through `kubectl port-forward` on a free local port. Not the API server's service
+# proxy: on EKS the control plane runs outside the cluster's network and the nodes' security group
+# doesn't let it reach port 9090 ("dial tcp ...:9090: connect: connection timed out").
+prometheus_url=""
+prometheus_forward_pid=""
+start_prometheus() {
+	local log port=""
+	log=$(mktemp)
+	# kubectl itself, not the kc function: `kc ... &` would background a subshell, and $! would be
+	# that subshell's PID, so stop_prometheus would leave the port-forward running.
+	kubectl --context "$context" -n monitoring port-forward svc/kube-prometheus-stack-prometheus :9090 \
+		>"$log" 2>&1 &
+	prometheus_forward_pid=$!
+	for _ in $(seq 1 30); do
+		port=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 9090$/\1/p' "$log" | head -n 1)
+		[ -z "$port" ] || break
+		kill -0 "$prometheus_forward_pid" 2>/dev/null || break
+		sleep 1
+	done
+	if [ -z "$port" ]; then
+		stop_prometheus
+		die "couldn't port-forward to Prometheus on $context: $(cat "$log")"
+	fi
+	rm -f "$log"
+	prometheus_url=http://127.0.0.1:$port
+	# Checked before anything changes, so a failure stops here.
+	[ "$(promql_value 'vector(1)')" = 1 ] || {
+		stop_prometheus
+		die "Prometheus on $context doesn't answer at $prometheus_url"
+	}
+}
+
+stop_prometheus() {
+	if [ -n "$prometheus_forward_pid" ]; then
+		kill "$prometheus_forward_pid" 2>/dev/null || true
+		prometheus_forward_pid=""
+	fi
+}
+
+# An instant query: the first series' value, or "no data" (also when Prometheus doesn't answer).
 promql_value() {
-	local query
-	query=$(jq -rn --arg q "$1" '$q | @uri')
-	kc get --raw "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query?query=$query" |
-		jq -r '.data.result[0].value[1] // null | if . == null then "no data" else tonumber end'
+	curl -fsS --max-time 10 -G --data-urlencode "query=$1" "$prometheus_url/api/v1/query" 2>/dev/null |
+		jq -r '.data.result[0].value[1] // null | if . == null then "no data" else tonumber end' 2>/dev/null ||
+		echo "no data"
 }
 
 promql_mib() {
@@ -428,7 +467,11 @@ oom_prepare() {
 	kc -n demo rollout status deployment/demo-app --timeout=3m >/dev/null
 	echo "local-kind: rollout history: $(kc -n demo rollout history deployment/demo-app | grep -cE '^[0-9]+') revision(s)"
 	echo "local-kind: waiting for 2 minutes without errors and no DemoAppHighErrorRate in Alertmanager"
+	start_prometheus
+	trap stop_prometheus EXIT
 	wait_for quiet "$quiet_timeout" "$quiet_poll"
+	stop_prometheus
+	trap - EXIT
 	echo "local-kind: quiet; ready for the run"
 }
 
