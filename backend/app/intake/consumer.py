@@ -253,7 +253,11 @@ class ChangeAnalysisLoop:
         change_id = self.next_change()
         if change_id is None:
             return False
-        await self._analysis.analyze(change_id)
+        try:
+            await self._analysis.analyze(change_id)
+        except Exception:
+            log.exception("change analysis failed change=%s", change_id)
+            raise
         return True
 
     async def run(self) -> None:
@@ -261,9 +265,14 @@ class ChangeAnalysisLoop:
             try:
                 busy = await self.run_next()
             except Exception:
-                # The run row's lease brings the change back.
-                log.exception("change analysis iteration failed")
+                # run_next logged the change id and traceback; the run row's lease or `max_runs`
+                # decides what happens to the change.
+                log.error("change analysis iteration failed; backing off")
                 busy = False
+                # Back off rather than retry in a tight loop.
+                self._wake.clear()
+                await asyncio.sleep(self._poll_seconds)
+                continue
             if not busy:
                 self._wake.clear()
                 with suppress(TimeoutError):
