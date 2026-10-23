@@ -10,10 +10,11 @@ above a 128Mi limit: the OOM scenario, driven by the traffic generator asking fo
 the app's own Deployment never changes (the app outgrew its limit; nothing rolled out).
 
 Once the cache is full, a new report is written into the oldest one's buffer instead of a new
-allocation, so the cache allocates nothing more and memory stays at the cache plus the app, by
-construction. Measured on kind with 512Mi (make local-measure, #79), the earlier allocate-and-free
-per request also held flat at the cache plus the app (160 MiB with a 140 MiB cache): this rules
-out per-request allocations as a cause of the 2x fix's OOM, rather than fixing one.
+allocation, so the cache allocates nothing more and memory stays at the cache plus the app.
+Allocating a fresh buffer and freeing the oldest on every request (each on its own thread) held
+on to freed memory on EKS (Graviton): with the fault on and a 140 MiB cache, that version peaked
+at 213 MiB, leaving 43 MiB under the 256Mi fix; this one peaks at 159 MiB (make measure, #79).
+On kind both versions peak at 158-160 MiB.
 """
 
 from __future__ import annotations

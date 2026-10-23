@@ -46,7 +46,7 @@ down (with a rolling update the old pod would keep serving behind the faulted on
 
 | Value | Effect | Expected fix |
 |---|---|---|
-| `faults.oom` | Only the traffic generator changes: it sends `X-Demo-Report: large`, and the app's report cache (2 MiB a request, bounded at 140 MiB) passes the unchanged 128Mi limit within about 15s of each start: OOMKilled under traffic, CrashLoopBackOff, and no new demo-app revision | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling; a full cache plus the app leaves ~65 MiB of headroom with the fault still on). Turning the fault off also stops it |
+| `faults.oom` | Only the traffic generator changes: it sends `X-Demo-Report: large`, and the app's report cache (2 MiB a request, bounded at 140 MiB) passes the unchanged 128Mi limit within about 15s of each start: OOMKilled under traffic, CrashLoopBackOff, and no new demo-app revision | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling; the measured peak with the fault still on is 159 MiB on EKS and 158 MiB on kind, 97 MiB under the fix). Turning the fault off also stops it |
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
 | `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Rollout undo (the agent's `rollback`); fixing the probe path also works |
 

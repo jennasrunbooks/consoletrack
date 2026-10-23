@@ -104,12 +104,12 @@ def test_other_requests_cache_nothing(headers: dict[str, str]) -> None:
 
 
 def test_default_sizing_outgrows_128mi() -> None:
-    # The scenario's numbers: ~25-50 MiB of app plus a full cache passes a 128Mi limit and fits
-    # in 256Mi with more than 64 MiB to spare.
+    # The scenario's numbers: the app's measured ~19 MiB (EKS and kind, #79) plus a full cache
+    # passes a 128Mi limit with room to spare, and fits in 256Mi with more than 64 MiB to spare.
     cfg = Config()
     assert (cfg.report_mi, cfg.report_cache_mi) == (2, 140)
-    assert 25 + cfg.report_cache_mi > 128
-    assert 256 - (50 + cfg.report_cache_mi) >= 64
+    assert 19 + cfg.report_cache_mi - 128 >= 24
+    assert 256 - (19 + cfg.report_cache_mi) >= 64
 
 
 def test_no_cache_means_no_allocation() -> None:

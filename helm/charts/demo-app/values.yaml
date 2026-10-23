@@ -17,8 +17,9 @@ aws:
   bucket: ""
   objectKey: seed.txt
 
-# The app uses ~50 MiB (~25 MiB on kind, where boto3 is never loaded), plus the report cache
-# under the OOM fault. 128Mi fits the app alone, not a full cache: see faults.oom.
+# The app uses about 19 MiB under the OOM fault, on EKS and on kind (make measure and make
+# local-measure, #79), plus the report cache. 128Mi fits the app alone, not a full cache: see
+# faults.oom.
 resources:
   requests: {cpu: 10m, memory: 64Mi}
   limits: {cpu: 200m, memory: 128Mi}
@@ -41,8 +42,9 @@ faults:
   # changes: it sends `X-Demo-Report: large` on every request, so at loadgen.rps the cache passes
   # the 128Mi limit within about 15s of each start: OOMKilled under traffic, CrashLoopBackOff,
   # with no new demo-app revision. The fix the agent should find is set_memory_limit to 256Mi:
-  # exactly oom-memory-bump's 2x, under its 512Mi ceiling, and a full cache plus the app
-  # (~140 + 50 MiB on EKS) leaves ~65 MiB of headroom with the fault still on.
+  # exactly oom-memory-bump's 2x, under its 512Mi ceiling. Measured peak with the fault on:
+  # 159 MiB on EKS, 158 MiB on kind: 31 MiB over 128Mi, so the OOM is certain, and 97 MiB under
+  # 256Mi, so the fix holds.
   oom: false
   # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
   badImage: false
