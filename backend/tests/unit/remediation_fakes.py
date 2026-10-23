@@ -91,7 +91,8 @@ class Clock:
 class FakeCluster:
     """One Deployment. A real patch bumps the generation; the rollout finishes after
     `rollout_polls` reads (never, with None). Pods run the Deployment's current template;
-    `oom_after_patch` makes the patched pods OOMKilled again."""
+    `oom_after_patch` makes the patched pods OOMKilled again. Annotations in a patch's metadata
+    are applied (None removes one); a metadata-only patch makes no new revision."""
 
     def __init__(
         self,
@@ -106,6 +107,9 @@ class FakeCluster:
         self.rollout_polls = rollout_polls
         self.oom_after_patch = oom_after_patch
         self.patches: list[tuple[dict[str, Any], bool]] = []
+        # The annotations on the Deployment when each real spec patch made a new revision current,
+        # as the Deployment controller copies them to its ReplicaSet.
+        self.revision_annotations: list[dict[str, str]] = []
         self.fail_on: set[str] = set()
         # Extra changes the "server" makes on a dry run, e.g. a mutating webhook.
         self.dry_run_extra: dict[str, Any] | None = None
@@ -129,6 +133,18 @@ class FakeCluster:
             raise ClusterError("Kubernetes API 422 Unprocessable Entity")
         self.patches.append((copy.deepcopy(body), dry_run))
         result = copy.deepcopy(self.obj)
+        annotations = result["metadata"].setdefault("annotations", {})
+        for key, value in ((body.get("metadata") or {}).get("annotations") or {}).items():
+            if value is None:
+                annotations.pop(key, None)
+            else:
+                annotations[key] = value
+        if "spec" not in body:  # metadata only: no new generation, no rollout
+            if "clear" in self.fail_on:
+                raise ClusterError("Kubernetes API 409 Conflict")
+            if not dry_run:
+                self.obj = result
+            return copy.deepcopy(result)
         for change in body["spec"]["template"]["spec"]["containers"]:
             target = next(
                 c
@@ -146,6 +162,7 @@ class FakeCluster:
                 result["spec"]["template"]["spec"]["containers"][0].update(self.dry_run_extra)
             return result
         result["metadata"]["generation"] += 1
+        self.revision_annotations.append(dict(annotations))
         self.obj = result
         self._patched = True
         self._reads_since_patch = 0

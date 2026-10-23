@@ -33,10 +33,14 @@ from app.db.repositories import UnitOfWork
 from app.db.session import make_db_check, make_engine, make_uow_factory
 from app.metrics import Metrics
 from app.services.auth import MIN_SECRET_BYTES, Authenticator, LoginRateLimiter, SessionSigner
-from app.services.intake_health import IntakeStatusSource, UnreportedIntakeStatus
+from app.services.intake_health import (
+    DbIntakeStatus,
+    IntakeStatusSource,
+    UnreportedIntakeStatus,
+)
 from app.services.remediation_apply import RemediationApplier, run_apply_loop
 from app.services.remediation_policy import PolicyConfig, load_policies
-from app.settings import Settings, get_settings
+from app.settings import IntakeMode, Settings, get_settings
 
 log = logging.getLogger("app.main")
 
@@ -109,7 +113,11 @@ def create_app(
     app.state.sessions = SessionSigner(secret)
     app.state.authenticator = authenticator
     app.state.login_limiter = LoginRateLimiter()
-    app.state.intake_status = intake_status or UnreportedIntakeStatus()
+    # Live: the worker's report in the database. Replay shows Replay whatever is reported.
+    if intake_status is None:
+        live = settings.intake_mode is IntakeMode.live
+        intake_status = DbIntakeStatus() if live else UnreportedIntakeStatus()
+    app.state.intake_status = intake_status
     app.state.clock = clock
     app.state.metrics = Metrics()
 

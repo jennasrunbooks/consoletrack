@@ -113,7 +113,11 @@ def test_kill_switch_env(store: FakeStore, make_incident: Any) -> None:
     assert_manual(store, incident, row, "AUTOFIX_ENABLED is false", settings=off)
 
 
-def test_the_kill_switch_is_off_unless_set(store: FakeStore, make_incident: Any) -> None:
+def test_the_kill_switch_is_off_unless_set(
+    store: FakeStore, make_incident: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `make test` exports .env, which may set it for make local.
+    monkeypatch.delenv("AUTOFIX_ENABLED", raising=False)
     incident, row = triaged(store, make_incident)
     assert not Settings().autofix_enabled
     assert_manual(store, incident, row, "AUTOFIX_ENABLED", settings=Settings())

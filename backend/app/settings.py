@@ -56,6 +56,22 @@ class Settings(BaseSettings):
 
     # `replay` is set by `make demo-replay`: recorded CloudTrail fixtures, no AWS (#9, #15).
     intake_mode: IntakeMode = IntakeMode.live
+    # The change intake (app/intake/). The queue URLs and trail come from Terraform's outputs
+    # (helm worker.yaml). An empty CHANGES_QUEUE_URL leaves the intake off. In replay mode the
+    # queue is ElasticMQ: boto3 reads AWS_ENDPOINT_URL_SQS itself.
+    changes_queue_url: str | None = None
+    changes_dlq_url: str | None = None
+    trail_name: str | None = None
+    # IAM paths the intake rates as watched, comma-separated (also aws-mcp's scope).
+    watched_iam_paths: str = "/demo-app/"
+    # The canary's security group; unset accepts the canary role's tag on any one group.
+    canary_security_group_id: str | None = None
+    # How often the worker stores queue and trail status for GET /api/v1/intake/health.
+    intake_report_seconds: float = 60
+    # How long a received message stays hidden while the worker records it.
+    intake_visibility_timeout_seconds: int = 60
+    # Analysis runs a change may get (a crashed worker's run counts once its lease ends).
+    change_analysis_max_runs: int = 3
     # The "Intake health" Grafana dashboard, if the browser can reach it.
     grafana_url: str | None = None
 
@@ -102,6 +118,10 @@ class Settings(BaseSettings):
     # OTEL_EXPORTER_OTLP_ENDPOINT, read by the exporters, not by this class.
     telemetry_exporter: TelemetryExporter = TelemetryExporter.none
     log_level: str = "INFO"
+
+    @property
+    def watched_paths(self) -> tuple[str, ...]:
+        return tuple(p.strip() for p in self.watched_iam_paths.split(",") if p.strip())
 
     @property
     def allowed_namespaces(self) -> frozenset[str]:

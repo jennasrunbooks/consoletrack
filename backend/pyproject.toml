@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.14",
     "anthropic>=1.15,<2",
     "argon2-cffi>=23.1",
+    "boto3>=1.40",
     "fastapi>=0.115",
     "fastmcp>=4.1,<5",
     "httpx2>=2.9",

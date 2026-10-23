@@ -66,17 +66,19 @@ def test_oom_fix_fits_the_policy_bounds() -> None:
     )
     cache = values["reportCache"]["capMi"] * 2**20
     fixed = 2 * limit  # set_memory_limit to 256Mi
-    # A full cache plus the app on kind (~25 MiB) passes the limit, so the fault OOMs.
-    assert cache + 25 * 2**20 > limit
+    # The app is ~19 MiB under the fault on EKS and kind (#79): with a full cache it passes the
+    # limit with room to spare, so the fault OOMs.
+    app = 19 * 2**20
+    assert cache + app - limit >= 24 * 2**20
     # It fills before the app's first scrape: well under 30s at loadgen.rps.
     per_second = (
         values["loadgen"]["rps"] * values["reportCache"]["perRequestMi"] * 2**20
     )
-    assert (limit - 25 * 2**20) / per_second < 15
+    assert (limit - app) / per_second < 15
     assert fixed <= bounds["maxMultiplier"] * limit
     assert fixed <= mem(bounds["ceiling"])
-    # The app's ~50 MiB on EKS (boto3 loaded) and a full cache fit in the fix with room to spare.
-    assert fixed - cache - 50 * 2**20 >= 64 * 2**20
+    # A full cache and the app fit in the fix with room to spare: 97 MiB measured.
+    assert fixed - cache - app >= 64 * 2**20
 
 
 LOADGEN_ENV = {
@@ -150,6 +152,8 @@ def test_high_error_rate_alert_routes_to_consoletrack() -> None:
         "severity": "critical",
         "namespace": "demo",
         "workload": "demo-app",
+        # The consoletrack AlertmanagerConfig sends only alerts with this label (#79).
+        "consoletrack_incident": "true",
     }
     assert rule["for"] == "1m"
     assert 'namespace="demo"' in rule["expr"]

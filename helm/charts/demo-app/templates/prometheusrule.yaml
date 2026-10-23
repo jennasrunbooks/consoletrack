@@ -26,6 +26,8 @@ spec:
             severity: critical
             namespace: {{ .Release.Namespace }}
             workload: demo-app
+            # Opens an incident: the consoletrack AlertmanagerConfig routes only this label.
+            consoletrack_incident: "true"
           annotations:
             summary: Requests to the demo app are failing
             description: More than 5% of the traffic generator's requests to demo-app failed over 2 minutes.

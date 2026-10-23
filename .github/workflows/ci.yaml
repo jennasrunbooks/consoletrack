@@ -531,7 +531,7 @@ jobs:
           pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
           kc -n monitoring exec "$pod" -c alertmanager -- wget -qO- \
             --header 'Content-Type: application/json' \
-            --post-data '[{"labels":{"alertname":"LocalKindProbe","namespace":"demo","severity":"info"}}]' \
+            --post-data '[{"labels":{"alertname":"LocalKindProbe","namespace":"demo","severity":"info","consoletrack_incident":"true"}}]' \
             http://127.0.0.1:9093/api/v2/alerts
           # localhost, not 127.0.0.1: curl keeps the Secure session cookie over HTTP only there.
           base=http://localhost:8080

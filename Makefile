@@ -163,7 +163,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run measure demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -478,6 +478,11 @@ else
 	kubectl --context $(KUBE_CONTEXT) -n consoletrack port-forward --address 127.0.0.1 svc/frontend $(OPEN_PORT):8080
 endif
 
+# The EKS counterpart of local-measure (#79). The demo-app sync keeps the image the cluster runs.
+measure: env-check-aws helm-values ## EKS: demo-app's memory under the OOM fault with the limit at 512Mi (~8 min; CACHE_MI=<MiB>; humans only)
+	$(check_human)
+	MEASURE_TARGET=eks KUBE_CONTEXT=$(KUBE_CONTEXT) MEASURE_CACHE_MI=$(CACHE_MI) scripts/local-kind.sh measure
+
 # Terraform asks for yes once per step that has something to destroy: demo-app (if present), the
 # node group, then the rest.
 # The Helmfile half is scripts/down-cluster.sh: app, any Gateway, wait for the load balancers,
@@ -598,6 +603,17 @@ local-fault: ## Turn a demo-app fault on in kind (FAULT=oom|badImage|badProbe), 
 local-incidents: ## Local incidents with the agent's root cause and proposal (until the dashboard's Incidents page)
 	scripts/local-kind.sh incidents
 
+local-measure: ## demo-app's memory under the OOM fault with the limit at 512Mi: per minute, then 5-minute peaks (~8 min; CACHE_MI=<MiB> for another cache size)
+	MEASURE_CACHE_MI=$(CACHE_MI) scripts/local-kind.sh measure
+
+# The database reset between the two halves gives each run a clean slate: no earlier incidents,
+# and no earlier auto fix counting against oom-memory-bump's one-per-hour limit.
+local-oom-run: env-check-local ## One OOM acceptance run on kind: clean demo-app, fresh database, fault on, follow the fix to PASS/FAIL, fault off (~15 min)
+	scripts/local-kind.sh oom-prepare
+	$(COMPOSE_KIND) down --volumes
+	$(MAKE) --no-print-directory local SKIP_BUILD=1
+	scripts/local-kind.sh oom-run
+
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
 	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(LOCAL_CLUSTER); then \
 		$(COMPOSE_KIND) down --volumes --remove-orphans && \
@@ -607,8 +623,11 @@ local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` 
 	fi
 	rm -f kind-internal.kubeconfig kind-remediator.kubeconfig kind-remediation-policies.yaml
 
+replay-fixtures: ## Send the recorded CloudTrail fixtures to Compose's ElasticMQ (the worker records them)
+	$(BACKEND_RUN) python ../scripts/replay-fixtures.py
+
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
-	$(call todo,#9 (scripts/replay-fixtures.py and the worker's replay mode); see #15)
+	$(call todo,#15 (Compose + kind wiring around make replay-fixtures))
 
 demo: env-check-aws ## Run the three cluster fault scenarios (stub)
 	$(call todo,the agent loop workstream; no issue yet)
