@@ -58,8 +58,15 @@ ROLLOUT_NOTE = (
     "newer revision scaled to 0 (normal after every rollout, and with Recreate the old one is "
     "scaled down before the new one starts: not a failure), and scaling_down for an older one "
     "that still has replicas while a RollingUpdate is in progress. Whether a rollout is healthy "
-    "is the current revision's ready_replicas against its desired_replicas."
+    "is the current revision's ready_replicas against its desired_replicas. remediation is set "
+    "on a revision ConsoleTrack's own remediation made (action patch: its fix; action rollback: "
+    "its undo of that fix): not a human change, and never a revision to roll back to."
 )
+# Set by the backend's apply loop on the Deployment and copied by the controller to the
+# ReplicaSet it makes current (backend/app/services/remediation_apply.py).
+REMEDIATION_ANNOTATION = "consoletrack.io/remediation"
+ACTION_ANNOTATION = "consoletrack.io/action"
+REMEDIATION_ACTIONS = frozenset({"patch", "rollback"})
 
 # RFC 1123 subdomain: namespaces, pods, containers, Deployments, StatefulSets, ReplicaSets.
 _NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$")
@@ -490,7 +497,18 @@ def _rollout_revision(rs: Any, current: int | None) -> dict[str, Any]:
             (rs.metadata.annotations or {}).get("kubernetes.io/change-cause", "")
         )
         or None,
+        "remediation": _remediation(rs.metadata.annotations or {}),
     }
+
+
+def _remediation(annotations: dict[str, str]) -> dict[str, Any] | None:
+    """ConsoleTrack's remediation ID and action, when this revision is one; anything malformed
+    is left out rather than passed to the model."""
+    remediation_id = _int(annotations.get(REMEDIATION_ANNOTATION))
+    action = annotations.get(ACTION_ANNOTATION)
+    if remediation_id is None or remediation_id < 1 or action not in REMEDIATION_ACTIONS:
+        return None
+    return {"id": remediation_id, "action": action}
 
 
 def _revision(rs: Any) -> int:

@@ -120,6 +120,7 @@ def replica_set(
     replicas: int | None = None,
     ready: int | None = None,
     memory_limit: str = "128Mi",
+    annotations: dict[str, str] | None = None,
 ) -> V1ReplicaSet:
     # By default revision 2 is the running one and every other revision is scaled to 0.
     replicas = (1 if revision == 2 else 0) if replicas is None else replicas
@@ -129,7 +130,7 @@ def replica_set(
             name=f"demo-app-rev{revision}",
             namespace="demo",
             creation_timestamp=NOW - timedelta(hours=10 - revision),
-            annotations={"deployment.kubernetes.io/revision": str(revision)},
+            annotations={"deployment.kubernetes.io/revision": str(revision), **(annotations or {})},
             owner_references=[
                 V1OwnerReference(
                     api_version="apps/v1", kind="Deployment", name="demo-app", uid=owner_uid

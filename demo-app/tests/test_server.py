@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -24,7 +25,7 @@ def rss_bytes() -> int:
 def test_allocate_touches_every_page() -> None:
     buf = server.allocate(2)
     assert len(buf) == 2 * MIB
-    assert all(buf[i] == 1 for i in range(0, len(buf), server.PAGE))
+    assert all(buf[i] != 0 for i in range(0, len(buf), server.PAGE))
 
 
 @pytest.mark.skipif(not STATUS.exists(), reason="needs Linux /proc")
@@ -67,6 +68,33 @@ def test_the_cache_is_bounded() -> None:
     assert app.registry.get_sample_value("demo_app_report_cache_bytes") == 6 * MIB
 
 
+def test_a_full_cache_reuses_its_buffers() -> None:
+    """Full, the cache writes each new report into the oldest buffer: no allocation or free per
+    request, from any request thread, so memory stays at the cache (#79)."""
+    app, httpd = server.build(Config(port=0, report_mi=1, report_cache_mi=4), host="127.0.0.1")
+    httpd.server_close()
+    for _ in range(4):
+        app.work({"X-Demo-Report": "large"})
+    buffers = {id(r) for r in app.cache.reports}
+    first = app.cache.reports[0]
+    before = bytes(first[0 : server.PAGE * 2 : server.PAGE])
+
+    threads = [
+        threading.Thread(target=app.work, args=({"X-Demo-Report": "large"},)) for _ in range(20)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert {id(r) for r in app.cache.reports} == buffers
+    assert len(app.cache.reports) == 4
+    # The oldest buffer was rewritten (a new report), not just moved.
+    assert bytes(first[0 : server.PAGE * 2 : server.PAGE]) != before
+    assert all(first[i] != 0 for i in range(0, len(first), server.PAGE))
+    assert app.registry.get_sample_value("demo_app_report_cache_bytes") == 4 * MIB
+
+
 @pytest.mark.parametrize("headers", [{}, {"X-Demo-Report": "small"}, {"X-Other": "large"}])
 def test_other_requests_cache_nothing(headers: dict[str, str]) -> None:
     app, httpd = server.build(Config(port=0), host="127.0.0.1")
@@ -76,12 +104,12 @@ def test_other_requests_cache_nothing(headers: dict[str, str]) -> None:
 
 
 def test_default_sizing_outgrows_128mi() -> None:
-    # The scenario's numbers: ~25-50 MiB of app plus a full cache passes a 128Mi limit and fits
-    # in 256Mi with more than 64 MiB to spare.
+    # The scenario's numbers: the app's measured ~19 MiB (EKS and kind, #79) plus a full cache
+    # passes a 128Mi limit with room to spare, and fits in 256Mi with more than 64 MiB to spare.
     cfg = Config()
     assert (cfg.report_mi, cfg.report_cache_mi) == (2, 140)
-    assert 25 + cfg.report_cache_mi > 128
-    assert 256 - (50 + cfg.report_cache_mi) >= 64
+    assert 19 + cfg.report_cache_mi - 128 >= 24
+    assert 256 - (19 + cfg.report_cache_mi) >= 64
 
 
 def test_no_cache_means_no_allocation() -> None:
