@@ -18,6 +18,7 @@ from app.db.models import (
     EvidenceRow,
     IncidentChangeRow,
     IncidentRow,
+    IntakeReportRow,
     RemediationRow,
 )
 from app.enums import (
@@ -87,6 +88,12 @@ class ChangeRepository(Protocol):
 
     def last_detected_at(self) -> datetime | None: ...
 
+    def next_for_analysis(self, *, lease_start: datetime, max_runs: int) -> ChangeRow | None:
+        """The oldest `detected` change with no analysis yet, no agent run started at or after
+        `lease_start` (one in progress, or a crashed one not yet expired), and fewer than
+        `max_runs` runs; locked (`FOR UPDATE SKIP LOCKED`)."""
+        ...
+
 
 class IncidentRepository(Protocol):
     def get(self, incident_id: int, *, for_update: bool = False) -> IncidentRow | None: ...
@@ -155,6 +162,28 @@ class RemediationRepository(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class QueueReport:
+    """One `GetQueueAttributes` / `GetTrailStatus` round; None where that call failed."""
+
+    queue_backlog: int | None
+    oldest_message_age_seconds: int | None
+    dead_letter_count: int | None
+    trail_logging: bool | None
+
+
+class IntakeReportRepository(Protocol):
+    def get(self) -> IntakeReportRow | None: ...
+    def save_report(self, report: QueueReport, *, reported_at: datetime) -> None:
+        """Overwrite the queue and trail fields (nulls included) and `reported_at`."""
+        ...
+
+    def save_canary(self, event_time: datetime) -> None:
+        """Keep the newer of the stored canary time and `event_time` (redelivered or
+        out-of-order canaries never move it back)."""
+        ...
+
+
 class UnitOfWork(Protocol):
     """One request's (or one worker job's) repositories, committed together."""
 
@@ -165,6 +194,7 @@ class UnitOfWork(Protocol):
     evidence: EvidenceRepository
     analyses: AnalysisRepository
     remediations: RemediationRepository
+    intake_reports: IntakeReportRepository
 
     def commit(self) -> None: ...
     def rollback(self) -> None: ...

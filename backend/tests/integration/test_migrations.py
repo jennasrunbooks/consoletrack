@@ -19,6 +19,7 @@ TABLES = {
     "evidence",
     "analyses",
     "remediations",
+    "intake_reports",
 }
 
 

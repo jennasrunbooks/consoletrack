@@ -1,0 +1,49 @@
+{
+  "version": "0",
+  "id": "5e6f7a8b-0016-4222-8333-abcdefabcdef",
+  "detail-type": "AWS API Call via CloudTrail",
+  "source": "aws.ec2",
+  "account": "123456789012",
+  "time": "2026-10-17T12:45:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "eventVersion": "1.10",
+    "userIdentity": {
+      "type": "AssumedRole",
+      "principalId": "AROAEXAMPLE:alex@example.com",
+      "arn": "arn:aws:sts::123456789012:assumed-role/AWSReservedSSO_Admin_0example/alex@example.com",
+      "accountId": "123456789012",
+      "accessKeyId": "ASIAEXAMPLE",
+      "sessionContext": {
+        "sessionIssuer": {
+          "type": "Role",
+          "principalId": "AROAEXAMPLE",
+          "arn": "arn:aws:iam::123456789012:role/AWSReservedSSO_Admin_0example",
+          "accountId": "123456789012",
+          "userName": "AWSReservedSSO_Admin_0example"
+        },
+        "attributes": {
+          "creationDate": "2026-10-17T11:55:00Z",
+          "mfaAuthenticated": "false"
+        },
+        "sessionCredentialFromConsole": "true"
+      }
+    },
+    "eventTime": "2026-10-17T12:45:00Z",
+    "eventSource": "ec2.amazonaws.com",
+    "eventName": "DescribeSecurityGroups",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "203.0.113.10",
+    "userAgent": "console.amazonaws.com",
+    "requestParameters": {},
+    "responseElements": null,
+    "requestID": "0a1b2c3d-0016-4222-8333-abcdefabcdef",
+    "eventID": "9f8e7d6c-0016-4222-8333-fedcbafedcba",
+    "readOnly": true,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+}
