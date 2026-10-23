@@ -634,3 +634,27 @@ def test_run_refuses_a_database_with_incidents(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "already has incidents" in result.stderr
     assert not any(c.startswith("helmfile ") for c in calls)  # the fault never went on
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_can_try_another_cache_size(tmp_path: Path) -> None:
+    """CACHE_MI compares cache sizes on one deployed image (#79: 140 and 96 MiB on EKS). Only
+    the measured sync gets it; the restore goes back to the environment's own."""
+    result, calls = run_measure(
+        tmp_path,
+        MEASURE_TARGET="eks",
+        KUBE_CONTEXT="consoletrack-eks",
+        MEASURE_CACHE_MI="140",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "report cache 140 MiB" in result.stdout
+    fault, restore = [c for c in calls if c.startswith("helmfile ")]
+    assert "--state-values-set demoReportCacheMi=140" in fault
+    assert "demoReportCacheMi" not in restore
+
+
+def test_measure_rejects_a_cache_size_that_isnt_a_number(tmp_path: Path) -> None:
+    result, calls = run_measure(tmp_path, MEASURE_CACHE_MI="140Mi")
+    assert result.returncode == 1
+    assert "MEASURE_CACHE_MI must be a number of MiB" in result.stderr
+    assert calls == []

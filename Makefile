@@ -479,9 +479,9 @@ else
 endif
 
 # The EKS counterpart of local-measure (#79). The demo-app sync keeps the image the cluster runs.
-measure: env-check-aws helm-values ## EKS: demo-app's memory under the OOM fault with the limit at 512Mi (~8 min; humans only)
+measure: env-check-aws helm-values ## EKS: demo-app's memory under the OOM fault with the limit at 512Mi (~8 min; CACHE_MI=<MiB>; humans only)
 	$(check_human)
-	MEASURE_TARGET=eks KUBE_CONTEXT=$(KUBE_CONTEXT) scripts/local-kind.sh measure
+	MEASURE_TARGET=eks KUBE_CONTEXT=$(KUBE_CONTEXT) MEASURE_CACHE_MI=$(CACHE_MI) scripts/local-kind.sh measure
 
 # Terraform asks for yes once per step that has something to destroy: demo-app (if present), the
 # node group, then the rest.
@@ -603,8 +603,8 @@ local-fault: ## Turn a demo-app fault on in kind (FAULT=oom|badImage|badProbe), 
 local-incidents: ## Local incidents with the agent's root cause and proposal (until the dashboard's Incidents page)
 	scripts/local-kind.sh incidents
 
-local-measure: ## demo-app's memory under the OOM fault with the limit at 512Mi: per minute, then 5-minute peaks (~8 min; MEASURE_MINUTES)
-	scripts/local-kind.sh measure
+local-measure: ## demo-app's memory under the OOM fault with the limit at 512Mi: per minute, then 5-minute peaks (~8 min; CACHE_MI=<MiB> for another cache size)
+	MEASURE_CACHE_MI=$(CACHE_MI) scripts/local-kind.sh measure
 
 # The database reset between the two halves gives each run a clean slate: no earlier incidents,
 # and no earlier auto fix counting against oom-memory-bump's one-per-hour limit.

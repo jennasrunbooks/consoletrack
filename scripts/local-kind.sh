@@ -309,9 +309,16 @@ measure() {
 	fi
 	# Through Helm, not kubectl: Helm 4 applies server-side, and a field another manager changed
 	# (kubectl set resources) would make the sync that puts it back fail with a conflict.
-	sync_demo_app --state-values-set demoFault=oom --state-values-set demoMemoryLimit=512Mi
+	local cache=()
+	if [ -n "$measure_cache_mi" ]; then
+		# This run's cache size, to compare sizes on one image (make measure CACHE_MI=140).
+		cache=(--state-values-set "demoReportCacheMi=$measure_cache_mi")
+	fi
+	sync_demo_app --state-values-set demoFault=oom --state-values-set demoMemoryLimit=512Mi \
+		${cache[@]+"${cache[@]}"}
 	kc -n demo rollout status deployment/demo-app --timeout=3m
-	echo "local-kind: oom fault on, limit 512Mi; sampling for $measure_minutes minutes"
+	echo "local-kind: oom fault on, limit 512Mi, report cache ${measure_cache_mi:-the default} MiB;" \
+		"sampling for $measure_minutes minutes"
 	for minute in $(seq 1 "$measure_minutes"); do
 		sleep "$measure_interval"
 		echo "local-kind: minute $minute: working set $(promql_mib "max($working_set)")," \
@@ -334,6 +341,11 @@ eks) context=${KUBE_CONTEXT:?KUBE_CONTEXT is unset (make measure sets it)} ;;
 *) die "MEASURE_TARGET must be local or eks, not $measure_target" ;;
 esac
 measure_minutes=${MEASURE_MINUTES:-7}
+# The report cache for this measurement only (MiB); empty: the environment's.
+measure_cache_mi=${MEASURE_CACHE_MI:-}
+case "$measure_cache_mi" in
+"" | *[!0-9]*) [ -z "$measure_cache_mi" ] || die "MEASURE_CACHE_MI must be a number of MiB, not $measure_cache_mi" ;;
+esac
 measure_interval=${MEASURE_INTERVAL:-60}
 # Series, wrapped as max(series) now or max(max_over_time(series[5m])) for the peaks.
 working_set='container_memory_working_set_bytes{namespace="demo",container="demo-app"}'
