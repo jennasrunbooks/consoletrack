@@ -31,8 +31,9 @@ Plus:
   routed.
 - **Observability** (`templates/monitoring.yaml`): a ServiceMonitor for the backend's
   `/metrics`; the `ConsoleTrackCanaryMissing` rule (EKS only); an AlertmanagerConfig sending
-  alerts from `consoletrack` and the allowlisted namespaces to `/api/v1/alerts/webhook` with the
-  bearer token from `consoletrack-webhook`; and the "Intake health" dashboard
+  user-impact alerts (rules labelled `consoletrack_incident: "true"`) from `consoletrack` and the
+  allowlisted namespaces to `/api/v1/alerts/webhook` with the bearer token from
+  `consoletrack-webhook`, grouped by namespace and workload; and the "Intake health" dashboard
   (`files/intake-health.json`, uid `consoletrack-intake`) for the Grafana sidecar.
 - **Remediation policies**: the `remediation:` block from `values.yaml` as the
   `remediation-policies` ConfigMap, mounted into the backend and worker. Only `oom-memory-bump`

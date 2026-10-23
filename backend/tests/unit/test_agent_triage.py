@@ -491,7 +491,7 @@ async def test_the_rollout_history_decides_the_oom_fix(
     ((_, gated),) = gate.proposals
     assert gated.kind == proposal["kind"]
     assert store.remediations.rows[0].kind is RemediationKind(proposal["kind"])
-    assert store.agent_runs.rows[0].prompt_version == "v3"
+    assert store.agent_runs.rows[0].prompt_version == "v4"
 
 
 async def test_low_confidence_on_a_restart_escalates_once(

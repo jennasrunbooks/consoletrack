@@ -1,8 +1,13 @@
 {{- /*
 Observability for the intake (product-spec.md → Intake health and canary): Prometheus scrapes
 the backend's /metrics, ConsoleTrackCanaryMissing fires when no canary has arrived for 45
-minutes, and Alertmanager sends every alert to the backend's webhook with the bearer token from
-the consoletrack-webhook Secret. The add-on values (helm/values/kube-prometheus-stack.yaml)
+minutes, and Alertmanager sends the alerts that should open an incident to the backend's webhook
+with the bearer token from the consoletrack-webhook Secret.
+
+Only user-impact alerts open incidents: rules that carry `consoletrack_incident: "true"`
+(ConsoleTrackCanaryMissing here, DemoAppHighErrorRate in the demo-app chart). Symptoms such as
+KubePodCrashLooping stay in Alertmanager and Grafana as evidence the agent can query; routing them
+too opened a second incident for the same OOM episode (#79). The add-on values (helm/values/kube-prometheus-stack.yaml)
 make Prometheus and Alertmanager pick these up from any namespace.
 */}}
 {{- if .Values.monitoring.serviceMonitor }}
@@ -46,6 +51,7 @@ spec:
             severity: warning
             namespace: {{ .Release.Namespace }}
             workload: canary
+            consoletrack_incident: "true"
           annotations:
             summary: No intake canary for 45 minutes
             description: >-
@@ -60,6 +66,7 @@ spec:
             severity: warning
             namespace: {{ .Release.Namespace }}
             workload: canary
+            consoletrack_incident: "true"
           annotations:
             summary: The intake canary has never arrived
             description: >-
@@ -78,17 +85,17 @@ metadata:
 spec:
   route:
     receiver: consoletrack-backend
-    groupBy: [alertname, namespace]
+    # One notification per affected workload; the backend opens one incident per alert.
+    groupBy: [namespace, workload]
     groupWait: 30s
     groupInterval: 5m
     repeatInterval: 4h
     matchers:
-      # kube-prometheus-stack's always-firing heartbeat alerts aren't incidents.
-      - name: alertname
-        matchType: "!~"
-        value: Watchdog|InfoInhibitor
-      # Only workloads ConsoleTrack can investigate (k8s-mcp's allowlist) and its own alerts;
-      # cluster-level alerts stay in Alertmanager and Grafana.
+      # Only user-impact alerts open incidents (the comment at the top).
+      - name: consoletrack_incident
+        matchType: "="
+        value: "true"
+      # And only for workloads ConsoleTrack can investigate (k8s-mcp's allowlist) or its own.
       - name: namespace
         matchType: "=~"
         value: {{ prepend .Values.allowedNamespaces .Release.Namespace | join "|" | quote }}

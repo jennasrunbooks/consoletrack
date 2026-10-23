@@ -60,7 +60,7 @@ Every process logs one JSON object per line to stdout: `ts`, `level`, `logger`, 
 
 ## The user-impact alert
 
-`DemoAppHighErrorRate` lives in the demo-app chart ([helm/charts/demo-app/templates/prometheusrule.yaml](../helm/charts/demo-app/templates/prometheusrule.yaml), #59). It fires when more than 5% of the traffic generator's requests fail over 2 minutes, for 1 minute, with severity `critical`. It's measured on the client's side: an OOMKilled pod exports nothing, so a rule on the app's own counters would never fire. Alertmanager posts it to `POST /api/v1/alerts/webhook`, which is where the journey starts. Don't add a second copy. `ConsoleTrackApiErrors`, an alert on the API's own 5xx rate, comes with the EKS PR as a `PrometheusRule` in the consoletrack chart.
+`DemoAppHighErrorRate` lives in the demo-app chart ([helm/charts/demo-app/templates/prometheusrule.yaml](../helm/charts/demo-app/templates/prometheusrule.yaml), #59). It fires when more than 5% of the traffic generator's requests fail over 2 minutes, for 1 minute, with severity `critical`. It's measured on the client's side: an OOMKilled pod exports nothing, so a rule on the app's own counters would never fire. It carries `consoletrack_incident: "true"`, the label the consoletrack AlertmanagerConfig routes on, so Alertmanager posts it to `POST /api/v1/alerts/webhook`, which is where the journey starts. Symptom alerts such as `KubePodCrashLooping` don't carry it: they stay in Alertmanager and Grafana, where the agent can query them, instead of opening a second incident (#79). Don't add a second copy. `ConsoleTrackApiErrors`, an alert on the API's own 5xx rate, comes with the EKS PR as a `PrometheusRule` in the consoletrack chart.
 
 ## Privacy
 

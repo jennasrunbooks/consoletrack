@@ -131,7 +131,13 @@ OOM_LOG = "2026-10-16 11:58:01,204 INFO demo_app serving on :8080, S3 read off"
 IMAGE = "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234"
 
 
-def revision(number: int, memory_limit: str, *, current: bool) -> dict[str, Any]:
+def revision(
+    number: int,
+    memory_limit: str,
+    *,
+    current: bool,
+    remediation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """One get_rollout_history revision, shaped like k8s-mcp's."""
     return {
         "revision": number,
@@ -148,6 +154,7 @@ def revision(number: int, memory_limit: str, *, current: bool) -> dict[str, Any]
             }
         },
         "change_cause": None,
+        "remediation": remediation,
     }
 
 

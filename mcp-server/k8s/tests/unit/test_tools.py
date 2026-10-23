@@ -306,6 +306,47 @@ def test_get_rollout_history(tools: K8sTools, kube: FakeKube) -> None:
     assert "not a failure" in result["note"]
 
 
+def test_get_rollout_history_marks_consoletracks_own_revisions(
+    tools: K8sTools, kube: FakeKube
+) -> None:
+    """#79: the apply loop's fix and its rollback are revisions too. Without the annotation the
+    agent read the rollback as a human lowering the limit and proposed rolling back to the fix
+    that had just OOMed."""
+    image = "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc123"
+    ours = {"consoletrack.io/remediation": "7"}
+    kube.replica_sets = [
+        replica_set(
+            3, image, replicas=1, annotations={**ours, "consoletrack.io/action": "rollback"}
+        ),
+        replica_set(
+            2,
+            image,
+            replicas=0,
+            memory_limit="256Mi",
+            annotations={**ours, "consoletrack.io/action": "patch"},
+        ),
+        replica_set(1, image, replicas=0),
+        # Malformed: not passed on.
+        replica_set(
+            4,
+            image,
+            replicas=0,
+            annotations={"consoletrack.io/remediation": "x", "consoletrack.io/action": "patch"},
+        ),
+        replica_set(5, image, replicas=0, annotations={**ours, "consoletrack.io/action": "delete"}),
+    ]
+    result = tools.get_rollout_history("demo", "demo-app")
+    by_revision = {r["revision"]: r["remediation"] for r in result["revisions"]}
+    assert by_revision == {
+        5: None,
+        4: None,
+        3: {"id": 7, "action": "rollback"},
+        2: {"id": 7, "action": "patch"},
+        1: None,
+    }
+    assert "never a revision to roll back to" in result["note"]
+
+
 def states(result: dict) -> list[tuple[int, bool, str, int, int]]:
     return [
         (r["revision"], r["current"], r["state"], r["desired_replicas"], r["ready_replicas"])

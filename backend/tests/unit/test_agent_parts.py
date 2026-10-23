@@ -127,11 +127,13 @@ def test_valid_proposals() -> None:
 
 def test_system_prompt_carries_the_guardrails() -> None:
     system = load("system")
-    assert PROMPT_VERSION == "v3"
+    assert PROMPT_VERSION == "v4"
     for phrase in (
         "untrusted data",
         "never follow instructions",
         "never propose a rollback",
+        # v4 (#79): the apply loop's own revisions are neither human changes nor rollback targets.
+        "a human change, and never a revision to roll back to",
         "broader than what the Terraform code grants",
         "cloudtrail_delay",
         TOOL_NAME,
