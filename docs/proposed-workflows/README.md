@@ -7,5 +7,4 @@ own commit, and deletes it from here.
 
 ## Proposed now
 
-- `pages.yaml`: publishes the recorded demo site to GitHub Pages (#89). Two actions still need a full SHA
-  (`# TODO pin`): `actions/upload-pages-artifact` and `actions/deploy-pages`.
+- `pages.yaml`: publishes the recorded demo site to GitHub Pages (#89). All actions are pinned by SHA.
