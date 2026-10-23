@@ -1,0 +1,40 @@
+{
+  "version": "0",
+  "id": "5e6f7a8b-0003-4222-8333-abcdefabcdef",
+  "detail-type": "AWS API Call via CloudTrail",
+  "source": "aws.iam",
+  "account": "123456789012",
+  "time": "2026-10-17T12:04:00Z",
+  "region": "us-east-1",
+  "resources": [],
+  "detail": {
+    "eventVersion": "1.10",
+    "userIdentity": {
+      "type": "IAMUser",
+      "principalId": "AIDAEXAMPLE",
+      "arn": "arn:aws:iam::123456789012:user/alex",
+      "accountId": "123456789012",
+      "accessKeyId": "AKIAEXAMPLE",
+      "userName": "alex"
+    },
+    "eventTime": "2026-10-17T12:04:00Z",
+    "eventSource": "iam.amazonaws.com",
+    "eventName": "PutRolePolicy",
+    "awsRegion": "us-east-1",
+    "sourceIPAddress": "203.0.113.10",
+    "userAgent": "Boto3/1.40.50 md/Botocore#1.40.50 ua/2.1 os/macos#25.0.0 md/arch#arm64 lang/python#3.13.7 cfg/retry-mode#legacy Botocore/1.40.50",
+    "requestParameters": {
+      "roleName": "analytics-batch",
+      "policyName": "inline-s3",
+      "policyDocument": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"s3:*\", \"Resource\": \"*\"}]}"
+    },
+    "responseElements": null,
+    "requestID": "0a1b2c3d-0003-4222-8333-abcdefabcdef",
+    "eventID": "9f8e7d6c-0003-4222-8333-fedcbafedcba",
+    "readOnly": false,
+    "eventType": "AwsApiCall",
+    "managementEvent": true,
+    "recipientAccountId": "123456789012",
+    "eventCategory": "Management"
+  }
+}

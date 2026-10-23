@@ -1,4 +1,5 @@
-"""SQLAlchemy models for the seven tables in product-spec.md → Workflow and data model.
+"""SQLAlchemy models for the seven tables in product-spec.md → Workflow and data model, plus the
+intake worker's health report.
 
 Columns beyond the spec's "key columns" are the ones `openapi.yaml` needs to render a change or
 incident (region, user agent, request parameters, title, drift, labels, ...).
@@ -19,6 +20,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -298,3 +300,25 @@ class RemediationRow(TimestampMixin, Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # The W3C traceparent of the `remediation.gate` span: the apply loop continues that trace.
     traceparent: Mapped[str | None] = mapped_column(String(64))
+
+
+class IntakeReportRow(Base):
+    """The intake worker's last report, one row (id 1). The API and the worker run in different
+    pods, so the database is how the health endpoint learns what the worker saw.
+
+    A null field means the worker's last call for it failed (product-spec.md → Intake health),
+    never "keep the previous value".
+    """
+
+    __tablename__ = "intake_reports"
+    __table_args__ = (CheckConstraint("id = 1", name="single_row"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    # The newest canary event time (CloudTrail's eventTime), kept across reports.
+    last_canary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    queue_backlog: Mapped[int | None] = mapped_column(Integer)
+    oldest_message_age_seconds: Mapped[int | None] = mapped_column(Integer)
+    dead_letter_count: Mapped[int | None] = mapped_column(Integer)
+    trail_logging: Mapped[bool | None] = mapped_column(Boolean)
+    # When the worker last wrote the queue and trail fields; stale means the worker isn't running.
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

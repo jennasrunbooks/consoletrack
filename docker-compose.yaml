@@ -153,6 +153,11 @@ services:
       TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-haiku-5-5}
       TRIAGE_MODEL_ESCALATION: ${TRIAGE_MODEL_ESCALATION:-claude-sonnet-5-5}
       WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      # The change intake reads ElasticMQ, unsigned; scripts/replay-fixtures.py fills it.
+      INTAKE_MODE: replay
+      CHANGES_QUEUE_URL: http://elasticmq:9324/123456789012/ct-changes-use1-local
+      AWS_ENDPOINT_URL_SQS: http://elasticmq:9324
+      AWS_REGION: ${AWS_REGION:-us-east-1}
       # app/telemetry.py: OTLP to the collector. TELEMETRY_EXPORTER=none turns it off.
       TELEMETRY_EXPORTER: ${TELEMETRY_EXPORTER:-otlp}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -160,6 +165,8 @@ services:
       backend:
         condition: service_healthy
       k8s-mcp:
+        condition: service_healthy
+      elasticmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 120)"]

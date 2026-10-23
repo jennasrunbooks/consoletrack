@@ -163,7 +163,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure local-oom-run measure demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run measure demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -623,8 +623,11 @@ local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` 
 	fi
 	rm -f kind-internal.kubeconfig kind-remediator.kubeconfig kind-remediation-policies.yaml
 
+replay-fixtures: ## Send the recorded CloudTrail fixtures to Compose's ElasticMQ (the worker records them)
+	$(BACKEND_RUN) python ../scripts/replay-fixtures.py
+
 demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
-	$(call todo,#9 (scripts/replay-fixtures.py and the worker's replay mode); see #15)
+	$(call todo,#15 (Compose + kind wiring around make replay-fixtures))
 
 demo: env-check-aws ## Run the three cluster fault scenarios (stub)
 	$(call todo,the agent loop workstream; no issue yet)
