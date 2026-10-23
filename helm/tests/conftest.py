@@ -96,7 +96,12 @@ _FALLBACK = {
         ),
     ],
     "local": [
-        ("demo-app", "demo", "demo-app", {"image": {"tag": "local"}}),
+        (
+            "demo-app",
+            "demo",
+            "demo-app",
+            {"image": {"tag": "local"}, "reportCache": {"capMi": 140}},
+        ),
         ("consoletrack", "consoletrack", "consoletrack", _LOCAL),
         (
             "cluster-defaults",

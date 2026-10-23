@@ -104,12 +104,13 @@ def test_other_requests_cache_nothing(headers: dict[str, str]) -> None:
 
 
 def test_default_sizing_outgrows_128mi() -> None:
-    # The scenario's numbers: ~25-50 MiB of app plus a full cache passes a 128Mi limit and fits
-    # in 256Mi with more than 64 MiB to spare.
+    # The app's own default is kind's sizing (no boto3: 18 MiB measured, #79): a full cache
+    # passes a 128Mi limit and fits in 256Mi with more than 64 MiB to spare. The chart sets
+    # DEMO_REPORT_CACHE_MI per cluster (96 on EKS, where the app is 73 MiB).
     cfg = Config()
     assert (cfg.report_mi, cfg.report_cache_mi) == (2, 140)
-    assert 25 + cfg.report_cache_mi > 128
-    assert 256 - (50 + cfg.report_cache_mi) >= 64
+    assert 18 + cfg.report_cache_mi > 128
+    assert 256 - (18 + cfg.report_cache_mi) >= 64
 
 
 def test_no_cache_means_no_allocation() -> None:

@@ -17,18 +17,21 @@ aws:
   bucket: ""
   objectKey: seed.txt
 
-# The app uses ~50 MiB (~25 MiB on kind, where boto3 is never loaded), plus the report cache
-# under the OOM fault. 128Mi fits the app alone, not a full cache: see faults.oom.
+# The app uses 73 MiB on EKS (boto3 loaded, arm64) and 18 MiB on kind (no boto3), measured with
+# make measure / make local-measure (#79), plus the report cache under the OOM fault. 128Mi fits
+# the app alone, not a full cache: see faults.oom.
 resources:
   requests: {cpu: 10m, memory: 64Mi}
   limits: {cpu: 200m, memory: 128Mi}
 
 # Every `X-Demo-Report: large` request adds perRequestMi to an in-memory cache bounded at capMi
 # (DEMO_REPORT_MI, DEMO_REPORT_CACHE_MI). Always set, whatever the faults: only the traffic
-# generator's requests decide whether the cache fills.
+# generator's requests decide whether the cache fills. capMi is sized for EKS: the app's measured
+# 73 MiB plus 96 is a 169 MiB peak (with 140 it measured 213 MiB, flat). kind's app is 55 MiB
+# smaller, so its cache is 140 (helm/environments/local.yaml: demoReportCacheMi): 158 MiB measured.
 reportCache:
   perRequestMi: 2
-  capMi: 140
+  capMi: 96
 
 probes:
   path: /healthz
@@ -41,8 +44,9 @@ faults:
   # changes: it sends `X-Demo-Report: large` on every request, so at loadgen.rps the cache passes
   # the 128Mi limit within about 15s of each start: OOMKilled under traffic, CrashLoopBackOff,
   # with no new demo-app revision. The fix the agent should find is set_memory_limit to 256Mi:
-  # exactly oom-memory-bump's 2x, under its 512Mi ceiling, and a full cache plus the app
-  # (~140 + 50 MiB on EKS) leaves ~65 MiB of headroom with the fault still on.
+  # exactly oom-memory-bump's 2x, under its 512Mi ceiling. The peak with the fault on is about
+  # 170 MiB on both clusters: 41 MiB over 128Mi, so the OOM is certain, and 87 MiB of headroom
+  # under 256Mi on EKS (98 MiB on kind), so the fix holds.
   oom: false
   # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
   badImage: false
