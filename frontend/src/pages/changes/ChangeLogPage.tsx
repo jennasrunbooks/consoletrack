@@ -12,6 +12,7 @@ import {
   VIA_LABELS,
 } from "../../lib/format";
 import { Pagination } from "../../components/Pagination";
+import { SAMPLE_DATA } from "../../lib/mode";
 import { useNow } from "../../lib/useNow";
 import { useResource } from "../../lib/useResource";
 import { DebouncedInput } from "./DebouncedInput";
@@ -25,8 +26,6 @@ import {
   toQuery,
   type Filters,
 } from "./filters";
-
-const SAMPLE_DATA = import.meta.env.MODE === "mock";
 
 export function ChangeLogPage() {
   const [params, setParams] = useSearchParams();
