@@ -17,6 +17,9 @@
 #                                   the local API (`make local-incidents`)
 #   scripts/local-kind.sh measure   demo-app's memory under the OOM fault with a 512Mi limit
 #                                   (`make local-measure`, #79)
+#   scripts/local-kind.sh oom-prepare, oom-run
+#                                   one OOM acceptance run, around a database reset
+#                                   (`make local-oom-run`, #79)
 #
 # Only kube-prometheus-stack and demo-app are installed. Compose provides Postgres (so no
 # CloudNativePG), the backend and dashboard (so no consoletrack release, Gateway API CRDs, or
@@ -309,34 +312,50 @@ measure_cleanup() {
 	exit "$rc"
 }
 
-# An instant PromQL query through the API server's service proxy (no port-forward), in MiB.
-promql_mib() {
+# An instant PromQL query through the API server's service proxy (no port-forward): the first
+# series' value, or "no data".
+promql_value() {
 	local query
 	query=$(jq -rn --arg q "$1" '$q | @uri')
 	kc get --raw "/api/v1/namespaces/monitoring/services/kube-prometheus-stack-prometheus:9090/proxy/api/v1/query?query=$query" |
-		jq -r '.data.result[0].value[1] // null
-			| if . == null then "no data" else "\(tonumber / 1048576 | floor) MiB" end'
+		jq -r '.data.result[0].value[1] // null | if . == null then "no data" else tonumber end'
 }
 
-# Until the dashboard's Incidents page lands: log in as admin with the generated local password
-# (never printed) and show each incident with the agent's analysis and proposal.
-incidents() {
-	local pw jar base id
+promql_mib() {
+	local value
+	value=$(promql_value "$1")
+	if [ "$value" = "no data" ]; then echo "$value"; else jq -rn --argjson v "$value" '"\($v / 1048576 | floor) MiB"'; fi
+}
+
+# The local API as admin, with the generated local password (never printed): api_login sets
+# api_base and api_jar (a cookie file the caller removes), api GETs a path.
+api_login() {
+	local pw
 	for tool in curl jq; do
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
 	pw=$($compose exec -T backend cat /run/consoletrack/admin-password 2>/dev/null) ||
 		die "no generated admin password (ADMIN_PASSWORD_HASH is set); log in to the dashboard instead"
-	base=http://localhost:${DASHBOARD_PORT:-8080}
-	jar=$(mktemp)
+	api_base=http://localhost:${DASHBOARD_PORT:-8080}
+	api_jar=$(mktemp)
 	jq -n --arg p "$pw" '{username: "admin", password: $p}' |
-		curl -fsS -c "$jar" -o /dev/null -H 'Content-Type: application/json' --data @- \
-			"$base/api/v1/auth/login" || {
-		rm -f "$jar"
-		die "login failed at $base"
+		curl -fsS -c "$api_jar" -o /dev/null -H 'Content-Type: application/json' --data @- \
+			"$api_base/api/v1/auth/login" || {
+		rm -f "$api_jar"
+		die "login failed at $api_base"
 	}
-	for id in $(curl -fsS -b "$jar" "$base/api/v1/incidents?page_size=100" | jq -r '.items[].id'); do
-		curl -fsS -b "$jar" "$base/api/v1/incidents/$id" | jq '{
+}
+
+api() {
+	curl -fsS -b "$api_jar" "$api_base$1"
+}
+
+# Until the dashboard's Incidents page lands: each incident with the agent's analysis and proposal.
+incidents() {
+	local id
+	api_login
+	for id in $(api "/api/v1/incidents?page_size=100" | jq -r '.items[].id'); do
+		api "/api/v1/incidents/$id" | jq '{
 			id, alertname, workload, status, opened_at, resolved_at,
 			root_cause: .analysis.root_cause, confidence: .analysis.confidence,
 			agent_run: (.analysis.agent_run | if . then {model, prompt_version, escalated, tool_calls, outcome} else null end),
@@ -346,7 +365,176 @@ incidents() {
 			} else null end)
 		}'
 	done
-	rm -f "$jar"
+	rm -f "$api_jar"
+}
+
+# --- One OOM acceptance run (make local-oom-run, #79) ------------------------------------------
+# oom-prepare (before the database reset): the fault off; demo-app recreated if its rollout history
+# has a revision that isn't ConsoleTrack's own (the agent would read it as a human change); then a
+# wait until the app has served two minutes without errors and Alertmanager holds no
+# DemoAppHighErrorRate, so the run's alert is a new episode that reaches the fresh database.
+# oom-run (after it): the fault on, the incident followed until its fix finishes or needs a human,
+# a summary with PASS or FAIL, and the fault off again (also when interrupted).
+
+oom_poll=${OOM_RUN_POLL:-20}
+quiet_poll=${OOM_QUIET_POLL:-15}
+quiet_timeout=${OOM_QUIET_TIMEOUT:-900}
+run_timeout=${OOM_RUN_TIMEOUT:-1500}
+diagnose_after=${OOM_DIAGNOSE_AFTER:-480}
+
+oom_prepare() {
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-oom-run\` (HELM_DRIVER=configmap)"
+	for tool in curl jq; do
+		command -v "$tool" >/dev/null || die "$tool is not installed"
+	done
+	echo "local-kind: fault off"
+	sync_demo_app >/dev/null
+	if ! history_is_clean; then
+		echo "local-kind: demo-app's rollout history has a revision that isn't ConsoleTrack's; recreating it"
+		kc -n demo delete deployment demo-app --wait >/dev/null
+		sync_demo_app >/dev/null
+	fi
+	kc -n demo rollout status deployment/demo-app --timeout=3m >/dev/null
+	echo "local-kind: rollout history: $(kc -n demo rollout history deployment/demo-app | grep -cE '^[0-9]+') revision(s)"
+	echo "local-kind: waiting for 2 minutes without errors and no DemoAppHighErrorRate in Alertmanager"
+	wait_for quiet "$quiet_timeout" "$quiet_poll"
+	echo "local-kind: quiet; ready for the run"
+}
+
+# Every ReplicaSet of demo-app other than the current revision is ConsoleTrack's own.
+history_is_clean() {
+	local current
+	current=$(kc -n demo get deployment demo-app \
+		-o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}' 2>/dev/null) || return 0
+	kc -n demo get replicasets -o json | jq -e --arg current "$current" '
+		[.items[]
+		 | select(any(.metadata.ownerReferences[]?; .kind == "Deployment" and .name == "demo-app"))
+		 | .metadata.annotations
+		 | select(.["deployment.kubernetes.io/revision"] != $current)
+		 | select(.["consoletrack.io/remediation"] == null)]
+		| length == 0' >/dev/null
+}
+
+quiet() {
+	local errors
+	errors=$(promql_value 'sum(rate(demo_client_requests_total{namespace="demo",result!="ok"}[2m])) or vector(0)')
+	[ "$errors" = 0 ] && ! alert_active
+}
+
+alert_active() {
+	local pod
+	pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
+	kc -n monitoring exec "$pod" -c alertmanager -- \
+		amtool alert query --alertmanager.url=http://localhost:9093 2>/dev/null | grep -qw DemoAppHighErrorRate
+}
+
+# wait_for <check> <timeout s> <poll s>: until the check passes; a line each minute meanwhile.
+wait_for() {
+	local check=$1 timeout=$2 poll=$3 waited=0
+	until "$check"; do
+		[ "$waited" -lt "$timeout" ] || die "still not $check after $((timeout / 60)) minutes"
+		sleep "$poll"
+		waited=$((waited + poll))
+		[ $((waited % 60)) -ge "$poll" ] || echo "local-kind:   still waiting ($((waited / 60)) min)"
+	done
+}
+
+# One line per change: incident status | proposal, its status and gate mode | the last step.
+oom_state='"\(.status) | \(.remediation.kind // "no proposal") \(.remediation.status // "") \(.remediation.mode // "")" +
+	(if (.remediation.steps // []) | length > 0 then " | \(.remediation.steps[-1].step)" else "" end)'
+# The run is over: the fix finished, or there is nothing left the run can wait for.
+# shellcheck disable=SC2016 # $s is jq's, not the shell's
+oom_done='(.remediation.status // "") as $s
+	| ($s == "succeeded" or $s == "failed" or $s == "rejected")
+	or .status == "closed"
+	or (.status == "resolved" and (.remediation == null or $s == "proposed"))
+	or ($s == "proposed" and .remediation.kind != "set_memory_limit")
+	or (.status == "awaiting_review" and .analysis != null and .remediation == null)'
+
+oom_run() {
+	local started elapsed id detail state last="" hinted="" diagnosed="" total
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-oom-run\` (HELM_DRIVER=configmap)"
+	api_login
+	total=$(api "/api/v1/incidents?page_size=1" | jq '.total')
+	[ "$total" = 0 ] || { rm -f "$api_jar"; die "the database already has incidents; \`make local-oom-run\` resets it first"; }
+	trap oom_cleanup EXIT
+	echo "local-kind: OOM fault on at $(date -u +%H:%M:%SZ); an incident usually opens 4-5 minutes later"
+	sync_demo_app --state-values-set demoFault=oom >/dev/null
+	started=$(date +%s)
+	while :; do
+		sleep "$oom_poll"
+		elapsed=$(($(date +%s) - started))
+		if [ "$elapsed" -ge "$run_timeout" ]; then
+			echo "local-kind: gave up after $((run_timeout / 60)) minutes"
+			break
+		fi
+		id=$(api "/api/v1/incidents?page_size=100" | jq -r '[.items[].id] | min // empty')
+		if [ -z "$id" ]; then
+			if [ "$elapsed" -ge "$diagnose_after" ] && [ -z "$diagnosed" ]; then
+				oom_diagnose
+				diagnosed=1
+			fi
+			continue
+		fi
+		detail=$(api "/api/v1/incidents/$id")
+		state=$(jq -r "$oom_state" <<<"$detail")
+		if [ "$state" != "$last" ]; then
+			printf 'local-kind: %2d:%02d incident %s: %s\n' $((elapsed / 60)) $((elapsed % 60)) "$id" "$state"
+			last=$state
+		fi
+		jq -e "$oom_done" <<<"$detail" >/dev/null && break
+		if [ -z "$hinted" ] && jq -e '.remediation.status == "proposed" and .remediation.mode == "manual"' <<<"$detail" >/dev/null; then
+			echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail")"
+			echo "local-kind: approve it at $api_base/incidents/$id (admin password: make local printed it); waiting"
+			hinted=1
+		fi
+	done
+	oom_summary
+}
+
+oom_diagnose() {
+	echo "local-kind: no incident after $((diagnose_after / 60)) minutes. Alertmanager holds:"
+	local pod
+	pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
+	kc -n monitoring exec "$pod" -c alertmanager -- \
+		amtool alert query --alertmanager.url=http://localhost:9093 2>/dev/null | sed 's/^/  /'
+	echo "local-kind: the backend's last webhook requests (202: delivered; 401: token still reloading):"
+	$compose logs backend 2>/dev/null | grep 'alerts/webhook' | tail -n 5 | sed 's/^/  /'
+}
+
+# PASS: exactly one incident, and its set_memory_limit fix succeeded.
+oom_summary() {
+	local list
+	list=$(api "/api/v1/incidents?page_size=100")
+	echo "local-kind: ---- result ----"
+	jq -r '"  incidents: \(.total) (\([.items[].alertname] | join(", ")))"' <<<"$list"
+	[ -n "${detail:-}" ] || { echo "  RESULT: FAIL (no incident)"; return 1; }
+	jq -r '
+		"  triage: \(.analysis.confidence // "-") confidence, prompt \(.analysis.agent_run.prompt_version // "-"), \(.analysis.agent_run.tool_calls // "-") tool calls",
+		"  proposal: \(.remediation.kind // "none") \(.remediation.payload.memory_limit // "")",
+		"  gate: \(.remediation.mode // "-") (\(.remediation.gate_reason // "-"))\(if .remediation.decided_by == "admin" then ", approved by admin" else "" end)",
+		"  remediation: \(.remediation.status // "-")",
+		"  last step: \((.remediation.steps // [])[-1] | if . then "\(.step) \(if .ok then "ok" else "FAILED" end): \(.detail)" else "-" end)"
+	' <<<"$detail"
+	if [ "$(jq '.total' <<<"$list")" = 1 ] && jq -e '.remediation.kind == "set_memory_limit" and .remediation.status == "succeeded"' <<<"$detail" >/dev/null; then
+		echo "  RESULT: PASS"
+	else
+		echo "  RESULT: FAIL"
+		return 1
+	fi
+}
+
+oom_cleanup() {
+	local rc=$?
+	trap - EXIT
+	set +e
+	rm -f "$api_jar"
+	echo "local-kind: fault off"
+	sync_demo_app >/dev/null || {
+		echo "local-kind: turning the fault off failed; run \`make local-fault FAULT=off\`" >&2
+		exit 1
+	}
+	exit "$rc"
 }
 
 case "${1:-}" in
@@ -355,5 +543,7 @@ alerts) alerts ;;
 fault) fault "${2:-}" ;;
 incidents) incidents ;;
 measure) measure ;;
-*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents|measure" ;;
+oom-prepare) oom_prepare ;;
+oom-run) oom_run ;;
+*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents|measure|oom-prepare|oom-run" ;;
 esac

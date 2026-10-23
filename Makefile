@@ -161,7 +161,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -577,6 +577,14 @@ local-incidents: ## Local incidents with the agent's root cause and proposal (un
 
 local-measure: ## demo-app's memory under the OOM fault with the limit at 512Mi: per minute, then 5-minute peaks (~8 min; MEASURE_MINUTES)
 	scripts/local-kind.sh measure
+
+# The database reset between the two halves gives each run a clean slate: no earlier incidents,
+# and no earlier auto fix counting against oom-memory-bump's one-per-hour limit.
+local-oom-run: env-check-local ## One OOM acceptance run on kind: clean demo-app, fresh database, fault on, follow the fix to PASS/FAIL, fault off (~15 min)
+	scripts/local-kind.sh oom-prepare
+	$(COMPOSE_KIND) down --volumes
+	$(MAKE) --no-print-directory local SKIP_BUILD=1
+	scripts/local-kind.sh oom-run
 
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
 	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(LOCAL_CLUSTER); then \

@@ -8,6 +8,7 @@ Nothing that runs a pod, and no Secret (the script creates consoletrack-webhook)
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import urllib.parse
@@ -339,3 +340,235 @@ def test_measure_says_when_a_series_is_missing(tmp_path: Path) -> None:
     result, _ = run_measure(tmp_path, NO_CACHE="1")
     assert result.returncode == 0, result.stderr
     assert "report cache no data" in result.stdout
+
+
+# --- make local-oom-run: `oom-prepare` and `oom-run` -------------------------------------------
+
+OOM_KUBECTL = r"""#!/usr/bin/env bash
+echo "kubectl $*" >> "$CALLS"
+pop() { local first; first=$(head -n 1 "$1"); [ "$(wc -l < "$1")" -gt 1 ] && sed -i.bak 1d "$1"; echo "$first"; }
+case " $* " in
+*" get deployment demo-app "*) echo -n 1 ;;
+*" get replicasets "*) cat "$RS_JSON" ;;
+*" rollout history "*) printf 'deployment.apps/demo-app\nREVISION  CHANGE-CAUSE\n1         <none>\n' ;;
+*" get pods "*) echo pod/alertmanager-kube-prometheus-stack-alertmanager-0 ;;
+*" amtool "*) pop "$ALERTS" | tr '|' '\n' ;;
+*" get --raw "*) echo '{"data":{"result":[{"value":[0,"0"]}]}}' ;;
+esac
+exit 0
+"""
+# Answers the API from sequence files: one line per call, the last line repeating.
+OOM_CURL = r"""#!/usr/bin/env bash
+pop() { local first; first=$(head -n 1 "$1"); [ "$(wc -l < "$1")" -gt 1 ] && sed -i.bak 1d "$1"; echo "$first"; }
+url=${*: -1}
+case "$url" in
+*/auth/login) cat > /dev/null; exit 0 ;;
+*/api/v1/incidents\?*) pop "$LISTS" ;;
+*/api/v1/incidents/*) pop "$DETAILS" ;;
+esac
+"""
+OOM_DOCKER = r"""#!/usr/bin/env bash
+echo "docker $*" >> "$CALLS"
+case "$*" in *"cat /run/consoletrack/admin-password"*) echo test-password ;; esac
+exit 0
+"""
+
+
+def incident(status: str, remediation: dict | None = None) -> str:
+    return json.dumps(
+        {
+            "id": 1,
+            "alertname": "DemoAppHighErrorRate",
+            "status": status,
+            "analysis": None
+            if status == "triaging"
+            else {
+                "confidence": "high",
+                "agent_run": {"prompt_version": "v4", "tool_calls": 7},
+            },
+            "remediation": remediation,
+        }
+    )
+
+
+def fix(
+    status: str, mode: str = "auto", kind: str = "set_memory_limit", **extra: object
+) -> dict:
+    steps = [
+        {"step": "verify", "ok": status == "succeeded", "detail": "error ratio 0.000"}
+    ]
+    return {
+        "kind": kind,
+        "status": status,
+        "mode": mode,
+        "gate_reason": "policy oom-memory-bump applies it",
+        "payload": {"memory_limit": "256Mi"},
+        "steps": steps if status in ("succeeded", "failed") else [],
+        **extra,
+    }
+
+
+EMPTY = json.dumps({"total": 0, "items": []})
+ONE = json.dumps(
+    {"total": 1, "items": [{"id": 1, "alertname": "DemoAppHighErrorRate"}]}
+)
+
+
+def run_oom(
+    tmp_path: Path,
+    step: str,
+    *,
+    lists: list[str] | None = None,
+    details: list[str] | None = None,
+    alerts: list[str] | None = None,
+    replica_sets: list[dict] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (
+        ("kubectl", OOM_KUBECTL),
+        ("curl", OOM_CURL),
+        ("docker", OOM_DOCKER),
+        ("helmfile", FAKE_HELMFILE),
+    ):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    files = {
+        "LISTS": "\n".join(lists or [EMPTY]),
+        "DETAILS": "\n".join(details or ["{}"]),
+        "ALERTS": "\n".join(alerts or ["Watchdog"]),
+        "RS_JSON": json.dumps({"items": replica_sets or []}),
+        "CALLS": "",
+    }
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "HELM_DRIVER": "configmap",
+        "OOM_RUN_POLL": "0",
+    }
+    env |= {"OOM_QUIET_POLL": "1", "OOM_QUIET_TIMEOUT": "30"}
+    for name, text in files.items():
+        (tmp_path / name).write_text(text + "\n" if text else "")
+        env[name] = str(tmp_path / name)
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts/local-kind.sh"), step],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,  # the tests assert the exit code
+    )
+    return result, (tmp_path / "CALLS").read_text().splitlines()
+
+
+def rs(revision: int, **annotations: str) -> dict:
+    return {
+        "metadata": {
+            "annotations": {
+                "deployment.kubernetes.io/revision": str(revision),
+                **annotations,
+            },
+            "ownerReferences": [{"kind": "Deployment", "name": "demo-app"}],
+        }
+    }
+
+
+needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+
+
+@needs_jq
+def test_prepare_keeps_a_history_of_consoletracks_own_revisions(tmp_path: Path) -> None:
+    patch = {"consoletrack.io/remediation": "1", "consoletrack.io/action": "patch"}
+    result, calls = run_oom(
+        tmp_path, "oom-prepare", replica_sets=[rs(1), rs(2, **patch)]
+    )
+    assert result.returncode == 0, result.stderr
+    assert not any(" delete deployment " in c for c in calls)
+    assert "ready for the run" in result.stdout
+
+
+@needs_jq
+def test_prepare_recreates_demo_app_when_a_human_revision_would_mislead_triage(
+    tmp_path: Path,
+) -> None:
+    """The measurement's 512Mi revision made the agent propose a rollback, twice."""
+    result, calls = run_oom(tmp_path, "oom-prepare", replica_sets=[rs(1), rs(2), rs(3)])
+    assert result.returncode == 0, result.stderr
+    assert any("-n demo delete deployment demo-app" in c for c in calls)
+    assert "recreating it" in result.stdout
+
+
+@needs_jq
+def test_prepare_waits_for_the_alert_to_clear(tmp_path: Path) -> None:
+    """A database reset while the alert still fires: the new backend never hears of it."""
+    firing = "Watchdog|DemoAppHighErrorRate"
+    result, calls = run_oom(
+        tmp_path, "oom-prepare", alerts=[firing, firing, "Watchdog"]
+    )
+    assert result.returncode == 0, result.stderr
+    assert sum(" amtool " in c for c in calls) == 3
+
+
+@needs_jq
+def test_run_passes_when_the_auto_fix_succeeds(tmp_path: Path) -> None:
+    details = [
+        incident("triaging"),
+        incident("remediating", fix("running")),
+        incident("remediating", fix("succeeded")),
+    ]
+    result, calls = run_oom(
+        tmp_path, "oom-run", lists=[EMPTY, EMPTY, ONE], details=details
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    out = result.stdout
+    assert "incident 1: triaging | no proposal" in out
+    assert "incident 1: remediating | set_memory_limit succeeded auto | verify" in out
+    assert "proposal: set_memory_limit 256Mi" in out
+    assert "RESULT: PASS" in out
+    syncs = [c for c in calls if c.startswith("helmfile ")]
+    assert (
+        "demoFault=oom" in syncs[0] and "demoFault" not in syncs[-1]
+    )  # fault off at the end
+
+
+@needs_jq
+def test_run_asks_for_approval_and_waits(tmp_path: Path) -> None:
+    proposed = fix(
+        "proposed", mode="manual", gate_reason="the agent's confidence is medium"
+    )
+    details = [
+        incident("awaiting_review", proposed),
+        incident("remediating", fix("succeeded", mode="manual", decided_by="admin")),
+    ]
+    result, _ = run_oom(tmp_path, "oom-run", lists=[EMPTY, ONE], details=details)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (
+        "the gate sent it to a human: the agent's confidence is medium" in result.stdout
+    )
+    assert "approve it at http://localhost:8080/incidents/1" in result.stdout
+    assert "approved by admin" in result.stdout
+    assert "RESULT: PASS" in result.stdout
+
+
+@needs_jq
+def test_run_fails_on_a_rollback_proposal_and_turns_the_fault_off(
+    tmp_path: Path,
+) -> None:
+    rollback = fix("proposed", mode="manual", kind="rollback")
+    result, calls = run_oom(
+        tmp_path,
+        "oom-run",
+        lists=[EMPTY, ONE],
+        details=[incident("awaiting_review", rollback)],
+    )
+    assert result.returncode == 1
+    assert "proposal: rollback" in result.stdout
+    assert "RESULT: FAIL" in result.stdout
+    assert "demoFault" not in [c for c in calls if c.startswith("helmfile ")][-1]
+
+
+@needs_jq
+def test_run_refuses_a_database_with_incidents(tmp_path: Path) -> None:
+    result, calls = run_oom(tmp_path, "oom-run", lists=[ONE])
+    assert result.returncode == 1
+    assert "already has incidents" in result.stderr
+    assert not any(c.startswith("helmfile ") for c in calls)  # the fault never went on
