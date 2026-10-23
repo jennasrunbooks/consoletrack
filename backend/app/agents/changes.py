@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from app.agents.prompts import render
 from app.agents.runner import AgentRunner, RunResult
@@ -28,29 +30,47 @@ from app.settings import Settings
 log = logging.getLogger(__name__)
 
 
-def change_prompt(row: ChangeRow, *, aws_available: bool) -> str:
-    record = {
-        "cloudtrail_event_id": row.cloudtrail_event_id,
-        "event_time": row.event_time.isoformat(),
-        "event_name": row.event_name,
-        "service": row.service,
-        "region": row.region,
-        "resource_arn": row.resource_arn,
-        "resource_name": row.resource_name,
-        "tf_address": row.tf_address,
-        "principal_arn": row.principal_arn,
-        "session_name": row.session_name,
-        "via": row.via.value,
-        "source_ip": row.source_ip,
-        "user_agent": row.user_agent,
-        "request_parameters": row.request_parameters,
-        "drift": row.drift,
-        "intake_risk": row.risk.value if row.risk else None,
-    }
+@dataclass(frozen=True)
+class ChangeBrief:
+    """What the prompt reads from a change, copied while its session is open.
+
+    A unit of work that exits without a commit rolls back, which expires every loaded row, so
+    the ORM row can't be read after the `with` block.
+    """
+
+    change_id: int
+    record: dict[str, Any]
+
+
+def change_brief(row: ChangeRow) -> ChangeBrief:
+    return ChangeBrief(
+        change_id=row.id,
+        record={
+            "cloudtrail_event_id": row.cloudtrail_event_id,
+            "event_time": row.event_time.isoformat(),
+            "event_name": row.event_name,
+            "service": row.service,
+            "region": row.region,
+            "resource_arn": row.resource_arn,
+            "resource_name": row.resource_name,
+            "tf_address": row.tf_address,
+            "principal_arn": row.principal_arn,
+            "session_name": row.session_name,
+            "via": row.via.value,
+            "source_ip": row.source_ip,
+            "user_agent": row.user_agent,
+            "request_parameters": row.request_parameters,
+            "drift": row.drift,
+            "intake_risk": row.risk.value if row.risk else None,
+        },
+    )
+
+
+def change_prompt(brief: ChangeBrief, *, aws_available: bool) -> str:
     return render(
         "change_analysis",
-        change_id=row.id,
-        change_json=json.dumps(record, indent=2, sort_keys=True, default=str),
+        change_id=brief.change_id,
+        change_json=json.dumps(brief.record, indent=2, sort_keys=True, default=str),
         aws_note=AWS_AVAILABLE if aws_available else AWS_UNAVAILABLE,
     )
 
@@ -76,22 +96,30 @@ class ChangeAnalysis:
             row = uow.changes.get(change_id)
             if row is None:
                 raise NotFound("change", change_id)
+            brief = change_brief(row)
         model = self._settings.triage_model
+        started = False
         try:
             async with self._toolbox_factory(self._settings) as toolbox:
+                prompt = change_prompt(brief, aws_available=toolbox.aws_available)
+                started = True
                 result = await self._runner.run(
                     subject_type=SubjectType.change,
                     subject_id=change_id,
                     model=model,
-                    task_prompt=change_prompt(row, aws_available=toolbox.aws_available),
+                    task_prompt=prompt,
                     toolbox=toolbox,
                 )
         except ToolsUnavailable as exc:
-            result = self._runner.failed_start(
-                subject_type=SubjectType.change,
-                subject_id=change_id,
-                model=model,
-                detail=f"tools unavailable: {exc}",
+            result = self._failed_start(change_id, model, f"tools unavailable: {exc}")
+        except Exception as exc:
+            if started:
+                raise
+            # Record a failed run so `max_runs` stops the retries and the change shows why. The
+            # class name only: the message could hold request data.
+            log.exception("change %s: analysis could not start", change_id)
+            result = self._failed_start(
+                change_id, model, f"analysis could not start: {type(exc).__name__}"
             )
         if result.analysis is not None and result.analysis.proposed_remediation is not None:
             log.info("change %s: dropped a proposal; changes are reviewed by hand", change_id)
@@ -105,3 +133,8 @@ class ChangeAnalysis:
                 now=self._clock(),
             )
         return result
+
+    def _failed_start(self, change_id: int, model: str, detail: str) -> RunResult:
+        return self._runner.failed_start(
+            subject_type=SubjectType.change, subject_id=change_id, model=model, detail=detail
+        )
