@@ -121,6 +121,9 @@ test("the first-visit tour has three steps, and dismissing it sticks", async ({ 
   await page.goto("/changes");
   const tour = page.getByRole("region", { name: "Take the 2-minute tour" });
   await expect(tour.getByRole("listitem")).toHaveCount(3);
+  await tour.getByRole("link", { name: /INC-11/ }).click();
+  await expect(page).toHaveURL(/\/incidents\/11$/);
+  await expect(page.getByRole("button", { name: "Approve fix" })).toHaveCount(0); // fixed by the policy gate
   await tour.getByRole("link", { name: /INC-14/ }).click();
   await expect(page).toHaveURL(/\/incidents\/14$/);
   await expect(tour).toBeVisible();
