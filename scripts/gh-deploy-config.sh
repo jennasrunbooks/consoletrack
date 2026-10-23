@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets what .github/workflows/deploy.yaml reads: repository variables (non-secret settings from
+# Sets what .github/workflows/deploy.yaml and terraform.yaml read: repository variables (non-secret settings from
 # .env) and the consoletrack-deploy environment's secrets (Terraform outputs of
 # consoletrack/us-east-1 that contain the account ID or would point at it).
 #
@@ -72,12 +72,23 @@ set_var CLUSTER_NAME "$(out cluster_name)"
 set_var TRAIL_NAME "$(out trail_name)"
 set_var EXPOSURE "${EXPOSURE:-}"
 set_var DOMAIN "${DOMAIN:-}"
+# A repository variable, so a specific /32 here ends up in deploy.yaml's public logs (helmfile's diff
+# prints sourceRanges). Keep it 0.0.0.0/0, or switch it to a consoletrack-deploy secret first.
 set_var ALLOWED_CIDRS "${ALLOWED_CIDRS:-}"
 set_var WATCHED_IAM_PATHS "${WATCHED_IAM_PATHS:-}"
 set_var TRIAGE_MODEL "${TRIAGE_MODEL:-}"
 set_var TRIAGE_MODEL_ESCALATION "${TRIAGE_MODEL_ESCALATION:-}"
 set_var GRAFANA_URL "${GRAFANA_URL:-}"
 set_var DEMO_BUCKET "${DEMO_BUCKET:-}"
+
+# --- Repository variables terraform.yaml reads (its header lists them). Without them a CI apply
+# uses the Terraform defaults, e.g. USE_SPOT=true, which would replace an On-Demand node group.
+set_var ENABLE_BUDGET "${ENABLE_BUDGET:-}"
+set_var BUDGET_LIMIT_USD "${BUDGET_LIMIT_USD:-}"
+set_var DNS_PARENT "${DNS_PARENT:-}"
+set_var K8S_VERSION "${K8S_VERSION:-}"
+set_var USE_SPOT "${USE_SPOT:-}"
+set_var NODE_INSTANCE_TYPE "${NODE_INSTANCE_TYPE:-}"
 
 # --- consoletrack-deploy environment secrets: contain or point at the account ---------------
 set_secret CHANGES_QUEUE_URL "$(out changes_queue_url)"

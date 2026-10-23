@@ -4,14 +4,27 @@
 
 Someone opens the AWS console (or the CLI, CloudShell, an SDK script, or a local `terraform apply`), changes a security group, and moves on. Nobody records why. A week later a pod gets `AccessDenied` and the on-call engineer starts from scratch.
 
-ConsoleTrack catches every out-of-band AWS change within minutes, records who made it, how, and to which Terraform-managed resource, and links later EKS incidents back to the change that most likely caused them. A reviewer can **Revert** it (a gated GitHub workflow re-applies the reviewed Terraform), **Codify** it (open a PR adopting it, Phase 2), or **Accept** it with a note. Either way the change ends up documented. The triage agent only reads. AWS-side fixes always need a human's approval; one narrow cluster fix, raising a memory limit after an OOM kill, is applied automatically, verified, and rolled back if it doesn't work.
+ConsoleTrack catches every out-of-band AWS change within minutes, records who made it, how, and to which Terraform-managed resource, and links later EKS incidents back to the change that most likely caused them. A reviewer can **Accept** it with a note, **Revert** it (a gated GitHub workflow re-applies the reviewed Terraform, Phase 2), or **Codify** it (open a PR adopting it, Phase 2). Either way the change ends up documented. The triage agent only reads. AWS-side fixes always need a human's approval; one narrow cluster fix, raising a memory limit after an OOM kill, is applied automatically, verified, and rolled back if it doesn't work.
 
-![ConsoleTrack change log](docs/mockups/change-log.png)
+## See it in 2 minutes
 
-<sub>Design mockup; replaced with screenshots of the running app before submission.</sub>
+- **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and fixed on its own, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it.
+- **Recorded walkthrough of the live deployment:** <!-- TODO: YouTube link once recorded --> the system running on EKS, clicked through as admin, on the Jenna's Runbooks YouTube channel.
+- **Run it yourself:** `make local` on your machine with kind and Docker ([Try it without AWS](#try-it-without-aws)), or `make up` in your own AWS account ([Deploy to AWS](#deploy-to-aws)).
+
+No logins are shared and no cluster is kept running for visitors: these four are the ways to see it.
+
+| Incident fixed automatically | Change log |
+|---|---|
+| ![Incident detail](docs/screenshots/incident-detail.png) | ![Change log](docs/screenshots/change-log.png) |
+| **Change detail** | **Incidents** |
+| ![Change detail](docs/screenshots/change-details.png) | ![Incidents](docs/screenshots/incidents.png) |
+
+<sub>Dark-theme versions are in [docs/screenshots/](docs/screenshots/).</sub>
 
 ## Contents
 
+- [See it in 2 minutes](#see-it-in-2-minutes)
 - [How it works](#how-it-works)
 - [Try it without AWS](#try-it-without-aws)
 - [Deploy to AWS](#deploy-to-aws)
@@ -92,7 +105,7 @@ make local                     # a kind cluster with Prometheus and the demo app
 # open http://localhost:8080 (DASHBOARD_PORT) and log in as admin with the password make local prints
 ```
 
-The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, the replayed CloudTrail change flow, is still a stub (#9).
+The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, the replayed CloudTrail change flow, is still a stub (#15).
 
 **Run a fault scenario.** This is the on-call loop end to end on kind. A fault breaks the demo app, and the traffic generator's requests start failing. `DemoAppHighErrorRate` fires and Alertmanager posts it to the backend, which opens an incident. The triage worker then investigates through `k8s-mcp` and the Claude API, and proposes a fix for a human to approve.
 
@@ -151,7 +164,7 @@ kubectl --context kind-consoletrack -n monitoring port-forward svc/kube-promethe
 
 CloudNativePG, the Gateway API CRDs, and the `consoletrack` release aren't installed in kind, because Compose runs Postgres, the backend, and the dashboard. Every `kubectl`, `helm`, and `helmfile` call names the `kind-consoletrack` context, so your current context is never used. `LOCAL_KIND=false make local` starts the Compose stack alone.
 
-Still to come, tracked in [#15](https://github.com/jennasrunbooks/consoletrack/issues/15): the worker's change intake, `make demo-replay`, and `aws-mcp` (#9).
+Still to come: `make demo-replay` ([#15](https://github.com/jennasrunbooks/consoletrack/issues/15)) and `aws-mcp` ([#9](https://github.com/jennasrunbooks/consoletrack/issues/9)). The worker's change intake runs against the real queue on EKS; locally the indicator shows Replay.
 
 **Logging in.** There are two fixed accounts, `admin` (can act) and `viewer` (read-only). Locally you can skip the setup below: if `.env` sets no `ADMIN_PASSWORD_HASH`, Compose generates an admin password on first start and `make local` prints it, and it generates the `SESSION_SECRET` the same way. Both live in a Docker volume until `make local-down`. Otherwise, run `make hash-password` once per account and paste each output into `.env` as `ADMIN_PASSWORD_HASH` and `VIEWER_PASSWORD_HASH`; it prints an argon2id hash with every `$` doubled, which `.env` needs because make reads it. Start the stack with `make local` rather than a bare `docker compose up`, so the hash reaches Compose already un-doubled. An account with no hash can't log in. The backend also needs a `SESSION_SECRET` of at least 32 bytes and refuses to start without one. Five failed logins for one username, or from one address, within five minutes lock further attempts for five minutes (`429`).
 
@@ -195,7 +208,7 @@ Terraform is AWS-only; Helmfile owns every chart: it installs everything inside 
 
 **Images.** `make images` builds `backend`, `frontend`, `k8s-mcp`, and `demo-app` (and `aws-mcp` once it has a Dockerfile) for `linux/arm64` with `docker buildx` and pushes them to `ghcr.io/jennasrunbooks/consoletrack-*` tagged with the short commit SHA. It logs in with `gh auth token | docker login ghcr.io -u <you> --password-stdin`, so the GitHub CLI needs the `write:packages` scope (`gh auth refresh -s write:packages`); the token is never printed. Run it on your machine: the devcontainer has no Docker. A new package is private, and the nodes pull without an image pull secret, so once per package (after the first push) open github.com → your profile or org → Packages → `consoletrack-<name>` → Package settings → Change visibility → Public. If you also use the `deploy` workflow, add the repository under "Manage Actions access" with the Write role.
 
-**Access without a port-forward.** `make open` is the default exposure. With `EXPOSURE=alb` (and `DOMAIN`) the dashboard is an HTTPS ALB limited to `ALLOWED_CIDRS` instead, and `make open` prints its URL.
+**Access without a port-forward.** `make open` is the default exposure. With `EXPOSURE=alb` (and `DOMAIN`) the dashboard is an HTTPS ALB limited to `ALLOWED_CIDRS` instead, and `make open` prints its URL. Write each entry in CIDR form (`203.0.113.7/32`, not a bare IP): EC2 rejects a bare address and the Load Balancer Controller never finishes the ALB. ExternalDNS points `DOMAIN` at the ALB about a minute after the Gateway shows `PROGRAMMED True`. If you run this repo's deploy workflow, keep a specific address out of repository variables: helmfile's diff prints `ALLOWED_CIDRS` in the Actions logs, which are public on a public repo.
 
 **Teardown.** `make down` runs `helmfile destroy` for the app (which removes the Gateway, so the ALB goes), any Gateway left over, then the add-ons; waits until no `project=consoletrack` load balancers or load-balancer ENIs remain; and destroys `demo-app/us-east-1` (if present), then `consoletrack/us-east-1`: its node group first, then any network interface the VPC CNI left behind (`scripts/delete-leftover-enis.sh`, also `make clean-enis`), then the rest. Terraform asks for `yes` once per step that has something to destroy (demo-app if present, the node group, the rest); a step with nothing in the state is skipped. `consoletrack/global` and the state bucket stay. `make verify-clean` then lists any leftover `project=consoletrack` load balancers, ENIs (tagged, or in a project VPC), EBS volumes, Elastic IPs, and NAT gateways, and exits non-zero if there are any. `make down-all` also destroys `global` and the state bucket, after you type the bucket name. `make audit-rbac` lists what each ServiceAccount may do (`kubectl auth can-i --list`).
 
@@ -212,13 +225,11 @@ Without it, Revert still works: the dashboard shows `make revert CHANGE=<id>`, w
 
 ### Demo scenarios
 
-```bash
-make demo-drift                # opens port 22 to the internet on the demo security group (no outage)
-make demo-identity             # removes s3:GetObject from the demo app's role → AccessDenied incident
-make demo                      # the three cluster faults (OOM, bad image, bad probe), one at a time
-```
+**OOM, the automatic fix.** On kind, `make local-oom-run` runs one acceptance run end to end (about 15 minutes): a clean demo app and database, the fault on, the incident followed until the fix finishes (PASS or FAIL), then the fault off. `make local-fault FAULT=oom|badImage|badProbe|off` toggles a fault by hand, and `make local-incidents` lists the incidents with the agent's root cause and proposal. The fault's report cache is sized from measurements: a steady 158–159 MiB on both kind and EKS, over the 128Mi limit and under the 256Mi fix. `make measure` (EKS) and `make local-measure` (kind) repeat that measurement at a 512Mi limit.
 
-Each one prints the dashboard link to the change or incident it creates.
+**Console change, the cloud loop.** Open SSH (`0.0.0.0/0`) on a security group in the console. Within about 5 minutes the change log shows who made it, `via: console`, and its risk, and the agent's analysis follows. Accept it with a note. Use `0.0.0.0/0` or a documentation address (`203.0.113.0/24`), never your own, so your IP isn't in the record.
+
+Still stubs, for Phase 2: `make demo-drift` and `make demo-identity` (the scripted versions of the two cloud scenarios, run as the demo "developer" role) and `make demo`.
 
 ## Cost
 
@@ -253,7 +264,7 @@ Claude usage is per triage run; the default model is Haiku-class. Details and so
 | `VPC_CIDR` | `10.0.0.0/16` | VPC range; change it only if it overlaps a network you connect to |
 | `EKS_PUBLIC_ACCESS_CIDRS` | `0.0.0.0/0` | Who can reach the EKS API's public endpoint (IAM still required); keep it open while CI deploys from GitHub-hosted runners |
 | `EXPOSURE` | `port-forward` | `port-forward` (nothing public) or `alb` (needs `DOMAIN`) |
-| `ALLOWED_CIDRS` | your IP | Who can reach the ALB |
+| `ALLOWED_CIDRS` | | Who can reach the ALB, comma-separated, in CIDR form (`203.0.113.7/32`). Required with `EXPOSURE=alb`; `0.0.0.0/0` opens it to everyone |
 | `DOMAIN` | | HTTPS hostname, e.g. `consoletrack.example.com` |
 | `DNS_PARENT` | `external` | `external` (add NS records at your DNS provider) or `route53` |
 | `ENABLE_BUDGET` | `true` | Create a $`BUDGET_LIMIT_USD`/month AWS Budgets alert to `BUDGET_EMAIL` |
@@ -265,18 +276,16 @@ Claude usage is per triage run; the default model is Haiku-class. Details and so
 
 ## Using ConsoleTrack
 
-<!-- TODO: replace mockups with screenshots of the running app -->
-
 | Change log | Change detail |
 |---|---|
-| ![Change log](docs/mockups/change-log.png) | ![Change detail](docs/mockups/change-details.png) |
+| ![Change log](docs/screenshots/change-log.png) | ![Change detail](docs/screenshots/change-details.png) |
 
 - **Change log:** every out-of-band change, newest first, with status chips, filters (status, principal, service, risk, date), and `via` badges.
 - **Change detail:** who, what, when, and how; the Terraform address; the agent's analysis and evidence; and the Revert, Codify, and Accept actions.
 - **Incidents:** alert-driven incidents with linked changes, the proposed fix, and Approve or Reject.
 - **Intake indicator:** click it for the health details, the four states, and a link to the Grafana dashboard.
 
-Light and dark themes follow your OS setting; the header toggle remembers your choice. Logins are an **admin** (can act) and a read-only **viewer**.
+Light and dark themes follow your OS setting; the header toggle remembers your choice. Logins are an **admin** (can act) and a read-only **viewer**. Both are for whoever runs their own copy; no login is shared for the author's deployment, so use the [recorded demo](https://consoletrack-demo.jennasrunbooks.com) to look around. The change detail page masks the source IP to its /24 until an admin clicks Show.
 
 ## Triage agent and MCP servers
 
@@ -381,8 +390,8 @@ consoletrack/
 
 ## Roadmap
 
-- **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; gated Revert; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; two cloud scenarios (security group opened, demo role permission removed) and three cluster faults; automatic fix for the OOM fault (the first remediation kind to graduate); OpenTelemetry traces, metrics, and logs in Grafana, with an alert on user impact; the dashboard; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team and extension pack.
-- **Phase 2 (Nov 16):** Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); the eval harness (`make eval`: each scenario N times, reporting attribution accuracy, time to triage, and cost per triage); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); the next remediation kinds to graduate (rollback of a bad image, probe fixes).
+- **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; the security-group cloud scenario (and the demo role permission scenario if it's working by Oct 26) and three cluster faults; the recorded demo site; automatic fix for the OOM fault (the first remediation kind to graduate); OpenTelemetry traces, metrics, and logs in Grafana, with an alert on user impact; the dashboard; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team and extension pack.
+- **Phase 2 (Nov 16):** the gated Revert workflow; Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); the eval harness (`make eval`: each scenario N times, reporting attribution accuracy, time to triage, and cost per triage); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); the next remediation kinds to graduate (rollback of a bad image, probe fixes).
 - **Later:** Slack notifications and analytics; network-path incidents; the production hardening path.
 - **Later:** a NAT gateway per AZ, or fck-nat as a raw NAT instance under `/ct/` to cut the NAT cost; Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
 
@@ -399,11 +408,11 @@ Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalks
 | Application | 2 | [Try it without AWS](#try-it-without-aws): `make local` starts the frontend, backend, and Postgres |
 | Testing | 2 | `make test-all`: unit, contract, integration (Testcontainers), and frontend tests; see [Testing and CI/CD](#testing-and-cicd) |
 | Containerization | 2 | [docker-compose.yaml](docker-compose.yaml), started by `make local` |
-| Deployment | 2 | <!-- TODO: live URL, dates, demo recording --> EKS via [terraform/](terraform/) and [helm/](helm/); [Deploy to AWS](#deploy-to-aws) |
+| Deployment | 2 | EKS via [terraform/](terraform/) and [helm/](helm/) ([Deploy to AWS](#deploy-to-aws)); the recorded walkthrough of the live deployment and the screenshots in [See it in 2 minutes](#see-it-in-2-minutes) |
 | CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
 | Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana |
 | Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `demo-app` chart's alert rules ([helm/charts/demo-app/templates/prometheusrule.yaml](helm/charts/demo-app/templates/prometheusrule.yaml)) |
-| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make demo-oom`: the alert, the diagnosis, the automatic fix |
+| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make local-oom-run` on kind: the alert, the diagnosis, the automatic fix, verified; the recorded incident in the demo site |
 
 ## License
 
