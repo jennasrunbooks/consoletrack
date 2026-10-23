@@ -9,7 +9,11 @@
 #
 # Only touches ENIs in a VPC tagged project=consoletrack, and only:
 #   - deletes `available` ones described aws-K8S-* (the CNI's)
-#   - waits for ones described "Amazon EKS ..." (the control plane's, which AWS releases itself)
+#   - for ones described "Amazon EKS <cluster>" (the control plane's cross-account ENIs):
+#       - cluster still running: leaves them alone. They're attached from an AWS-owned account, so
+#         they can't be detached from ours, and EKS removes them when Terraform deletes the
+#         cluster in the next step of `make down`. Waiting for them here would never end.
+#       - cluster deleting or gone: waits for AWS to release them, and deletes any left `available`
 # Everything else, including the NAT gateway's ENI, belongs to Terraform and is left alone, and an
 # in-use ENI is never deleted.
 #
@@ -34,6 +38,18 @@ if [[ -z "$vpcs" ]]; then
 	exit 0
 fi
 
+# The cluster's status (ACTIVE, DELETING, ...), or "gone" when EKS has no such cluster.
+cluster_status() {
+	local out
+	if out=$(aws eks describe-cluster --name "$1" --query cluster.status --output text 2>&1); then
+		echo "$out"
+	elif [[ "$out" == *ResourceNotFoundException* ]]; then
+		echo gone
+	else
+		die "can't tell whether cluster $1 still exists: $(sed -E 's/[0-9]{12}/***/g' <<<"$out")"
+	fi
+}
+
 # Rows of "<eni>\t<status>\t<description>" for the project VPCs.
 list() {
 	aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$vpcs" \
@@ -46,11 +62,25 @@ deleted=0
 while :; do
 	rows=$(list)
 	leftovers=$(awk -F'\t' '$2 == "available" && $3 ~ /^aws-K8S-/ { print $1 "\t" $3 }' <<<"$rows")
-	managed=$(awk -F'\t' '$3 ~ /^Amazon EKS / { print $1 "\t" $3 }' <<<"$rows")
+	managed="" live=""
+	while IFS=$'\t' read -r eni status desc; do
+		[[ -n "$eni" ]] || continue
+		cluster=$(cluster_status "${desc#Amazon EKS }") || exit 1
+		case $cluster in
+		gone | DELETING)
+			if [[ "$status" == available ]]; then
+				leftovers+=${leftovers:+$'\n'}"$eni"$'\t'"$desc"
+			else
+				managed+=${managed:+$'\n'}"$eni"$'\t'"$desc"
+			fi
+			;;
+		*) live+=${live:+$'\n'}"$eni"$'\t'"$desc" ;;
+		esac
+	done < <(awk -F'\t' '$3 ~ /^Amazon EKS / { print $1 "\t" $2 "\t" $3 }' <<<"$rows")
 
 	if [[ -n "$leftovers" ]]; then
 		if [[ -z "$confirmed" ]]; then
-			echo "Leftover VPC CNI network interfaces (available, so nothing uses them):"
+			echo "Leftover EKS network interfaces (available, so nothing uses them):"
 			# shellcheck disable=SC2001 # indents every line
 			sed 's/^/  /' <<<"$leftovers" | sed -E 's/[0-9]{12}/***/g'
 			[[ -t 0 ]] || die "run from an interactive terminal, or set CLEAN_ENIS_ASSUME_YES=1"
@@ -67,6 +97,9 @@ while :; do
 	fi
 
 	if [[ -z "$managed" ]]; then
+		if [[ -n "$live" ]]; then
+			echo "delete-leftover-enis: left $(wc -l <<<"$live" | tr -d ' ') control-plane network interface(s) of a running cluster; EKS removes them when the cluster is deleted"
+		fi
 		echo "delete-leftover-enis: no leftover EKS network interfaces in the project VPC (deleted $deleted)"
 		exit 0
 	fi
