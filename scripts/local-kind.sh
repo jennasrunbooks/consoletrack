@@ -260,6 +260,15 @@ sync_demo_app() {
 		-l name=demo-app sync ${tag[@]+"${tag[@]}"} ${@+"$@"}
 }
 
+# demo-app recreated with the fault off and the chart's values: one rollout revision, and every
+# field Helm's again. A plain sync isn't enough after a remediation or a measurement: another
+# field manager (the backend's consoletrack-remediator patch, or kubectl) owns the memory limit,
+# and Helm 4's server-side apply refuses to take it back.
+recreate_demo_app() {
+	kc -n demo delete deployment demo-app --ignore-not-found --wait >/dev/null &&
+		sync_demo_app >/dev/null
+}
+
 live_image_tag() {
 	local image
 	image=$(kc -n demo get deployment demo-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="demo-app")].image}') ||
@@ -327,9 +336,7 @@ measure_cleanup() {
 	# Each step even if the one before fails: the worker must never stay stopped.
 	set +e
 	echo "local-kind: putting it back: demo-app recreated (fault off, 128Mi, one revision)"
-	kc -n demo delete deployment demo-app --ignore-not-found --wait >/dev/null ||
-		failed="deleting the demo-app Deployment"
-	sync_demo_app >/dev/null || failed="${failed:+$failed and }the demo-app sync"
+	recreate_demo_app || failed="recreating demo-app"
 	if [ "$measure_target" = local ]; then
 		$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind \
 			start worker || failed="${failed:+$failed and }starting the worker"
@@ -398,12 +405,12 @@ incidents() {
 }
 
 # --- One OOM acceptance run (make local-oom-run, #79) ------------------------------------------
-# oom-prepare (before the database reset): the fault off; demo-app recreated if its rollout history
-# has a revision that isn't ConsoleTrack's own (the agent would read it as a human change); then a
-# wait until the app has served two minutes without errors and Alertmanager holds no
+# oom-prepare (before the database reset): demo-app recreated with the fault off (one rollout
+# revision, so the agent sees no earlier change; and Helm owns every field again); then a wait
+# until the app has served two minutes without errors and Alertmanager holds no
 # DemoAppHighErrorRate, so the run's alert is a new episode that reaches the fresh database.
 # oom-run (after it): the fault on, the incident followed until its fix finishes or needs a human,
-# a summary with PASS or FAIL, and the fault off again (also when interrupted).
+# a summary with PASS or FAIL, and demo-app recreated with the fault off (also when interrupted).
 
 oom_poll=${OOM_RUN_POLL:-20}
 quiet_poll=${OOM_QUIET_POLL:-15}
@@ -416,32 +423,13 @@ oom_prepare() {
 	for tool in curl jq; do
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
-	echo "local-kind: fault off"
-	sync_demo_app >/dev/null
-	if ! history_is_clean; then
-		echo "local-kind: demo-app's rollout history has a revision that isn't ConsoleTrack's; recreating it"
-		kc -n demo delete deployment demo-app --wait >/dev/null
-		sync_demo_app >/dev/null
-	fi
+	echo "local-kind: fault off; demo-app recreated (one revision, every field Helm's)"
+	recreate_demo_app
 	kc -n demo rollout status deployment/demo-app --timeout=3m >/dev/null
 	echo "local-kind: rollout history: $(kc -n demo rollout history deployment/demo-app | grep -cE '^[0-9]+') revision(s)"
 	echo "local-kind: waiting for 2 minutes without errors and no DemoAppHighErrorRate in Alertmanager"
 	wait_for quiet "$quiet_timeout" "$quiet_poll"
 	echo "local-kind: quiet; ready for the run"
-}
-
-# Every ReplicaSet of demo-app other than the current revision is ConsoleTrack's own.
-history_is_clean() {
-	local current
-	current=$(kc -n demo get deployment demo-app \
-		-o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}' 2>/dev/null) || return 0
-	kc -n demo get replicasets -o json | jq -e --arg current "$current" '
-		[.items[]
-		 | select(any(.metadata.ownerReferences[]?; .kind == "Deployment" and .name == "demo-app"))
-		 | .metadata.annotations
-		 | select(.["deployment.kubernetes.io/revision"] != $current)
-		 | select(.["consoletrack.io/remediation"] == null)]
-		| length == 0' >/dev/null
 }
 
 quiet() {
@@ -558,9 +546,9 @@ oom_cleanup() {
 	trap - EXIT
 	set +e
 	rm -f "$api_jar"
-	echo "local-kind: fault off"
-	sync_demo_app >/dev/null || {
-		echo "local-kind: turning the fault off failed; run \`make local-fault FAULT=off\`" >&2
+	echo "local-kind: fault off; demo-app recreated"
+	recreate_demo_app || {
+		echo "local-kind: recreating demo-app failed; the next make local-oom-run retries it" >&2
 		exit 1
 	}
 	exit "$rc"

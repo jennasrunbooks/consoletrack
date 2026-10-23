@@ -333,7 +333,7 @@ def test_measure_starts_the_worker_even_if_the_restoring_sync_fails(
     result, calls = run_measure(tmp_path, FAIL_SECOND_SYNC="1")
     assert result.returncode == 1
     assert "start worker" in calls[-1]
-    assert "couldn't put everything back: the demo-app sync" in result.stderr
+    assert "couldn't put everything back: recreating demo-app failed" in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
@@ -373,7 +373,6 @@ echo "kubectl $*" >> "$CALLS"
 pop() { local first; first=$(head -n 1 "$1"); [ "$(wc -l < "$1")" -gt 1 ] && sed -i.bak 1d "$1"; echo "$first"; }
 case " $* " in
 *" get deployment demo-app "*) echo -n 1 ;;
-*" get replicasets "*) cat "$RS_JSON" ;;
 *" rollout history "*) printf 'deployment.apps/demo-app\nREVISION  CHANGE-CAUSE\n1         <none>\n' ;;
 *" get pods "*) echo pod/alertmanager-kube-prometheus-stack-alertmanager-0 ;;
 *" amtool "*) pop "$ALERTS" | tr '|' '\n' ;;
@@ -445,7 +444,6 @@ def run_oom(
     lists: list[str] | None = None,
     details: list[str] | None = None,
     alerts: list[str] | None = None,
-    replica_sets: list[dict] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -461,7 +459,6 @@ def run_oom(
         "LISTS": "\n".join(lists or [EMPTY]),
         "DETAILS": "\n".join(details or ["{}"]),
         "ALERTS": "\n".join(alerts or ["Watchdog"]),
-        "RS_JSON": json.dumps({"items": replica_sets or []}),
         "CALLS": "",
     }
     env = {
@@ -484,41 +481,23 @@ def run_oom(
     return result, (tmp_path / "CALLS").read_text().splitlines()
 
 
-def rs(revision: int, **annotations: str) -> dict:
-    return {
-        "metadata": {
-            "annotations": {
-                "deployment.kubernetes.io/revision": str(revision),
-                **annotations,
-            },
-            "ownerReferences": [{"kind": "Deployment", "name": "demo-app"}],
-        }
-    }
-
-
 needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
 
 
 @needs_jq
-def test_prepare_keeps_a_history_of_consoletracks_own_revisions(tmp_path: Path) -> None:
-    patch = {"consoletrack.io/remediation": "1", "consoletrack.io/action": "patch"}
-    result, calls = run_oom(
-        tmp_path, "oom-prepare", replica_sets=[rs(1), rs(2, **patch)]
+def test_prepare_recreates_demo_app(tmp_path: Path) -> None:
+    """Always: a measurement's 512Mi revision made the agent propose a rollback, and after a fix
+    the backend's patch owns the memory limit, so Helm's own sync to turn the fault off fails
+    with a server-side apply conflict (run 1, #79)."""
+    result, calls = run_oom(tmp_path, "oom-prepare")
+    assert result.returncode == 0, result.stderr
+    delete = next(
+        i for i, c in enumerate(calls) if "-n demo delete deployment demo-app" in c
     )
-    assert result.returncode == 0, result.stderr
-    assert not any(" delete deployment " in c for c in calls)
+    sync = next(i for i, c in enumerate(calls) if c.startswith("helmfile "))
+    assert delete < sync and "demoFault" not in calls[sync]
+    assert "demo-app recreated" in result.stdout
     assert "ready for the run" in result.stdout
-
-
-@needs_jq
-def test_prepare_recreates_demo_app_when_a_human_revision_would_mislead_triage(
-    tmp_path: Path,
-) -> None:
-    """The measurement's 512Mi revision made the agent propose a rollback, twice."""
-    result, calls = run_oom(tmp_path, "oom-prepare", replica_sets=[rs(1), rs(2), rs(3)])
-    assert result.returncode == 0, result.stderr
-    assert any("-n demo delete deployment demo-app" in c for c in calls)
-    assert "recreating it" in result.stdout
 
 
 @needs_jq
@@ -549,9 +528,9 @@ def test_run_passes_when_the_auto_fix_succeeds(tmp_path: Path) -> None:
     assert "proposal: set_memory_limit 256Mi" in out
     assert "RESULT: PASS" in out
     syncs = [c for c in calls if c.startswith("helmfile ")]
-    assert (
-        "demoFault=oom" in syncs[0] and "demoFault" not in syncs[-1]
-    )  # fault off at the end
+    # Fault off at the end, recreated rather than synced: the fix's patch owns the limit.
+    assert "demoFault=oom" in syncs[0] and "demoFault" not in syncs[-1]
+    assert "-n demo delete deployment demo-app" in calls[-2]
 
 
 @needs_jq
