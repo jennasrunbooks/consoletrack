@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Looks for billable AWS resources tagged project=consoletrack, for `make verify-clean` and for
+# Looks for billable AWS resources tagged project=consoletrack (and ENIs in a project VPC), for `make verify-clean` and for
 # `make down`, which waits for the load balancers and their ENIs to go before it removes the
 # Load Balancer Controller's cluster and VPC.
 #
@@ -43,14 +43,28 @@ load_balancers() {
 	done | tr '\t' '\n' | sed -E 's|.*loadbalancer/||; /^$/d; s|^|load-balancer |'
 }
 
-# Tagged ENIs, plus the ones the Load Balancer Controller's ALBs own in a project VPC (AWS
-# creates those untagged, with the description "ELB <name>").
+# Every ENI that is tagged, or that sits in a project VPC: the VPC CNI's leftovers (described
+# "aws-K8S-i-<instance>", status available) carry no project tag, and they are what blocks deleting
+# the subnets. Each line shows the status, so a leftover reads "(available)".
 network_interfaces() {
-	aws ec2 describe-network-interfaces --filters "$tag" \
-		--query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | sed '/^$/d; s/^/eni /'
-	elb_enis
+	describe_enis "$tag" | eni_lines
+	local vpcs
+	vpcs=$(aws ec2 describe-vpcs --filters "$tag" --query 'Vpcs[].VpcId' --output text | tr '\t' ',')
+	[[ -n "$vpcs" ]] || return 0
+	describe_enis "Name=vpc-id,Values=$vpcs" | eni_lines
 }
 
+# Rows of "<eni>\t<status>\t<description>" for one EC2 filter.
+describe_enis() {
+	aws ec2 describe-network-interfaces --filters "$1" \
+		--query 'NetworkInterfaces[].[NetworkInterfaceId,Status,Description]' --output text
+}
+
+eni_lines() {
+	awk -F'\t' 'NF { printf "eni %s (%s) %s\n", $1, $2, $3 }'
+}
+
+# The ELB-owned ENIs only, for `wait`: AWS creates them untagged, described "ELB <name>".
 elb_enis() {
 	local vpcs
 	vpcs=$(aws ec2 describe-vpcs --filters "$tag" --query 'Vpcs[].VpcId' --output text | tr '\t' ',')
@@ -89,6 +103,10 @@ verify)
 		echo "teardown-verify: project=consoletrack resources still exist in $region:" >&2
 		# shellcheck disable=SC2001 # indents every line
 		sed 's/^/  /' <<<"$found" >&2
+		if grep -q '(available) aws-K8S-' <<<"$found"; then
+			echo "teardown-verify: (available) aws-K8S-* are VPC CNI leftovers that block deleting the subnets;" \
+				"remove them with: make clean-enis" >&2
+		fi
 		exit 1
 	fi
 	echo "teardown-verify: no project=consoletrack load balancers, ENIs, EBS volumes, Elastic IPs, or NAT gateways in $region"
