@@ -22,6 +22,8 @@ change detail with Revert, Accept, and Codify (Phase 2), its evidence, and the p
 | Accessibility (axe-core, WCAG 2.1 AA, both themes) | part of `make test-e2e` (`e2e/a11y.spec.ts`) |
 | Regenerate `docs/screenshots/` | `make screenshots` (1440×900 at 2×, both themes) |
 | Production build | `npm run build` → `dist/` |
+| Recorded demo site | `npm run build:demo` (or `make demo-site`) → `dist-demo/`; try it with `npm run preview:demo` |
+| Demo banner and tour screenshots | `npm run screenshots:demo` (rewrites `docs/screenshots/demo-*.png`) |
 | Image (nginx, non-root, :8080, `/healthz`) | `docker buildx build --platform linux/arm64 frontend/` |
 
 ## Layout
@@ -63,6 +65,27 @@ e2e/              Playwright specs; fixtures.ts fails any test that requests bey
   that breaks them fails `typecheck`.
 - **Colors are CSS variables** in `src/styles.css`, one set per theme. The theme follows the OS
   until the header toggle sets it; `public/theme-init.js` applies it before first paint.
+
+## Recorded demo site
+
+`npm run build:demo` publishes the mock mode as a static site (GitHub Pages; the workflow is proposed in
+[`../docs/proposed-workflows/pages.yaml`](../docs/proposed-workflows/pages.yaml)). It differs from `dev:mock`:
+
+- **Signed in as `demo` (admin) on every load**, with no login form; logging out lands on a "Restart demo" page.
+  Nothing is stored, so a reload resets the state.
+- **Banner on every page** ("Recorded demo · sample data, no live AWS", with video, How it works, and Source links) and a
+  dismissible first-visit tour (dismissal kept in `localStorage`, with an in-memory fallback when storage is blocked).
+- **Intake shows Replay** with "Recorded: events replayed from fixtures", and no Grafana link.
+- **`/api` can't leave the browser.** The worker answers unknown `/api` calls with 503 `mock_bypassed`, `vite preview`
+  does the same, and a page the worker doesn't control shows "Reload the demo".
+- **Static hosting:** `VITE_BASE` (default `/`) sets Vite's `base` and the router's `basename`; the worker script and a
+  `404.html` copy of `index.html` (for deep links on Pages) are emitted into the build. `VITE_DEMO_VIDEO_URL` sets the
+  video link (hidden when empty).
+
+Checks: `src/test/bundle.test.ts` builds both modes and fails if the production bundle contains the worker, fixtures, or demo
+strings, or if the demo bundle contains a 12-digit number other than `123456789012` or an IPv4 address outside the
+documentation, private, and `0.0.0.0` ranges. `e2e/demo.spec.ts` runs against the built demo (part of `make test-e2e`).
+To refresh the recorded incident, see below; the demo picks it up on the next build.
 
 ## Mock data
 
