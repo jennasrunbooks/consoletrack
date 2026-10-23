@@ -251,9 +251,13 @@ fault() {
 sync_demo_app() {
 	local env=local tag=()
 	if [ "$measure_target" = eks ]; then
-		# The image the cluster runs now: an IMAGE_TAG from this checkout might not be in GHCR.
+		# The image the cluster ran when the measurement started (measure reads it first): an
+		# IMAGE_TAG from this checkout might not be in GHCR, and after the cleanup deletes the
+		# Deployment there is nothing left to read it from. Never sync without one: Helm would
+		# install demo-app with no image tag and wait 10 minutes for pods that can't start.
+		[ -n "$eks_image_tag" ] || die "no demo-app image tag; refusing to sync demo-app on $context"
 		env=eks
-		tag=(--state-values-set "imageTag=$(live_image_tag)")
+		tag=(--state-values-set "imageTag=$eks_image_tag")
 	fi
 	# ${@+...}: an empty array under set -u fails in macOS's bash 3.2.
 	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e "$env" --kube-context "$context" \
@@ -269,12 +273,12 @@ recreate_demo_app() {
 		sync_demo_app >/dev/null
 }
 
+# The tag of the image demo-app runs now; empty when it can't be read (no Deployment, no tag).
 live_image_tag() {
 	local image
-	image=$(kc -n demo get deployment demo-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="demo-app")].image}') ||
-		die "can't read demo-app's image on $context"
-	[ "${image##*:}" != "$image" ] || die "demo-app's image $image has no tag"
-	echo "${image##*:}"
+	image=$(kc -n demo get deployment demo-app \
+		-o jsonpath='{.spec.template.spec.containers[?(@.name=="demo-app")].image}' 2>/dev/null) || return 0
+	[ "${image##*:}" = "$image" ] || echo "${image##*:}"
 }
 
 # demo-app's memory under the OOM fault, with the limit raised so it never OOMs (#79): its
@@ -291,7 +295,11 @@ measure() {
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
 	if [ "$measure_target" = eks ]; then
-		echo "local-kind: measuring on $context, demo-app image tag $(live_image_tag)"
+		# Read once, before anything changes (see sync_demo_app).
+		eks_image_tag=$(live_image_tag)
+		[ -n "$eks_image_tag" ] || die "demo-app isn't deployed on $context (or its image has no tag);" \
+			"deploy it first: make deploy IMAGE_TAG=<the commit the cluster runs>"
+		echo "local-kind: measuring on $context, demo-app image tag $eks_image_tag"
 	fi
 	start_prometheus
 	trap measure_cleanup EXIT
@@ -319,6 +327,7 @@ measure() {
 # environment at the image demo-app runs now. The worker keeps running there: at 512Mi nothing
 # OOMs, so no alert fires, and scaling it with kubectl would leave Helm a field conflict.
 measure_target=${MEASURE_TARGET:-local}
+eks_image_tag=""
 case "$measure_target" in
 local) ;;
 eks) context=${KUBE_CONTEXT:?KUBE_CONTEXT is unset (make measure sets it)} ;;
@@ -385,6 +394,8 @@ start_prometheus() {
 stop_prometheus() {
 	if [ -n "$prometheus_forward_pid" ]; then
 		kill "$prometheus_forward_pid" 2>/dev/null || true
+		# Reaped here, so bash doesn't report "Terminated: 15" for it.
+		wait "$prometheus_forward_pid" 2>/dev/null || true
 		prometheus_forward_pid=""
 	fi
 }

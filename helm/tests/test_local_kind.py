@@ -226,7 +226,13 @@ case " $* " in
 	echo "Forwarding from 127.0.0.1:19090 -> 9090"
 	echo $$ > "$CALLS.forward-pid"
 	exec sleep 60 ;;
-*" get deployment demo-app "*) echo -n ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234 ;;
+*" get deployment demo-app "*)
+	# Gone once deleted (the cleanup does), or from the start with NO_DEPLOYMENT.
+	if [ -e "$CALLS.deleted" ] || [ -n "${NO_DEPLOYMENT:-}" ]; then
+		echo 'Error from server (NotFound): deployments.apps "demo-app" not found' >&2; exit 1
+	fi
+	echo -n ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234 ;;
+*" delete deployment demo-app "*) touch "$CALLS.deleted" ;;
 *" rollout status "*) [ -z "${FAIL_ROLLOUT:-}" ] || exit 1 ;;
 esac
 """
@@ -372,7 +378,9 @@ def test_measure_on_eks_keeps_the_running_image_and_leaves_the_worker_alone(
     tmp_path: Path,
 ) -> None:
     """`make measure`: an IMAGE_TAG from this checkout might not exist in GHCR, so every sync
-    reuses the tag demo-app runs; there's no Compose worker to stop."""
+    reuses the tag demo-app ran at the start, including the cleanup's, after the Deployment is
+    deleted (the first EKS cleanup read it from the deleted Deployment, got nothing, and
+    installed demo-app without an image tag). There's no Compose worker to stop."""
     result, calls = run_measure(
         tmp_path, MEASURE_TARGET="eks", KUBE_CONTEXT="consoletrack-eks"
     )
@@ -388,6 +396,22 @@ def test_measure_on_eks_keeps_the_running_image_and_leaves_the_worker_alone(
     assert all(
         "--context consoletrack-eks" in c for c in calls if c.startswith("kubectl ")
     )
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_on_eks_stops_when_demo_app_isnt_deployed(tmp_path: Path) -> None:
+    result, calls = run_measure(
+        tmp_path,
+        MEASURE_TARGET="eks",
+        KUBE_CONTEXT="consoletrack-eks",
+        NO_DEPLOYMENT="1",
+    )
+    assert result.returncode == 1
+    assert "demo-app isn't deployed on consoletrack-eks" in result.stderr
+    assert "make deploy IMAGE_TAG=" in result.stderr
+    # Nothing changed, nothing started.
+    assert not any(c.startswith(("helmfile ", "docker ", "curl ")) for c in calls)
+    assert not any(" port-forward " in c for c in calls)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
