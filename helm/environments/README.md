@@ -35,7 +35,7 @@ Every key the Helmfile reads. `eks.yaml` and `local.yaml` set each one (most emp
 | `demoBucket` | `demo-app/us-east-1` output `bucket_name`; empty until that root exists, and the demo app then reads no S3 object | demo-app |
 | `imageTag` | the commit SHA in `deploy.yaml` (`--state-values-set imageTag=<sha>`); `local` on kind | consoletrack and demo-app images |
 | `demoFault` | empty; `--state-values-set demoFault=oom` (or `badImage`, `badProbe`) for one run | demo-app's `faults.*`, and turns off wait and atomic for that sync |
-| `awsMcpEnabled` | `false` in both environment files until aws-mcp ships (#9) | the aws-mcp Deployment and the worker's `AWS_MCP_URL` |
+| `awsMcpEnabled` | `true` on eks, `false` on local until aws-mcp has a fixtures mode | the aws-mcp Deployment and the worker's `AWS_MCP_URL` |
 | `intakeMode` | `live` on eks, `replay` on local | worker, backend |
 | `storageClass` | `gp3` on eks (cluster-defaults), `standard` on kind | Postgres volume |
 
