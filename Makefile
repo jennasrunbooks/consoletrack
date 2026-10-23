@@ -161,7 +161,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure local-oom-run demo demo-replay demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run measure demo demo-replay demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -472,6 +472,11 @@ else
 	@echo "make $@: dashboard at http://127.0.0.1:$(OPEN_PORT) (Ctrl-C to stop); log in as admin"
 	kubectl --context $(KUBE_CONTEXT) -n consoletrack port-forward --address 127.0.0.1 svc/frontend $(OPEN_PORT):8080
 endif
+
+# The EKS counterpart of local-measure (#79). The demo-app sync keeps the image the cluster runs.
+measure: env-check-aws helm-values ## EKS: demo-app's memory under the OOM fault with the limit at 512Mi (~8 min; humans only)
+	$(check_human)
+	MEASURE_TARGET=eks KUBE_CONTEXT=$(KUBE_CONTEXT) scripts/local-kind.sh measure
 
 # The Helmfile half is scripts/down-cluster.sh: app, any Gateway, wait for the load balancers,
 # add-ons, then the PVCs. helm-values runs source=none: .env alone is enough to destroy, and the

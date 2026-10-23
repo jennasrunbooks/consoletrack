@@ -221,6 +221,7 @@ def test_alerts_check_fails_when_alertmanager_cant_reach_the_backend(
 MEASURE_KUBECTL = """#!/usr/bin/env bash
 echo "kubectl $*" >> "$CALLS"
 case " $* " in
+*" get deployment demo-app "*) echo -n ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234 ;;
 *" get --raw "*)
 	# 150 MiB for every query, or nothing for the cache gauge when NO_CACHE is set.
 	case "$*" in *demo_app_report_cache_bytes*) [ -n "${NO_CACHE:-}" ] && { echo '{"data":{"result":[]}}'; exit 0; } ;; esac
@@ -333,6 +334,29 @@ def test_measure_starts_the_worker_even_if_the_restoring_sync_fails(
     assert result.returncode == 1
     assert "start worker" in calls[-1]
     assert "couldn't put everything back: the demo-app sync" in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")
+def test_measure_on_eks_keeps_the_running_image_and_leaves_the_worker_alone(
+    tmp_path: Path,
+) -> None:
+    """`make measure`: an IMAGE_TAG from this checkout might not exist in GHCR, so every sync
+    reuses the tag demo-app runs; there's no Compose worker to stop."""
+    result, calls = run_measure(
+        tmp_path, MEASURE_TARGET="eks", KUBE_CONTEXT="consoletrack-eks"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "measuring on consoletrack-eks, demo-app image tag abc1234" in result.stdout
+    syncs = [c for c in calls if c.startswith("helmfile ")]
+    assert len(syncs) == 2
+    for sync in syncs:
+        assert "-e eks --kube-context consoletrack-eks" in sync
+        assert "--state-values-set imageTag=abc1234" in sync
+    assert "demoMemoryLimit=512Mi" in syncs[0] and "demoFault" not in syncs[1]
+    assert not any(c.startswith("docker ") for c in calls)
+    assert all(
+        "--context consoletrack-eks" in c for c in calls if c.startswith("kubectl ")
+    )
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")

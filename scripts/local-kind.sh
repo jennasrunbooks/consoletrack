@@ -249,9 +249,23 @@ fault() {
 }
 
 sync_demo_app() {
+	local env=local tag=()
+	if [ "$measure_target" = eks ]; then
+		# The image the cluster runs now: an IMAGE_TAG from this checkout might not be in GHCR.
+		env=eks
+		tag=(--state-values-set "imageTag=$(live_image_tag)")
+	fi
 	# ${@+...}: an empty array under set -u fails in macOS's bash 3.2.
-	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
-		-l name=demo-app sync ${@+"$@"}
+	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e "$env" --kube-context "$context" \
+		-l name=demo-app sync ${tag[@]+"${tag[@]}"} ${@+"$@"}
+}
+
+live_image_tag() {
+	local image
+	image=$(kc -n demo get deployment demo-app -o jsonpath='{.spec.template.spec.containers[?(@.name=="demo-app")].image}') ||
+		die "can't read demo-app's image on $context"
+	[ "${image##*:}" != "$image" ] || die "demo-app's image $image has no tag"
+	echo "${image##*:}"
 }
 
 # demo-app's memory under the OOM fault, with the limit raised so it never OOMs (#79): its
@@ -262,15 +276,19 @@ sync_demo_app() {
 # not just synced: the 512Mi and 128Mi revisions would stay in the rollout history, and the next
 # OOM triage would read "limit lowered from 512Mi" and propose a rollback (#79).
 measure() {
-	local minute kind_compose
-	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-measure\` (HELM_DRIVER=configmap)"
+	local minute
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-measure\` or \`make measure\` (HELM_DRIVER=configmap)"
 	for tool in curl jq; do
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
-	kind_compose="$compose -f $repo_root/docker-compose.yaml -f $repo_root/compose/kind.yaml --profile kind"
+	if [ "$measure_target" = eks ]; then
+		echo "local-kind: measuring on $context, demo-app image tag $(live_image_tag)"
+	fi
 	echo "local-kind: baseline, no fault: working set $(promql_mib "max($working_set)")"
 	trap measure_cleanup EXIT
-	$kind_compose stop worker
+	if [ "$measure_target" = local ]; then
+		$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind stop worker
+	fi
 	# Through Helm, not kubectl: Helm 4 applies server-side, and a field another manager changed
 	# (kubectl set resources) would make the sync that puts it back fail with a conflict.
 	sync_demo_app --state-values-set demoFault=oom --state-values-set demoMemoryLimit=512Mi
@@ -287,6 +305,15 @@ measure() {
 	echo "  report cache $(promql_mib "max(max_over_time(${report_cache}[5m]))")"
 }
 
+# `make measure` runs measure against EKS (MEASURE_TARGET=eks, KUBE_CONTEXT): the eks Helmfile
+# environment at the image demo-app runs now. The worker keeps running there: at 512Mi nothing
+# OOMs, so no alert fires, and scaling it with kubectl would leave Helm a field conflict.
+measure_target=${MEASURE_TARGET:-local}
+case "$measure_target" in
+local) ;;
+eks) context=${KUBE_CONTEXT:?KUBE_CONTEXT is unset (make measure sets it)} ;;
+*) die "MEASURE_TARGET must be local or eks, not $measure_target" ;;
+esac
 measure_minutes=${MEASURE_MINUTES:-7}
 measure_interval=${MEASURE_INTERVAL:-60}
 # Series, wrapped as max(series) now or max(max_over_time(series[5m])) for the peaks.
@@ -299,12 +326,14 @@ measure_cleanup() {
 	trap - EXIT
 	# Each step even if the one before fails: the worker must never stay stopped.
 	set +e
-	echo "local-kind: putting it back: demo-app recreated (fault off, 128Mi, one revision), worker started"
+	echo "local-kind: putting it back: demo-app recreated (fault off, 128Mi, one revision)"
 	kc -n demo delete deployment demo-app --ignore-not-found --wait >/dev/null ||
 		failed="deleting the demo-app Deployment"
-	sync_demo_app >/dev/null || failed="${failed:+$failed and }the demo-app sync (\`make local-fault FAULT=off\`)"
-	$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind \
-		start worker || failed="${failed:+$failed and }starting the worker"
+	sync_demo_app >/dev/null || failed="${failed:+$failed and }the demo-app sync"
+	if [ "$measure_target" = local ]; then
+		$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind \
+			start worker || failed="${failed:+$failed and }starting the worker"
+	fi
 	if [ -n "$failed" ]; then
 		echo "local-kind: couldn't put everything back: $failed failed; rerun it by hand" >&2
 		exit 1
