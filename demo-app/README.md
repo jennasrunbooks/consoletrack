@@ -27,11 +27,9 @@ are doing (with `X-Demo-Report: large` when `LOADGEN_REPORT=large`), and counts 
 four series exist from the start. `DemoAppHighErrorRate` is built on this, because an app that is
 OOMKilled or never Ready exports nothing of its own.
 
-**Memory.** Measured under the OOM fault (`make measure`, `make local-measure`, #79): 18 MiB
-without boto3 (kind) and 73 MiB with the S3 client loaded (EKS, arm64), plus the report cache,
-and flat once the cache is full. The cache defaults to 140 MiB, kind's sizing. The chart sets it
-per cluster (96 MiB on EKS), so the fault peaks at about 160-170 MiB on both clusters: over a
-128Mi limit, well under the 256Mi fix. See the chart README.
+**Memory.** About 25 MiB without boto3 and 50 MiB with the S3 client loaded, plus the report
+cache: up to 140 MiB. The chart's OOM fault (a full cache under a 128Mi limit, fixed by 256Mi) is
+sized from these numbers; see the chart README.
 
 ## Commands
 

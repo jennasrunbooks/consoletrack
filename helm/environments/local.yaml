@@ -29,9 +29,6 @@ imageTag: local
 demoFault: ""
 # demo-app's memory limit for one sync (make local-measure sets 512Mi); empty: the chart's.
 demoMemoryLimit: ""
-# demo-app's report cache (MiB). kind's app is 18 MiB against EKS's 73 (no boto3), so the
-# chart's 96 would peak at 114 MiB and never OOM at 128Mi; 140 peaks at 158 MiB (#79).
-demoReportCacheMi: 140
 
 # aws-mcp ships with #9. Until it has an image, don't deploy it or point the worker at it; set
 # true then (it's also the only place `make images` needs its Dockerfile to exist).

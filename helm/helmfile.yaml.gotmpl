@@ -44,8 +44,6 @@ exports this; anything else running helmfile must too. */}}
 {{- fail (printf "demoFault must be empty, oom, badImage, or badProbe, not %q" $fault) }}
 {{- end }}
 {{- /* demo-app's memory limit for one sync, through Helm (make local-measure: 512Mi). Empty: the chart's. */}}
-{{- /* demo-app's report cache in MiB for this environment (local: kind's app is 55 MiB smaller); empty: the chart's. */}}
-{{- $cacheMi := .Values.demoReportCacheMi | default "" }}
 {{- $memoryLimit := .Values.demoMemoryLimit | default "" }}
 {{- if and $memoryLimit (not (regexMatch "^[0-9]+Mi$" $memoryLimit)) }}
 {{- fail (printf "demoMemoryLimit must be empty or like 512Mi, not %q" $memoryLimit) }}
@@ -167,10 +165,6 @@ releases:
           oom: {{ eq $fault "oom" }}
           badImage: {{ eq $fault "badImage" }}
           badProbe: {{ eq $fault "badProbe" }}
-        {{- if $cacheMi }}
-        reportCache:
-          capMi: {{ $cacheMi }}
-        {{- end }}
         {{- if $memoryLimit }}
         resources:
           limits:

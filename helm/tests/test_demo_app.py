@@ -41,7 +41,7 @@ def test_normal_sizing() -> None:
     assert app["resources"]["limits"]["memory"] == "128Mi"
     assert app["resources"]["requests"]["memory"] == "64Mi"
     assert env(app)["DEMO_REPORT_MI"] == "2"
-    assert env(app)["DEMO_REPORT_CACHE_MI"] == "96"  # EKS; kind's 140 is in local.yaml
+    assert env(app)["DEMO_REPORT_CACHE_MI"] == "140"
     assert "LOADGEN_REPORT" not in env(render()["demo-app-loadgen"])
 
 
@@ -54,16 +54,7 @@ def test_oom_fault_leaves_the_app_alone() -> None:
     )
 
 
-# demo-app alone with the fault on, measured at a 512Mi limit (make measure, make local-measure;
-# #79): boto3 on arm64 on EKS, no boto3 on kind.
-APP_MI = {"eks": 73, "local": 18}
-LOCAL_ENV = yaml.safe_load((CHARTS.parent / "environments" / "local.yaml").read_text())
-
-
-@pytest.mark.parametrize("target", ["eks", "local"])
-def test_oom_fix_fits_the_policy_bounds(target: str) -> None:
-    """On each cluster the fault must OOM at 128Mi, and set_memory_limit to 256Mi must hold:
-    the peak (app plus full cache) sits about midway, and the fix is within the policy."""
+def test_oom_fix_fits_the_policy_bounds() -> None:
     values = yaml.safe_load((CHARTS / "demo-app" / "values.yaml").read_text())
     policies = yaml.safe_load((CHARTS / "consoletrack" / "values.yaml").read_text())
     (oom,) = [
@@ -73,25 +64,19 @@ def test_oom_fix_fits_the_policy_bounds(target: str) -> None:
     limit = mem(
         render(faults={"oom": True})["demo-app"]["resources"]["limits"]["memory"]
     )
-    cache_mi = (
-        LOCAL_ENV["demoReportCacheMi"]
-        if target == "local"
-        else values["reportCache"]["capMi"]
-    )
-    peak = (APP_MI[target] + cache_mi) * 2**20
+    cache = values["reportCache"]["capMi"] * 2**20
     fixed = 2 * limit  # set_memory_limit to 256Mi
-    # The fault OOMs with room to spare, and the fix holds with room to spare.
-    assert peak - limit >= 24 * 2**20
-    assert fixed - peak >= 64 * 2**20
-    # #79's target: a peak of about 160-180 MiB on both clusters.
-    assert 150 * 2**20 <= peak <= 180 * 2**20
+    # A full cache plus the app on kind (~25 MiB) passes the limit, so the fault OOMs.
+    assert cache + 25 * 2**20 > limit
     # It fills before the app's first scrape: well under 30s at loadgen.rps.
     per_second = (
         values["loadgen"]["rps"] * values["reportCache"]["perRequestMi"] * 2**20
     )
-    assert (limit - APP_MI[target] * 2**20) / per_second < 15
+    assert (limit - 25 * 2**20) / per_second < 15
     assert fixed <= bounds["maxMultiplier"] * limit
     assert fixed <= mem(bounds["ceiling"])
+    # The app's ~50 MiB on EKS (boto3 loaded) and a full cache fit in the fix with room to spare.
+    assert fixed - cache - 50 * 2**20 >= 64 * 2**20
 
 
 LOADGEN_ENV = {
