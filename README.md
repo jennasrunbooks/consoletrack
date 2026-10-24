@@ -233,6 +233,8 @@ With `EXPOSURE=alb`, a rebuilt cluster gets a new ALB and ExternalDNS must point
 | `step 4. Authoritative DNS … no addresses` | The zone answers `NOERROR` with nothing | Wait for the targets to turn healthy; rerun |
 | `step 5. HTTPS … returned 403` or no response | The ALB only accepts `ALLOWED_CIDRS` | Check that this machine's address is in `ALLOWED_CIDRS` |
 
+**Known gap.** In this setup ExternalDNS writes no ownership `TXT` records, although `registry: txt` is set (observed on EKS: the zone holds only `A`, `AAAA`, `NS`, `SOA`, and the ACM `CNAME`). Its TXT registry then treats every existing record as someone else's, so it can create `DOMAIN`'s records but never update or delete them: anything that replaces the ALB without a `make down` leaves DNS on the old one, and `make dns-clean` is the way out. The scripts above rely on names, not ownership, for that reason. The cause isn't established; one suspect is `domainFilters` dropping the generated TXT names (`a-DOMAIN` is not under `DOMAIN`), which a `txtPrefix` such as `extdns-%{record_type}.` would put inside it.
+
 Once the zone answers, a resolver that already cached an empty answer can keep serving it for up to 15 minutes. Flush the local cache: on macOS `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder`, and in Chrome open `chrome://net-internals/#dns` and press Clear host cache. `make verify-clean` lists any `DOMAIN` records left after a `make down`.
 
 ### Optional: GitHub Actions on your fork
