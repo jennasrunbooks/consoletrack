@@ -7,6 +7,7 @@ only. RBAC is namespaced, read-only for k8s-mcp, and patch-only for the remediat
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 
@@ -15,6 +16,7 @@ import yaml
 from conftest import (
     APP_CHARTS,
     AWS_MCP_ENABLED,
+    HELM_DIR,
     DuplicateKeyLoader,
     chart_of,
     helm_template,
@@ -415,3 +417,24 @@ def test_the_chart_refuses_unsafe_auto_policies(match: dict, message: str) -> No
     with pytest.raises(subprocess.CalledProcessError) as exc:
         helm_template("consoletrack", "consoletrack", "consoletrack", values)
     assert message in exc.value.stderr
+
+
+def test_externaldns_does_not_evaluate_target_health(
+    rendered: dict[str, list[dict]],
+) -> None:
+    """The alias ExternalDNS writes must not be health-evaluated: right after `make up` the ALB's
+    targets are unhealthy, and Route 53 then answers NOERROR with no addresses, which resolvers cache."""
+    flag = "--aws-evaluate-target-health=false"
+    values = (HELM_DIR / "values" / "external-dns.yaml.gotmpl").read_text()
+    assert flag in values
+    # `helmfile template` renders the chart too (not the plain-helm fallback of our own charts).
+    deployments = [
+        d
+        for d in rendered["eks-alb"]
+        if d["kind"] == "Deployment" and d["metadata"]["name"] == "external-dns"
+    ]
+    if os.environ.get("HELM_RENDER_DIR"):
+        (deployment,) = deployments
+        (container,) = deployment["spec"]["template"]["spec"]["containers"]
+        assert flag in container["args"]
+        assert "--aws-evaluate-target-health=true" not in container["args"]

@@ -8,6 +8,9 @@
 #   teardown-verify.sh wait     poll until no load balancers or ELB-owned ENIs remain
 #                               (WAIT_TIMEOUT seconds, default 900); exit 1 on timeout
 #
+# With DOMAIN and DNS_ZONE_ID set, `verify` also lists the A, AAAA, and ExternalDNS ownership TXT
+# records left for DOMAIN (scripts/dns-clean.sh list); `make dns-clean` removes them.
+#
 # Read-only AWS calls. Reads AWS_REGION (and AWS_PROFILE) from the environment. Prints resource
 # names and IDs only, never an ARN or account ID (any 12-digit number is masked).
 set -euo pipefail
@@ -74,6 +77,12 @@ elb_enis() {
 		--query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | sed '/^$/d; s/^/eni /'
 }
 
+# The records `make dns-clean` would delete, as "dns-record <type> <name>" lines.
+dns_records() {
+	[[ -n "${DOMAIN:-}" && -n "${DNS_ZONE_ID:-}" ]] || return 0
+	"$(dirname "${BASH_SOURCE[0]}")/dns-clean.sh" list | sed 's/^/dns-record /' || true
+}
+
 volumes() {
 	aws ec2 describe-volumes --filters "$tag" --query 'Volumes[].VolumeId' --output text |
 		tr '\t' '\n' | sed '/^$/d; s/^/ebs-volume /'
@@ -98,6 +107,7 @@ verify)
 		volumes
 		elastic_ips
 		nat_gateways
+		dns_records
 	} | sort -u | mask)
 	if [[ -n "$found" ]]; then
 		echo "teardown-verify: project=consoletrack resources still exist in $region:" >&2
@@ -107,9 +117,16 @@ verify)
 			echo "teardown-verify: (available) aws-K8S-* are VPC CNI leftovers that block deleting the subnets;" \
 				"remove them with: make clean-enis" >&2
 		fi
+		if grep -q '^dns-record ' <<<"$found"; then
+			echo "teardown-verify: dns-record lines are Route 53 records for $DOMAIN that would keep it" \
+				"from resolving to the next cluster; remove them with: make dns-clean" >&2
+		fi
 		exit 1
 	fi
 	echo "teardown-verify: no project=consoletrack load balancers, ENIs, EBS volumes, Elastic IPs, or NAT gateways in $region"
+	if [[ -n "${DOMAIN:-}" && -z "${DNS_ZONE_ID:-}" ]]; then
+		echo "teardown-verify: DNS records not checked (no zone ID: consoletrack/global has no zone_id output)"
+	fi
 	;;
 wait)
 	deadline=$((SECONDS + ${WAIT_TIMEOUT:-900}))
