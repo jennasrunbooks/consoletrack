@@ -636,9 +636,9 @@ local-oom-run: env-check-local ## One OOM acceptance run on kind: clean demo-app
 
 # N runs of local-oom-run's steps, each on a fresh database (EVAL_OOM_RESET is the reset between
 # its two halves), then a Markdown table in eval/results/ (#60).
-local-eval-oom: env-check-local ## N (5) OOM acceptance runs on kind, PASS/FAIL each, results table in eval/results/ (~15 min a run, ~75 min for 5; N=<runs>; humans only)
+local-eval-oom: env-check-local ## N (5) OOM acceptance runs on kind, PASS/FAIL each, results table in eval/results/ (~15 min a run, ~75 min for 5; N=<runs>; FAIL_FAST=1 stops at the first FAIL; humans only)
 	$(check_human)
-	EVAL_OOM_N=$(or $(N),5) \
+	EVAL_OOM_N=$(or $(N),5) EVAL_OOM_FAIL_FAST=$(FAIL_FAST) \
 	EVAL_OOM_RESET='$(COMPOSE_KIND) down --volumes && $(MAKE) --no-print-directory local SKIP_BUILD=1' \
 	scripts/local-kind.sh eval-oom
 

@@ -740,8 +740,18 @@ eval_report() {
 	echo "local-kind: results in ${file#"$repo_root"/}"
 }
 
+# A step's wall time, to see where a run's minutes go (the run phase is the total minus these). A failing step
+# ends the run before the line prints, which is fine: the run is a FAIL either way.
+eval_phase() {
+	local name=$1 started
+	shift
+	started=$(date +%s)
+	"$@"
+	echo "local-kind: phase $name took $((($(date +%s) - started) / 60))m$((($(date +%s) - started) % 60))s"
+}
+
 eval_oom() {
-	local n rc detail_file
+	local n rc detail_file run_started
 	eval_runs=${EVAL_OOM_N:-5}
 	eval_pass=0
 	case "$eval_runs" in
@@ -758,13 +768,14 @@ eval_oom() {
 	for n in $(seq 1 "$eval_runs"); do
 		echo "local-kind: ==== eval-oom run $n of $eval_runs ===="
 		detail_file=$eval_dir/detail-$n.json
+		run_started=$(date +%s)
 		# A subshell with -e on its own, outside any && or || list (which would turn -e off inside
 		# it): any step that dies fails the run, not the loop.
 		set +e
 		(
 			set -e
-			oom_prepare
-			bash -c "$EVAL_OOM_RESET"
+			eval_phase prepare oom_prepare
+			eval_phase reset bash -c "$EVAL_OOM_RESET"
 			OOM_DETAIL_FILE=$detail_file oom_run
 		)
 		rc=$?
@@ -775,7 +786,12 @@ eval_oom() {
 		else
 			eval_row "$n" FAIL "$detail_file" "$eval_dir/row-$(printf %03d "$n").json"
 		fi
-		echo "local-kind: eval-oom run $n: $([ "$rc" = 0 ] && echo PASS || echo FAIL)"
+		echo "local-kind: eval-oom run $n: $([ "$rc" = 0 ] && echo PASS || echo FAIL) (took $((($(date +%s) - run_started) / 60)) min)"
+		# 5 of 5 is the bar, so one FAIL has already decided it; the rest only add statistics.
+		if [ "$rc" != 0 ] && [ -n "${EVAL_OOM_FAIL_FAST:-}" ]; then
+			echo "local-kind: stopping at the first FAIL (FAIL_FAST)"
+			break
+		fi
 	done
 	[ "$eval_pass" = "$eval_runs" ] # the exit code, through eval_cleanup
 }

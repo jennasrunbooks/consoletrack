@@ -787,6 +787,22 @@ def test_eval_oom_doesnt_wait_for_a_human_when_the_gate_says_manual(
 
 
 @needs_jq
+def test_eval_oom_can_stop_at_the_first_fail_and_times_its_phases(
+    tmp_path: Path,
+) -> None:
+    result, calls, files = run_eval(
+        tmp_path, runs=3, details=[ROLLBACK, PASSING], EVAL_OOM_FAIL_FAST="1"
+    )
+    assert result.returncode == 1
+    assert calls.count("reset") == 1  # runs 2 and 3 never started
+    assert "stopping at the first FAIL" in result.stdout
+    assert "eval-oom: 0/3 PASS (stopped after 1 run(s))" in result.stdout
+    for phase in ("prepare", "reset"):
+        assert f"phase {phase} took " in result.stdout
+    assert fault_ends_off(calls)
+
+
+@needs_jq
 @pytest.mark.parametrize(
     "fix_args",
     [
