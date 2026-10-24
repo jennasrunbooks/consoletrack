@@ -8,7 +8,7 @@ ConsoleTrack catches every out-of-band AWS change within minutes, records who ma
 
 ## See it in 2 minutes
 
-- **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and fixed on its own, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it.
+- **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and the policy gate fixed on its own, a real recorded OOM run where you approve the fix by hand, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it.
 - **Recorded walkthrough of the live deployment:** <!-- TODO: YouTube link once recorded --> the system running on EKS, clicked through as admin, on the Jenna's Runbooks YouTube channel.
 - **Run it yourself:** `make local` on your machine with kind and Docker ([Try it without AWS](#try-it-without-aws)), or `make up` in your own AWS account ([Deploy to AWS](#deploy-to-aws)).
 
@@ -21,6 +21,8 @@ No logins are shared and no cluster is kept running for visitors: these four are
 | ![Change detail](docs/screenshots/change-details.png) | ![Incidents](docs/screenshots/incidents.png) |
 
 <sub>Dark-theme versions are in [docs/screenshots/](docs/screenshots/).</sub>
+
+**Live deployment.** The EKS deployment's URL is admin-only and is up during the review window (<!-- TODO: start date --> to <!-- TODO: end date -->). The demo site above is the always-on way to explore ConsoleTrack.
 
 ## Contents
 

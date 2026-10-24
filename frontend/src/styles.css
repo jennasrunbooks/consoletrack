@@ -1740,3 +1740,71 @@ table.changes {
   background: var(--high-bg);
   color: var(--high-text);
 }
+
+/* --- Recorded demo (the demo build only) --------------------------------------------------- */
+
+.demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 20px;
+  padding: 8px 16px;
+  background: var(--info-bg);
+  color: var(--info-text);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 14px;
+  text-align: center;
+}
+
+.demo-banner p {
+  margin: 0;
+}
+
+.demo-banner-label {
+  cursor: help;
+}
+
+.demo-banner-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.demo-banner a {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+.demo-tour {
+  margin-bottom: 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.demo-tour-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.demo-tour h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.demo-tour ol {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-left: 22px;
+  color: var(--text-muted);
+}

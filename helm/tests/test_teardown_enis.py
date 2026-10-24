@@ -4,7 +4,9 @@ scripts/delete-leftover-enis.sh (`make clean-enis`, and `make down` between the 
 rest of the root) and `scripts/teardown-verify.sh verify` (`make verify-clean`), against a stub
 `aws` that serves a list of ENIs from a file. The bug: the VPC CNI leaves `available`
 "aws-K8S-i-<instance>" ENIs, which block deleting the node security group and the subnets, and
-`make verify-clean` didn't list them because they carry no project tag.
+`make verify-clean` didn't list them because they carry no project tag. And `make down` waited
+for the control plane's "Amazon EKS <cluster>" ENIs while the cluster was still running, so they
+were never released and the wait always timed out.
 """
 
 from __future__ import annotations
@@ -21,11 +23,19 @@ CLEAN = REPO / "scripts" / "delete-leftover-enis.sh"
 VERIFY = REPO / "scripts" / "teardown-verify.sh"
 
 AWS = r"""#!/usr/bin/env bash
-# Stub: ENIs live in $STUB_DIR/enis as "<id>\t<status>\t<description>" rows.
+# Stub: ENIs live in $STUB_DIR/enis as "<id>\t<status>\t<description>" rows; the cluster's status
+# is $STUB_CLUSTER (unset: no such cluster).
 echo "$*" >>"$STUB_DIR/calls"
 args=" $* "
 case $args in
 *" describe-vpcs "*) echo "${STUB_VPCS-vpc-0abc}" ;;
+*" describe-cluster "*)
+	if [[ -n "${STUB_CLUSTER_ERROR-}" ]]; then echo "$STUB_CLUSTER_ERROR" >&2; exit 254; fi
+	if [[ -z "${STUB_CLUSTER-}" ]]; then
+		echo "An error occurred (ResourceNotFoundException) when calling the DescribeCluster operation: No cluster found" >&2
+		exit 254
+	fi
+	echo "$STUB_CLUSTER" ;;
 *" describe-network-interfaces "*Name=vpc-id*) cat "$STUB_DIR/enis" ;;
 *" delete-network-interface "*)
 	id=$(sed -E 's/.*--network-interface-id ([^ ]+).*/\1/' <<<"$args")
@@ -111,11 +121,68 @@ def test_never_deletes_an_in_use_eni(stub: Path) -> None:
 
 def test_eks_managed_enis_fail_when_not_waiting(stub: Path) -> None:
     result = run(
-        CLEAN, stub, [CNI, EKS], CLEAN_ENIS_ASSUME_YES="1", CLEAN_ENIS_WAIT="0"
+        CLEAN,
+        stub,
+        [CNI, EKS],
+        CLEAN_ENIS_ASSUME_YES="1",
+        CLEAN_ENIS_WAIT="0",
+        STUB_CLUSTER="DELETING",
     )
     assert result.returncode == 1
     assert "eni-0eks" in result.stderr
     assert deleted(stub) == ["eni-0cni"]
+
+
+def test_a_running_clusters_enis_are_left_alone_without_waiting(stub: Path) -> None:
+    # make down runs this before Terraform deletes the cluster: its control-plane ENIs stay until
+    # then, so waiting (CLEAN_ENIS_WAIT=600) would only time out.
+    result = run(
+        CLEAN,
+        stub,
+        [CNI, EKS],
+        CLEAN_ENIS_ASSUME_YES="1",
+        CLEAN_ENIS_WAIT="600",
+        STUB_CLUSTER="ACTIVE",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "running cluster" in result.stdout
+    assert "waiting" not in result.stdout
+    assert deleted(stub) == ["eni-0cni"]
+    assert remaining(stub) == ["eni-0eks"]
+
+
+def test_deletes_available_control_plane_enis_once_the_cluster_is_gone(
+    stub: Path,
+) -> None:
+    orphan = "eni-0eks\tavailable\tAmazon EKS ct-eks-use1-test"
+    result = run(CLEAN, stub, [orphan], CLEAN_ENIS_ASSUME_YES="1")
+    assert result.returncode == 0, result.stderr
+    assert deleted(stub) == ["eni-0eks"]
+
+
+def test_keeps_an_available_control_plane_eni_of_a_running_cluster(
+    stub: Path,
+) -> None:
+    available = "eni-0eks\tavailable\tAmazon EKS ct-eks-use1-test"
+    result = run(
+        CLEAN, stub, [available], CLEAN_ENIS_ASSUME_YES="1", STUB_CLUSTER="ACTIVE"
+    )
+    assert result.returncode == 0, result.stderr
+    assert deleted(stub) == []
+
+
+def test_fails_when_it_cannot_tell_whether_the_cluster_exists(stub: Path) -> None:
+    result = run(
+        CLEAN,
+        stub,
+        [EKS],
+        CLEAN_ENIS_ASSUME_YES="1",
+        STUB_CLUSTER_ERROR="An error occurred (AccessDeniedException): arn:aws:iam::123456789012:user/x",
+    )
+    assert result.returncode == 1
+    assert "can't tell" in result.stderr
+    assert "123456789012" not in result.stderr
+    assert deleted(stub) == []
 
 
 def test_asks_before_deleting_and_refuses_without_a_terminal(stub: Path) -> None:

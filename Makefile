@@ -161,7 +161,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	tf-validate tf-test tflint tf-init tf-plan tf-apply tf-output gh-secrets gh-deploy-config \
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-aws-mcp test-aws-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
-	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e screenshots test-contract test-compose test-integration test-k8s \
+	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e demo-site screenshots test-contract test-compose test-integration test-k8s \
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
@@ -341,6 +341,9 @@ endif
 # Browsers: CHROMIUM_PATH (set in the devcontainer), else `npx playwright install chromium`.
 test-e2e: $(FRONTEND_DEPS) ## Playwright in Chromium against `npm run dev:mock` (localhost only)
 	$(FRONTEND_RUN) test:e2e
+
+demo-site: $(FRONTEND_DEPS) ## Build the recorded demo site into frontend/dist-demo (VITE_BASE, VITE_DEMO_VIDEO_URL optional)
+	$(FRONTEND_RUN) build:demo
 
 screenshots: $(FRONTEND_DEPS) ## Regenerate docs/screenshots/ from `npm run dev:mock` with Playwright
 	$(FRONTEND_RUN) screenshots

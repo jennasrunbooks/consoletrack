@@ -10,11 +10,11 @@ import {
   incidentLabel,
   relativeTime,
 } from "../../lib/format";
+import { SAMPLE_DATA } from "../../lib/mode";
 import { useNow } from "../../lib/useNow";
 import { useResource } from "../../lib/useResource";
 import { chipSelected, INCIDENT_CHIPS, parseIncidentFilters, SEVERITIES, toIncidentQuery } from "./filters";
 
-const SAMPLE_DATA = import.meta.env.MODE === "mock";
 const COLUMNS = 6;
 
 export function IncidentListPage() {
