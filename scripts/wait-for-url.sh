@@ -60,6 +60,7 @@ norm() {
 # Each check prints why it failed on stdout and returns 1, or sets what the later ones use.
 alb=""
 alb_ip=""
+alb_state=""
 failed_step=""
 detail=""
 
@@ -108,6 +109,7 @@ check_targets() {
 		fail "3. ALB targets" "could not describe load balancers" || return 1
 	arn=$(jq -r --arg a "$alb" '[.LoadBalancers[] | select((.DNSName | ascii_downcase) == $a) | .LoadBalancerArn][0] // empty' <<<"$lbs")
 	[[ -n "$arn" ]] || fail "3. ALB targets" "no load balancer named $alb in $region" || return 1
+	alb_state=$(jq -r --arg a "$alb" '[.LoadBalancers[] | select((.DNSName | ascii_downcase) == $a) | .State.Code][0] // "unknown"' <<<"$lbs")
 	alb_ip=$(dig +short A "$alb" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 || true)
 	tgs=$(aws elbv2 describe-target-groups --load-balancer-arn "$arn" --output json |
 		jq -r '.TargetGroups[].TargetGroupArn')
@@ -127,7 +129,8 @@ check_targets() {
 }
 
 check_authoritative() {
-	local ns answers full status eval
+	local ns answers full status eval alb_resolves="does not resolve"
+	[[ -z "$alb_ip" ]] || alb_resolves=resolves
 	ns=$(aws route53 get-hosted-zone --id "$zone" --output json | jq -r '.DelegationSet.NameServers[0] // empty')
 	[[ -n "$ns" ]] || fail "4. Authoritative DNS" "the zone has no name servers" || return 1
 	answers=$(dig +short +time=3 +tries=1 "@$ns" "$domain" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
@@ -139,7 +142,7 @@ check_authoritative() {
 	eval=$(aws route53 list-resource-record-sets --hosted-zone-id "$zone" --output json |
 		jq -r --arg d "$domain." '[.ResourceRecordSets[] | select(.Name == $d and .Type == "A")
 			| (.AliasTarget.EvaluateTargetHealth | tostring)][0] // "no A record"')
-	fail "4. Authoritative DNS" "$ns answers $domain with no addresses (${status:-no response from dig: ${full:-no output}}; the A alias has EvaluateTargetHealth=$eval)" ||
+	fail "4. Authoritative DNS" "$ns answers $domain with no addresses (${status:-no response from dig: ${full:-no output}}; the A alias has EvaluateTargetHealth=$eval; the ALB is $alb_state and its own name $alb_resolves)" ||
 		return 1
 }
 
