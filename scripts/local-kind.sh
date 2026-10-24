@@ -603,6 +603,9 @@ oom_run() {
 	if [ -n "${OOM_DETAIL_FILE:-}" ]; then
 		oom_await_resolved
 		printf '%s\n' "${detail:-}" >"$OOM_DETAIL_FILE"
+		# The tool calls behind the diagnosis, for the results file's failing runs (the database is
+		# reset before the next run, so this is the only copy).
+		[ -z "${id:-}" ] || api "/api/v1/incidents/$id/evidence" >"${OOM_DETAIL_FILE%.json}.evidence.json" 2>/dev/null || true
 	fi
 	oom_summary
 }
@@ -714,6 +717,31 @@ eval_table() {
 			| "| " + (map(cell) | join(" | ")) + " |")' "$eval_dir"/row-*.json
 }
 
+# For each failing run: the full root cause and the evidence the agent saw, as the API redacted it.
+# Nothing is kept for a passing run. 12-digit numbers are replaced like in the table.
+eval_failures() {
+	local row n
+	for row in "$eval_dir"/row-*.json; do
+		[ "$(jq -r .result "$row")" = FAIL ] || continue
+		n=$(jq -r .run "$row")
+		jq -r --slurpfile d "$eval_dir/detail-$n.json" '
+			def scrub: gsub("[0-9]{12}"; "123456789012");
+			"### Run \(.run)", "",
+			"**Root cause:** \(($d[0].analysis.root_cause // "none") | gsub("\\s+"; " ") | scrub)", ""' "$row" 2>/dev/null ||
+			printf '### Run %s\n\n' "$n"
+		if [ -s "$eval_dir/detail-$n.evidence.json" ]; then
+			jq -r '
+				def scrub: gsub("[0-9]{12}"; "123456789012");
+				(.items // [])[] | "\(.seq). `\(.tool_name)` \(.args | tojson | scrub)", "",
+					"~~~~", ((.result_excerpt | scrub) | .[0:1500]), "~~~~", ""' \
+				"$eval_dir/detail-$n.evidence.json" 2>/dev/null || echo "(evidence unreadable)"
+		else
+			echo "(no evidence saved)"
+		fi
+		echo
+	done
+}
+
 # The summary line, the table, and the file; for the runs done so far.
 eval_report() {
 	local done_runs file stamp commit
@@ -734,6 +762,12 @@ eval_report() {
 		echo "\`set_memory_limit\` → \`256Mi\` for \`demo/demo-app/demo-app\` and the fix succeeded."
 		echo
 		eval_table
+		if [ "$eval_pass" != "$done_runs" ]; then
+			echo
+			echo "## Failing runs"
+			echo
+			eval_failures
+		fi
 	} >"$file"
 	eval_table
 	echo "$eval_summary"

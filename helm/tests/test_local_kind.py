@@ -449,6 +449,7 @@ case "$url" in
 	echo "{\"data\":{\"result\":[{\"value\":[0,\"$v\"]}]}}" ;;
 */auth/login) cat > /dev/null; exit 0 ;;
 */api/v1/incidents\?*) pop "$LISTS" ;;
+*/evidence) echo '{"items":[{"seq":1,"tool_name":"get_pod_status","args":{"namespace":"demo"},"result_excerpt":"lastState: Terminated reason=OOMKilled exit 137 account 123456789012"}]}' ;;
 */api/v1/incidents/*) pop "$DETAILS" ;;
 esac
 """
@@ -746,7 +747,16 @@ def test_eval_oom_goes_on_after_a_fail_and_exits_non_zero(tmp_path: Path) -> Non
     assert calls.count("reset") == 2
     rows = [l for l in files[0].read_text().splitlines() if l.startswith("| ")]
     assert [r.split(" | ")[1] for r in rows[1:]] == ["FAIL", "PASS"]
-    assert "| rollback → " in rows[1] and "| manual | proposed |" in rows[1]
+    assert "| rollback → " in rows[1]
+    # A failing run keeps what the agent saw; a passing one doesn't.
+    text = files[0].read_text()
+    assert "## Failing runs" in text and "### Run 1" in text and "### Run 2" not in text
+    assert (
+        "**Root cause:** demo-app was OOMKilled at its 128Mi limit; the report cache"
+        in text
+    )
+    assert '1. `get_pod_status` {"namespace":"demo"}' in text
+    assert "reason=OOMKilled exit 137" in text and "| manual | proposed |" in rows[1]
     assert fault_ends_off(calls)
 
 

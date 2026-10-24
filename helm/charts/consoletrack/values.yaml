@@ -194,7 +194,11 @@ remediation:
       mode: auto              # manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
-      minConfidence: high
+      # medium, not high: the agent's confidence for this scenario swung between medium and high
+      # across identical runs while its proposal was right every time (docs/remediation-graduation.md,
+      # #60). The bounds, dry run, verify, and automatic rollback are what make the change safe.
+      # low still goes to a human.
+      minConfidence: medium
       rateLimit: {perWorkload: 1, window: 1h}
       verify:
         rolloutTimeout: 3m
