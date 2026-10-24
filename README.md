@@ -247,7 +247,7 @@ To plan and apply Terraform from pull requests and run Revert as a gated workflo
 2. Add an `AWS_ROLE_ARN` environment secret to each: `make gh-secrets` reads them from `terraform/consoletrack/global`'s outputs and sets them for you (run it as yourself, not an agent).
 3. After every `make up`, run `make gh-deploy-config`. It sets the repository variables `deploy.yaml` and `terraform.yaml` read (from `.env`, including `USE_SPOT`) and the `consoletrack-deploy` secrets that come from Terraform outputs: the queue URLs, the canary security group, and the certificate. Those change on every `make down` → `make up`, so a deploy run with the old values fails.
 
-Without it, Revert still works: the dashboard shows `make revert CHANGE=<id>`, which plans and applies the demo-app root from your machine after a confirmation.
+Revert itself is Phase 2. When it lands, forks without OIDC will get `make revert CHANGE=<id>`, which plans and applies the demo-app root from your machine after a confirmation.
 
 ### Demo scenarios
 
@@ -367,7 +367,7 @@ make tf-validate               # terraform init -backend=false + validate for ev
 | Frontend | Vitest, React Testing Library, MSW | `make test-frontend` |
 | Integration | pytest + Testcontainers Postgres + ElasticMQ | `make test-integration` |
 | Cluster | `k8s-mcp` against kind with the real RBAC | `make test-k8s` |
-| Agent eval (manual) | fault scenarios with the real model | `make eval` |
+| Agent eval (manual) | the OOM scenario N times with the real model, results in `eval/results/` (`make eval` for every scenario is Phase 2) | `make local-eval-oom` |
 | All of the above but the cluster and eval layers | one command; integration needs Docker | `make test-all` |
 
 | Workflow | Trigger | Does |
