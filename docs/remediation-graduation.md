@@ -57,7 +57,7 @@ output attached, and only when all of these hold:
 | Eval | 5 of 5 `make eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app` | #60; attach the output to the PR that sets `mode: auto` |
 
 **Phase 1 evidence: 3 runs on kind (Oct 21); `make eval-oom` results are written to
-[eval/results/](../eval/results/README.md) and pasted in the PR that adds the target (#60). If it
+[eval/results/](../eval/results/README.md) and pasted in #95 (#60). If it
 fails, the policy reverts to manual.** `oom-memory-bump` ships as `mode: auto` before the eval (#60 item 5)
 has run, which is an exception to criterion 5 for the course timeline. It's acceptable because
 the kill switch and the automatic rollback are in place.
