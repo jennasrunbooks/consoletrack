@@ -9,8 +9,11 @@ Nothing that runs a pod, and no Secret (the script creates consoletrack-webhook)
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -259,7 +262,7 @@ FAKE_HELMFILE = (
 
 
 def run_measure(
-    tmp_path: Path, **env: str
+    tmp_path: Path, *args: str, **env: str
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -274,7 +277,7 @@ def run_measure(
     calls = tmp_path / "calls"
     calls.write_text("")
     result = subprocess.run(
-        ["bash", str(REPO / "scripts/local-kind.sh"), "measure"],
+        ["bash", str(REPO / "scripts/local-kind.sh"), *(args or ("measure",))],
         env={
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "CALLS": str(calls),
@@ -456,7 +459,7 @@ exit 0
 """
 
 
-def incident(status: str, remediation: dict | None = None) -> str:
+def incident(status: str, remediation: dict | None = None, **extra: object) -> str:
     return json.dumps(
         {
             "id": 1,
@@ -465,12 +468,30 @@ def incident(status: str, remediation: dict | None = None) -> str:
             "analysis": None
             if status == "triaging"
             else {
+                "root_cause": "demo-app was OOMKilled at its 128Mi limit;\nthe report cache is 158 MiB.",
                 "confidence": "high",
-                "agent_run": {"prompt_version": "v4", "tool_calls": 7},
+                "agent_run": {
+                    "model": "claude-sonnet-5-5",
+                    "prompt_version": "v4",
+                    "escalated": False,
+                    "tool_calls": 7,
+                    "input_tokens": 21000,
+                    "output_tokens": 900,
+                },
             },
             "remediation": remediation,
+            **extra,
         }
     )
+
+
+# The proposal the pass rule wants: set_memory_limit -> 256Mi for demo/demo-app/demo-app.
+PAYLOAD = {
+    "namespace": "demo",
+    "deployment": "demo-app",
+    "container": "demo-app",
+    "memory_limit": "256Mi",
+}
 
 
 def fix(
@@ -484,7 +505,7 @@ def fix(
         "status": status,
         "mode": mode,
         "gate_reason": "policy oom-memory-bump applies it",
-        "payload": {"memory_limit": "256Mi"},
+        "payload": PAYLOAD,
         "steps": steps if status in ("succeeded", "failed") else [],
         **extra,
     }
@@ -503,6 +524,7 @@ def run_oom(
     lists: list[str] | None = None,
     details: list[str] | None = None,
     alerts: list[str] | None = None,
+    **extra_env: str,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -525,7 +547,7 @@ def run_oom(
         "HELM_DRIVER": "configmap",
         "OOM_RUN_POLL": "0",
     }
-    env |= {"OOM_QUIET_POLL": "1", "OOM_QUIET_TIMEOUT": "30"}
+    env |= {"OOM_QUIET_POLL": "1", "OOM_QUIET_TIMEOUT": "30", **extra_env}
     for name, text in files.items():
         (tmp_path / name).write_text(text + "\n" if text else "")
         env[name] = str(tmp_path / name)
@@ -634,6 +656,299 @@ def test_run_refuses_a_database_with_incidents(tmp_path: Path) -> None:
     assert result.returncode == 1
     assert "already has incidents" in result.stderr
     assert not any(c.startswith("helmfile ") for c in calls)  # the fault never went on
+
+
+# --- make local-eval-oom (#60) ------------------------------------------------------------------------
+
+PASSING = incident(
+    "resolved",
+    fix("succeeded"),
+    opened_at="2026-10-24T10:00:00.250Z",
+    resolved_at="2026-10-24T10:03:05Z",
+)
+ROLLBACK = incident("awaiting_review", fix("proposed", mode="manual", kind="rollback"))
+# One run's API calls: the empty-database check, then the incident list and the summary's.
+ONE_RUN = [EMPTY, ONE, ONE]
+
+
+def run_eval(
+    tmp_path: Path,
+    *,
+    runs: int,
+    details: list[str],
+    reset: str = 'echo reset >> "$CALLS"',
+    **env: str,
+) -> tuple[subprocess.CompletedProcess[str], list[str], list[Path]]:
+    results = tmp_path / "results"
+    result, calls = run_oom(
+        tmp_path,
+        "eval-oom",
+        lists=ONE_RUN * runs,
+        details=details,
+        EVAL_OOM_N=str(runs),
+        EVAL_OOM_RESET=reset,
+        EVAL_OOM_DIR=str(results),
+        OOM_RESOLVE_TIMEOUT="0",
+        **env,
+    )
+    return result, calls, sorted(results.glob("eval-oom-*.md"))
+
+
+def fault_ends_off(calls: list[str]) -> bool:
+    """The last thing eval-oom did to demo-app: deleted it, then synced it without a fault."""
+    last_sync = max(i for i, c in enumerate(calls) if c.startswith("helmfile "))
+    last_delete = max(
+        i for i, c in enumerate(calls) if " delete deployment demo-app" in c
+    )
+    return (
+        last_delete < last_sync == len(calls) - 1
+        and "demoFault" not in calls[last_sync]
+    )
+
+
+@needs_jq
+def test_eval_oom_passes_every_run_and_writes_the_table(tmp_path: Path) -> None:
+    result, calls, files = run_eval(tmp_path, runs=2, details=[PASSING])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "eval-oom: 2/2 PASS" in result.stdout
+    assert calls.count("reset") == 2
+    (file,) = files
+    table = file.read_text()
+    assert "eval-oom: 2/2 PASS" in table
+    row = next(line for line in table.splitlines() if line.startswith("| 1 |"))
+    cells = [c.strip() for c in row.strip("|").split(" | ")]
+    assert cells == [
+        "1",
+        "PASS",
+        # One line, whitespace collapsed.
+        "demo-app was OOMKilled at its 128Mi limit; the report cache is 158 MiB.",
+        "high",
+        "set_memory_limit → 256Mi (demo/demo-app/demo-app)",
+        "auto",
+        "succeeded",
+        "claude-sonnet-5-5",
+        "n",
+        "7",
+        "21000",
+        "900",
+        "3:05",
+    ]
+    assert fault_ends_off(calls)
+
+
+@needs_jq
+def test_eval_oom_goes_on_after_a_fail_and_exits_non_zero(tmp_path: Path) -> None:
+    result, calls, files = run_eval(tmp_path, runs=2, details=[ROLLBACK, PASSING])
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "eval-oom run 1: FAIL" in result.stdout
+    assert "eval-oom run 2: PASS" in result.stdout
+    assert "eval-oom: 1/2 PASS" in result.stdout
+    assert calls.count("reset") == 2
+    rows = [l for l in files[0].read_text().splitlines() if l.startswith("| ")]
+    assert [r.split(" | ")[1] for r in rows[1:]] == ["FAIL", "PASS"]
+    assert "| rollback → " in rows[1] and "| manual | proposed |" in rows[1]
+    assert fault_ends_off(calls)
+
+
+@needs_jq
+def test_eval_oom_counts_a_run_that_dies_as_a_fail_and_goes_on(tmp_path: Path) -> None:
+    """The database reset failing is a FAIL row with dashes, not the end of the evaluation."""
+    result, calls, files = run_eval(
+        tmp_path, runs=2, details=["{}"], reset='echo reset >> "$CALLS"; exit 1'
+    )
+    assert result.returncode == 1
+    assert "eval-oom: 0/2 PASS" in result.stdout
+    assert calls.count("reset") == 2
+    assert "| 2 | FAIL | - | - | - |" in files[0].read_text()
+    assert fault_ends_off(calls)
+
+
+@needs_jq
+def test_eval_oom_doesnt_wait_for_a_human_when_the_gate_says_manual(
+    tmp_path: Path,
+) -> None:
+    """Medium confidence sends the fix to manual; nobody approves in an eval, so the run ends there
+    as a FAIL (local-oom-run waits for you instead, up to 25 minutes)."""
+    manual = incident(
+        "awaiting_review",
+        fix("proposed", mode="manual", gate_reason="the agent's confidence is medium"),
+    )
+    result, calls, files = run_eval(
+        tmp_path, runs=1, details=[manual], OOM_RUN_TIMEOUT="60"
+    )
+    assert result.returncode == 1
+    assert (
+        "the gate sent it to a human: the agent's confidence is medium; not waiting"
+        in (result.stdout)
+    )
+    assert "gave up" not in result.stdout
+    assert "| manual | proposed |" in files[0].read_text()
+    assert fault_ends_off(calls)
+
+
+@needs_jq
+@pytest.mark.parametrize(
+    "fix_args",
+    [
+        {"kind": "rollback"},
+        {"payload": {**PAYLOAD, "memory_limit": "512Mi"}},
+        {"payload": {**PAYLOAD, "namespace": "default"}},
+        {"payload": {**PAYLOAD, "deployment": "other"}},
+        {"payload": {**PAYLOAD, "container": "sidecar"}},
+        {"status": "failed"},
+    ],
+    ids=["kind", "value", "namespace", "workload", "container", "not-succeeded"],
+)
+def test_pass_rule_needs_the_right_kind_value_target_and_a_succeeded_fix(
+    tmp_path: Path, fix_args: dict
+) -> None:
+    status = fix_args.get("status", "succeeded")
+    remediation = fix(status, **{k: v for k, v in fix_args.items() if k != "status"})
+    result, _ = run_oom(
+        tmp_path,
+        "oom-run",
+        lists=ONE_RUN,
+        details=[incident("resolved", remediation)],
+    )
+    assert result.returncode == 1, result.stdout
+    assert "RESULT: FAIL" in result.stdout
+
+
+@needs_jq
+def test_eval_oom_turns_the_fault_off_when_interrupted(tmp_path: Path) -> None:
+    """Ctrl-C reaches the whole foreground group: the reset step and the script."""
+    bin_dir = tmp_path / "bin"
+    results = tmp_path / "results"
+    calls = tmp_path / "CALLS"
+    bin_dir.mkdir()
+    for name, body in (
+        ("kubectl", OOM_KUBECTL),
+        ("curl", OOM_CURL),
+        ("docker", OOM_DOCKER),
+        ("helmfile", FAKE_HELMFILE),
+    ):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    for name, text in (
+        ("LISTS", EMPTY),
+        ("DETAILS", "{}"),
+        ("ALERTS", "Watchdog"),
+        ("CALLS", ""),
+    ):
+        (tmp_path / name).write_text(text + "\n" if text else "")
+    proc = subprocess.Popen(
+        ["bash", str(REPO / "scripts/local-kind.sh"), "eval-oom"],
+        env={
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HELM_DRIVER": "configmap",
+            "OOM_QUIET_POLL": "1",
+            "OOM_QUIET_TIMEOUT": "30",
+            "EVAL_OOM_N": "3",
+            "EVAL_OOM_RESET": 'echo reset >> "$CALLS"; sleep 30',
+            "EVAL_OOM_DIR": str(results),
+            **{n: str(tmp_path / n) for n in ("LISTS", "DETAILS", "ALERTS", "CALLS")},
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        for _ in range(100):
+            if "reset" in calls.read_text().split():
+                break
+            time.sleep(0.1)
+        os.killpg(proc.pid, signal.SIGINT)
+        proc.communicate(timeout=20)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+    lines = calls.read_text().splitlines()
+    assert proc.returncode != 0
+    assert lines.count("reset") == 1  # the second run never started
+    assert fault_ends_off(lines)
+
+
+@needs_jq
+def test_eval_oom_rejects_a_bad_run_count(tmp_path: Path) -> None:
+    result, calls = run_oom(
+        tmp_path, "eval-oom", EVAL_OOM_N="five", EVAL_OOM_RESET="true"
+    )
+    assert result.returncode == 1
+    assert "N must be a positive number" in result.stderr
+    assert calls == []
+
+
+# --- make fault: the EKS counterpart of local-fault ---------------------------------------------
+
+
+@needs_jq
+def test_fault_on_eks_syncs_the_eks_environment_at_the_running_image(
+    tmp_path: Path,
+) -> None:
+    result, calls = run_measure(
+        tmp_path,
+        "fault",
+        "oom",
+        MEASURE_TARGET="eks",
+        KUBE_CONTEXT="consoletrack-eks",
+    )
+    assert result.returncode == 0, result.stderr
+    (sync,) = [c for c in calls if c.startswith("helmfile ")]
+    assert "-e eks --kube-context consoletrack-eks" in sync
+    assert "--state-values-set imageTag=abc1234" in sync
+    assert "--state-values-set demoFault=oom" in sync
+    assert not any(" delete " in c for c in calls)
+    assert (
+        "expect an incident in about 4-8 minutes; watch it on the dashboard"
+        in result.stdout
+    )
+
+
+@needs_jq
+def test_fault_off_on_eks_recreates_demo_app_at_the_same_image(tmp_path: Path) -> None:
+    """A plain sync would conflict with the remediator, which owns the memory limit after a fix.
+    The image tag is read before the Deployment is deleted, and used by the sync after it."""
+    result, calls = run_measure(
+        tmp_path,
+        "fault",
+        "off",
+        MEASURE_TARGET="eks",
+        KUBE_CONTEXT="consoletrack-eks",
+    )
+    assert result.returncode == 0, result.stderr
+    kinds = [c.split()[0] for c in calls]
+    delete = next(i for i, c in enumerate(calls) if " delete deployment demo-app" in c)
+    sync = next(i for i, c in enumerate(calls) if c.startswith("helmfile "))
+    assert delete < sync and kinds.count("helmfile") == 1
+    assert "-e eks --kube-context consoletrack-eks" in calls[sync]
+    assert "--state-values-set imageTag=abc1234" in calls[sync]
+    assert "demoFault" not in calls[sync]
+
+
+@needs_jq
+@pytest.mark.parametrize("fault", ["oom", "off"])
+def test_fault_on_eks_refuses_an_empty_image_tag(tmp_path: Path, fault: str) -> None:
+    result, calls = run_measure(
+        tmp_path,
+        "fault",
+        fault,
+        MEASURE_TARGET="eks",
+        KUBE_CONTEXT="consoletrack-eks",
+        NO_DEPLOYMENT="1",
+    )
+    assert result.returncode == 1
+    assert "demo-app isn't deployed on consoletrack-eks" in result.stderr
+    assert not any(c.startswith("helmfile ") or " delete " in c for c in calls)
+
+
+@needs_jq
+def test_fault_off_on_kind_still_only_syncs(tmp_path: Path) -> None:
+    result, calls = run_measure(tmp_path, "fault", "off")
+    assert result.returncode == 0, result.stderr
+    (sync,) = [c for c in calls if c.startswith("helmfile ")]
+    assert "-e local" in sync and "imageTag" not in sync
+    assert not any(" delete " in c for c in calls)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq")

@@ -43,7 +43,7 @@ output attached, and only when all of these hold:
 4. **Automatic rollback.** If verify fails, the backend undoes exactly what it applied, and the
    workload gets no further auto attempts.
 5. **A passing eval.** The agent picks this kind with the correct values in 5 of 5 runs of the
-   scenario on kind (`make eval-oom`, #60; the full `make eval` in Phase 2).
+   scenario on kind (`make local-eval-oom`, #60; the full `make eval` in Phase 2).
 
 ### `set_memory_limit` against the criteria
 
@@ -54,10 +54,11 @@ output attached, and only when all of these hold:
 | Dry run | A server-side `dryRun=All` patch first; its result may differ from the live pod template only in that container's memory, so a mutating webhook or a merge surprise is caught before anything changes | `remediation_apply.py` |
 | Verify | Rollout complete within `rolloutTimeout` (3m); then within `waitForResolved` (5m): no new `OOMKilled` in a pod running the new limit, and the incident resolved (Alertmanager) or the `DemoAppHighErrorRate` ratio below 0.05 (Prometheus) | `remediation_apply.py`, chart `values.yaml` |
 | Rollback | The inverse strategic-merge patch: the previous limit and request back, which makes the pod template equal to the previous revision's, so the Deployment returns to that ReplicaSet as `kubectl rollout undo` would, without touching anything else. The incident goes back to `awaiting_review` with every step recorded | `remediation_apply.py` |
-| Eval | 5 of 5 `make eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app` | #60; attach the output to the PR that sets `mode: auto` |
+| Eval | 5 of 5 `make local-eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app` | #60; attach the output to the PR that sets `mode: auto` |
 
-**Phase 1 evidence: 3 runs on kind (Oct 21); `make eval-oom` 5/5 to follow. If it fails, the
-policy reverts to manual.** `oom-memory-bump` ships as `mode: auto` before the eval (#60 item 5)
+**Phase 1 evidence: 3 runs on kind (Oct 21); `make local-eval-oom` results are written to
+[eval/results/](../eval/results/README.md) and pasted in #95 (#60). If it
+fails, the policy reverts to manual.** `oom-memory-bump` ships as `mode: auto` before the eval (#60 item 5)
 has run, which is an exception to criterion 5 for the course timeline. It's acceptable because
 the kill switch and the automatic rollback are in place.
 

@@ -165,7 +165,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure local-oom-run measure demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -497,6 +497,12 @@ measure: env-check-aws helm-values ## EKS: demo-app's memory under the OOM fault
 	$(check_human)
 	MEASURE_TARGET=eks KUBE_CONTEXT=$(KUBE_CONTEXT) MEASURE_CACHE_MI=$(CACHE_MI) scripts/local-kind.sh measure
 
+# The EKS counterpart of local-fault: the eks Helmfile environment on KUBE_CONTEXT, at the image tag
+# the cluster runs now. FAULT=off recreates demo-app (see fault() in scripts/local-kind.sh).
+fault: env-check-aws helm-values ## EKS: turn a demo-app fault on (FAULT=oom|badImage|badProbe) or off (FAULT=off); humans only
+	$(check_human)
+	MEASURE_TARGET=eks KUBE_CONTEXT=$(KUBE_CONTEXT) scripts/local-kind.sh fault $(FAULT)
+
 # Terraform asks for yes once per step that has something to destroy: demo-app (if present), the
 # node group, then the rest.
 # The Helmfile half is scripts/down-cluster.sh: app, any Gateway, wait for the load balancers,
@@ -627,6 +633,14 @@ local-oom-run: env-check-local ## One OOM acceptance run on kind: clean demo-app
 	$(COMPOSE_KIND) down --volumes
 	$(MAKE) --no-print-directory local SKIP_BUILD=1
 	scripts/local-kind.sh oom-run
+
+# N runs of local-oom-run's steps, each on a fresh database (EVAL_OOM_RESET is the reset between
+# its two halves), then a Markdown table in eval/results/ (#60).
+local-eval-oom: env-check-local ## N (5) OOM acceptance runs on kind, PASS/FAIL each, results table in eval/results/ (~15 min a run, ~75 min for 5; N=<runs>; humans only)
+	$(check_human)
+	EVAL_OOM_N=$(or $(N),5) \
+	EVAL_OOM_RESET='$(COMPOSE_KIND) down --volumes && $(MAKE) --no-print-directory local SKIP_BUILD=1' \
+	scripts/local-kind.sh eval-oom
 
 local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` kind cluster if present
 	@if command -v $(KIND) >/dev/null && $(KIND) get clusters 2>/dev/null | grep -qx $(LOCAL_CLUSTER); then \

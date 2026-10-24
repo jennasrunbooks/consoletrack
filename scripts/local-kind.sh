@@ -20,6 +20,7 @@
 #   scripts/local-kind.sh oom-prepare, oom-run
 #                                   one OOM acceptance run, around a database reset
 #                                   (`make local-oom-run`, #79)
+#   scripts/local-kind.sh eval-oom  N of those runs and a Markdown results table (`make local-eval-oom`, #60)
 #
 # Only kube-prometheus-stack and demo-app are installed. Compose provides Postgres (so no
 # CloudNativePG), the backend and dashboard (so no consoletrack release, Gateway API CRDs, or
@@ -231,21 +232,38 @@ probe_backend() {
 
 # demoFault also turns off Helmfile's wait and atomic for this sync (helm/helmfile.yaml.gotmpl): a
 # faulted pod never becomes Ready, and the rollback after the timeout would undo the fault. `off`
-# syncs without it, which resets demo-app to its normal values.
+# syncs without it, which resets demo-app to its normal values. On EKS (`make fault`,
+# MEASURE_TARGET=eks) `off` recreates demo-app instead: after an auto fix the remediator owns the
+# memory limit, and Helm's server-side apply would conflict with it (see recreate_demo_app).
 fault() {
-	local args=()
+	local args=() usage="make local-fault FAULT=oom|badImage|badProbe|off (EKS: make fault FAULT=oom|badImage|badProbe|off)"
 	case "${1:-}" in
 	oom | badImage | badProbe) args=(--state-values-set "demoFault=$1") ;;
 	off) ;;
-	*) die "usage: make local-fault FAULT=oom|badImage|badProbe|off" ;;
+	*) die "usage: $usage" ;;
 	esac
-	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-fault\` (HELM_DRIVER=configmap)"
-	sync_demo_app ${args[@]+"${args[@]}"}
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-fault\` or \`make fault\` (HELM_DRIVER=configmap)"
+	[ "$measure_target" = local ] || read_eks_image_tag
+	if [ "$measure_target" = eks ] && [ "$1" = off ]; then
+		recreate_demo_app
+	else
+		sync_demo_app ${args[@]+"${args[@]}"}
+	fi
 	if [ "$1" = off ]; then
 		echo "local-kind: fault off; the alert resolves and its incident follows in about 3 minutes"
+	elif [ "$measure_target" = eks ]; then
+		echo "local-kind: $1 on ($context, image tag $eks_image_tag); expect an incident in about 4-8 minutes;" \
+			"watch it on the dashboard"
 	else
 		echo "local-kind: $1 on; expect an incident in about 4 minutes (make local-incidents)"
 	fi
+}
+
+# The image tag demo-app runs on EKS, read once before anything changes (see sync_demo_app).
+read_eks_image_tag() {
+	eks_image_tag=$(live_image_tag)
+	[ -n "$eks_image_tag" ] || die "demo-app isn't deployed on $context (or its image has no tag);" \
+		"deploy it first: make deploy IMAGE_TAG=<the commit the cluster runs>"
 }
 
 sync_demo_app() {
@@ -295,10 +313,7 @@ measure() {
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
 	if [ "$measure_target" = eks ]; then
-		# Read once, before anything changes (see sync_demo_app).
-		eks_image_tag=$(live_image_tag)
-		[ -n "$eks_image_tag" ] || die "demo-app isn't deployed on $context (or its image has no tag);" \
-			"deploy it first: make deploy IMAGE_TAG=<the commit the cluster runs>"
+		read_eks_image_tag
 		echo "local-kind: measuring on $context, demo-app image tag $eks_image_tag"
 	fi
 	start_prometheus
@@ -479,6 +494,7 @@ quiet_poll=${OOM_QUIET_POLL:-15}
 quiet_timeout=${OOM_QUIET_TIMEOUT:-900}
 run_timeout=${OOM_RUN_TIMEOUT:-1500}
 diagnose_after=${OOM_DIAGNOSE_AFTER:-480}
+resolve_timeout=${OOM_RESOLVE_TIMEOUT:-300}
 
 oom_prepare() {
 	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-oom-run\` (HELM_DRIVER=configmap)"
@@ -534,6 +550,12 @@ oom_done='(.remediation.status // "") as $s
 	or ($s == "proposed" and .remediation.kind != "set_memory_limit")
 	or (.status == "awaiting_review" and .analysis != null and .remediation == null)'
 
+# The pass rule, shared by oom-run and eval-oom: the proposal is set_memory_limit -> 256Mi for
+# demo/demo-app/demo-app and the fix succeeded.
+oom_pass='.remediation.kind == "set_memory_limit" and .remediation.status == "succeeded"
+	and .remediation.payload.memory_limit == "256Mi" and .remediation.payload.namespace == "demo"
+	and .remediation.payload.deployment == "demo-app" and .remediation.payload.container == "demo-app"'
+
 oom_run() {
 	local started elapsed id detail state last="" hinted="" diagnosed="" total
 	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-oom-run\` (HELM_DRIVER=configmap)"
@@ -566,13 +588,35 @@ oom_run() {
 			last=$state
 		fi
 		jq -e "$oom_done" <<<"$detail" >/dev/null && break
-		if [ -z "$hinted" ] && jq -e '.remediation.status == "proposed" and .remediation.mode == "manual"' <<<"$detail" >/dev/null; then
-			echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail")"
-			echo "local-kind: approve it at $api_base/incidents/$id (admin password: make local printed it); waiting"
-			hinted=1
+		if jq -e '.remediation.status == "proposed" and .remediation.mode == "manual"' <<<"$detail" >/dev/null; then
+			if [ -n "${OOM_DETAIL_FILE:-}" ]; then
+				# eval-oom: nobody approves, so a manual gate is the result (auto mode didn't apply it).
+				echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail"); not waiting"
+				break
+			elif [ -z "$hinted" ]; then
+				echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail")"
+				echo "local-kind: approve it at $api_base/incidents/$id (admin password: make local printed it); waiting"
+				hinted=1
+			fi
 		fi
 	done
+	if [ -n "${OOM_DETAIL_FILE:-}" ]; then
+		oom_await_resolved
+		printf '%s\n' "${detail:-}" >"$OOM_DETAIL_FILE"
+	fi
 	oom_summary
+}
+
+# eval-oom's rows report the time to resolved, which comes after the fix: the alert clears once
+# the new limit holds. Gives it a few minutes, with the fault still on, then takes the incident as is.
+oom_await_resolved() {
+	local deadline=$(($(date +%s) + resolve_timeout))
+	[ -n "${detail:-}" ] && [ -n "${id:-}" ] || return 0
+	jq -e "$oom_pass" <<<"$detail" >/dev/null || return 0
+	until jq -e '.resolved_at != null' <<<"$detail" >/dev/null || [ "$(date +%s)" -ge "$deadline" ]; do
+		sleep "$oom_poll"
+		detail=$(api "/api/v1/incidents/$id")
+	done
 }
 
 oom_diagnose() {
@@ -585,7 +629,7 @@ oom_diagnose() {
 	$compose logs backend 2>/dev/null | grep 'alerts/webhook' | tail -n 5 | sed 's/^/  /'
 }
 
-# PASS: exactly one incident, and its set_memory_limit fix succeeded.
+# PASS: exactly one incident, and oom_pass (above) holds for it.
 oom_summary() {
 	local list
 	list=$(api "/api/v1/incidents?page_size=100")
@@ -599,7 +643,7 @@ oom_summary() {
 		"  remediation: \(.remediation.status // "-")",
 		"  last step: \((.remediation.steps // [])[-1] | if . then "\(.step) \(if .ok then "ok" else "FAILED" end): \(.detail)" else "-" end)"
 	' <<<"$detail"
-	if [ "$(jq '.total' <<<"$list")" = 1 ] && jq -e '.remediation.kind == "set_memory_limit" and .remediation.status == "succeeded"' <<<"$detail" >/dev/null; then
+	if [ "$(jq '.total' <<<"$list")" = 1 ] && jq -e "$oom_pass" <<<"$detail" >/dev/null; then
 		echo "  RESULT: PASS"
 	else
 		echo "  RESULT: FAIL"
@@ -620,6 +664,136 @@ oom_cleanup() {
 	exit "$rc"
 }
 
+# --- N OOM acceptance runs and a results table (make local-eval-oom, #60) ----------------------------
+# Each run is oom-prepare, the database reset (EVAL_OOM_RESET, a shell command from the Makefile:
+# Compose down --volumes, then `make local SKIP_BUILD=1`), and oom-run, which leaves its final
+# incident in OOM_DETAIL_FILE. A run that fails, or dies early, is a FAIL row and the next one starts.
+# Whatever happens, demo-app is recreated with the fault off at the end (also on Ctrl-C), and the
+# table is written for the runs so far.
+
+eval_results_dir=${EVAL_OOM_DIR:-$repo_root/eval/results}
+
+# One run's row, as JSON, from its final incident (a missing or empty file: all dashes).
+# $1 run number, $2 PASS|FAIL, $3 the detail file, $4 the row file.
+eval_row() {
+	local detail_json='{}'
+	[ ! -s "$3" ] || detail_json=$(cat "$3")
+	jq -n --argjson n "$1" --arg result "$2" --argjson d "$detail_json" '
+		def ts: sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601;
+		def dash: if . == null or . == "" then "-" else . end;
+		def mmss: "\(. / 60 | floor):\(. % 60 | floor | tostring | if length < 2 then "0" + . else . end)";
+		($d.remediation // {}) as $r | ($d.analysis // {}) as $a | ($a.agent_run // {}) as $run
+		| ($r.payload // {}) as $p
+		| {
+			run: $n, result: $result,
+			diagnosis: ($a.root_cause | dash | gsub("\\s+"; " ") | gsub("[0-9]{12}"; "123456789012")
+				| if length > 160 then .[0:159] + "…" else . end),
+			confidence: ($a.confidence | dash),
+			proposal: (if $r.kind then
+				"\($r.kind) → \($p.memory_limit | dash) (\($p.namespace | dash)/\($p.deployment | dash)/\($p.container | dash))"
+				else "-" end),
+			mode: ($r.mode | dash), outcome: ($r.status | dash),
+			model: ($run.model | dash),
+			escalated: (if $run.escalated == null then "-" elif $run.escalated then "y" else "n" end),
+			tool_calls: ($run.tool_calls | if . == null then "-" else tostring end),
+			input_tokens: ($run.input_tokens | if . == null then "-" else tostring end),
+			output_tokens: ($run.output_tokens | if . == null then "-" else tostring end),
+			time_to_resolved: (if $d.opened_at and $d.resolved_at
+				then (($d.resolved_at | ts) - ($d.opened_at | ts)) | mmss else "-" end)
+		}' >"$4"
+}
+
+eval_table() {
+	jq -rs '
+		def cell: tostring | gsub("\\|"; "\\|");
+		["Run", "Result", "Diagnosis", "Confidence", "Proposal", "Mode", "Remediation", "Model",
+			"Escalated", "Tool calls", "Input tokens", "Output tokens", "Incident open → resolved"] as $h
+		| ($h | "| " + join(" | ") + " |"), ($h | "|" + (map("---") | join("|")) + "|"),
+		(.[] | [.run, .result, .diagnosis, .confidence, .proposal, .mode, .outcome, .model, .escalated,
+			.tool_calls, .input_tokens, .output_tokens, .time_to_resolved]
+			| "| " + (map(cell) | join(" | ")) + " |")' "$eval_dir"/row-*.json
+}
+
+# The summary line, the table, and the file; for the runs done so far.
+eval_report() {
+	local done_runs file stamp commit
+	done_runs=$(find "$eval_dir" -name 'row-*.json' | wc -l | tr -d ' ')
+	[ "$done_runs" -gt 0 ] || return 0
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+	commit=$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || echo unknown)
+	mkdir -p "$eval_results_dir"
+	file=$eval_results_dir/eval-oom-$stamp.md
+	eval_summary="eval-oom: $eval_pass/$eval_runs PASS"
+	[ "$done_runs" = "$eval_runs" ] || eval_summary+=" (stopped after $done_runs run(s))"
+	{
+		echo "# eval-oom $stamp"
+		echo
+		echo "$eval_summary"
+		echo
+		echo "Commit $commit, kind, ${eval_runs} run(s) planned. A run passes when the proposal is"
+		echo "\`set_memory_limit\` → \`256Mi\` for \`demo/demo-app/demo-app\` and the fix succeeded."
+		echo
+		eval_table
+	} >"$file"
+	eval_table
+	echo "$eval_summary"
+	echo "local-kind: results in ${file#"$repo_root"/}"
+}
+
+eval_oom() {
+	local n rc detail_file
+	eval_runs=${EVAL_OOM_N:-5}
+	eval_pass=0
+	case "$eval_runs" in
+	"" | *[!0-9]* | 0) die "N must be a positive number of runs, not $eval_runs" ;;
+	esac
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-eval-oom\` (HELM_DRIVER=configmap)"
+	[ -n "${EVAL_OOM_RESET:-}" ] || die "run this through \`make local-eval-oom\` (EVAL_OOM_RESET is the database reset)"
+	for tool in curl jq; do
+		command -v "$tool" >/dev/null || die "$tool is not installed"
+	done
+	eval_dir=$(mktemp -d)
+	trap eval_cleanup EXIT
+	trap 'exit 130' INT TERM
+	for n in $(seq 1 "$eval_runs"); do
+		echo "local-kind: ==== eval-oom run $n of $eval_runs ===="
+		detail_file=$eval_dir/detail-$n.json
+		# A subshell with -e on its own, outside any && or || list (which would turn -e off inside
+		# it): any step that dies fails the run, not the loop.
+		set +e
+		(
+			set -e
+			oom_prepare
+			bash -c "$EVAL_OOM_RESET"
+			OOM_DETAIL_FILE=$detail_file oom_run
+		)
+		rc=$?
+		set -e
+		if [ "$rc" = 0 ]; then
+			eval_pass=$((eval_pass + 1))
+			eval_row "$n" PASS "$detail_file" "$eval_dir/row-$(printf %03d "$n").json"
+		else
+			eval_row "$n" FAIL "$detail_file" "$eval_dir/row-$(printf %03d "$n").json"
+		fi
+		echo "local-kind: eval-oom run $n: $([ "$rc" = 0 ] && echo PASS || echo FAIL)"
+	done
+	[ "$eval_pass" = "$eval_runs" ] # the exit code, through eval_cleanup
+}
+
+eval_cleanup() {
+	local rc=$?
+	trap - EXIT
+	set +e
+	echo "local-kind: fault off; demo-app recreated"
+	recreate_demo_app || {
+		echo "local-kind: recreating demo-app failed; the next run's oom-prepare retries it" >&2
+		rc=1
+	}
+	eval_report
+	rm -rf "$eval_dir"
+	exit "$rc"
+}
+
 case "${1:-}" in
 cluster) cluster_up ;;
 alerts) alerts ;;
@@ -628,5 +802,6 @@ incidents) incidents ;;
 measure) measure ;;
 oom-prepare) oom_prepare ;;
 oom-run) oom_run ;;
-*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents|measure|oom-prepare|oom-run" ;;
+eval-oom) eval_oom ;;
+*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents|measure|oom-prepare|oom-run|eval-oom" ;;
 esac
