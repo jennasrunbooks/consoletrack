@@ -54,10 +54,11 @@ output attached, and only when all of these hold:
 | Dry run | A server-side `dryRun=All` patch first; its result may differ from the live pod template only in that container's memory, so a mutating webhook or a merge surprise is caught before anything changes | `remediation_apply.py` |
 | Verify | Rollout complete within `rolloutTimeout` (3m); then within `waitForResolved` (5m): no new `OOMKilled` in a pod running the new limit, and the incident resolved (Alertmanager) or the `DemoAppHighErrorRate` ratio below 0.05 (Prometheus) | `remediation_apply.py`, chart `values.yaml` |
 | Rollback | The inverse strategic-merge patch: the previous limit and request back, which makes the pod template equal to the previous revision's, so the Deployment returns to that ReplicaSet as `kubectl rollout undo` would, without touching anything else. The incident goes back to `awaiting_review` with every step recorded | `remediation_apply.py` |
-| Eval | 5 of 5 `make local-eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app`. Proposals: 10 of 10 on Haiku and Sonnet. The full path (gate, fix, verify): 0/5 and 1/5 at `minConfidence: high`; not yet re-run at `medium` | #60, PR #95; [tables below](#eval-results-and-the-confidence-floor) |
+| Eval | 5 of 5 `make local-eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app`. Met: 5/5 on Sonnet with the fix applied and verified (`minConfidence: medium`); 10/10 correct proposals on Haiku and Sonnet earlier, held at `high` | #60, PR #95; [tables below](#eval-results-and-the-confidence-floor) |
 
-**Phase 1 evidence: `make local-eval-oom` ran twice on kind (Oct 24), 0/5 and 1/5, and the
-policy ships with `minConfidence: medium`. The tables and the reasoning are in
+**Phase 1 evidence: `make local-eval-oom` on kind (Oct 24): 0/5 on Haiku and 1/5 on Sonnet at
+`minConfidence: high`, then 5/5 on Sonnet at `minConfidence: medium`. The policy ships with
+`medium`. The tables and the reasoning are in
 [Eval results and the confidence floor](#eval-results-and-the-confidence-floor).** The eval ran after
 `oom-memory-bump` had already shipped as `mode: auto`, an exception to criterion 5 for the course
 timeline. The kill switch and the automatic rollback are what made that acceptable.
@@ -95,6 +96,22 @@ through. Results are written to [eval/results/](../eval/results/README.md).
 
 (One earlier single run, `make local-oom-run` on Sonnet, also reached `high` and passed.)
 
+**Sonnet (`claude-sonnet-5-5`) with `minConfidence: medium`: 5/5 PASS** (Oct 24, same harness and
+fault, after the policy change)
+
+| Run | Result | Diagnosis | Confidence | Proposal | Mode | Remediation | Model | Escalated | Tool calls | Input tokens | Output tokens | Incident open → resolved |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOMKilled (exit 137). The limit is unchanged since revision 1, so the worklo… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 32300 | 1881 | 3:00 |
+| 2 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOMKilled (exit 137). The limit was not changed in any revision, so the work… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 31636 | 1812 | 3:00 |
+| 3 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOMKilled (exit 137). The workload has outgrown its limit, and no revision l… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 31018 | 1974 | 3:30 |
+| 4 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOM-killed (exit 137). The resulting restart loop makes the service refuse c… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 30027 | 1875 | 4:30 |
+| 5 | PASS | The demo-app container is OOMKilled (exit 137) at its 128Mi memory limit shortly after startup. The limit has not changed across revisions, so the workload's m… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 31015 | 1796 | 3:00 |
+
+`eval-oom: 5/5 PASS`. Every run proposed `set_memory_limit` → `256Mi` for `demo/demo-app/demo-app`,
+the gate applied it automatically, the fix succeeded (verify passed), and the incident resolved
+3–4.5 minutes after it opened. Run 3 reached only `medium` and passed, which is the case the
+`medium` floor exists for; at `high` it would have waited for a human.
+
 **What the runs show.** The proposal was `set_memory_limit` → `256Mi` for the right target in 10 of
 10 runs on both models. The only thing that failed was the confidence floor: `high` in 1 of 10, and
 in the Sonnet runs the same prompt and the same fault gave `medium` four times and `high` once. So
@@ -117,11 +134,17 @@ safe doesn't depend on the agent's confidence:
 `low` confidence still goes to a human, and the setting applies to this policy only: the `default`
 policy stays manual and no other kind can be `auto`.
 
-**What this doesn't show.** A re-run with `medium` has not been done yet, so the 5-of-5 evidence for
-the whole path (proposal, gate, fix, verify) is still to come; the 10 of 10 is for the proposal.
-Confidence is also the only gate input the agent controls itself, which is the weak part: a
-confidently wrong proposal passes `high` as easily as `medium`. Phase 2 replaces it with a check of
-the evidence itself ([#100](https://github.com/jennasrunbooks/consoletrack/issues/100), the evidence-based gate).
+**What this doesn't show.**
+- **The model:** the 5/5 is for Sonnet. Haiku (the default `TRIAGE_MODEL` in `.env.example`) proposed
+  the right fix 5 of 5 times but at `medium`, and hasn't been run with the `medium` floor. The
+  evidence supports `auto` only where `TRIAGE_MODEL` is `claude-sonnet-5-5`; the
+  environments that run `auto` must set it, or Haiku must be re-run first.
+- **Sample size:** 5 runs on one fault on kind. It meets the criterion; it doesn't prove the rate is
+  100%. The kill switch and the rollback remain the backstop.
+- **The weak input:** confidence is the one gate input the agent controls itself, and the floor
+  didn't make it more reliable: a confidently wrong proposal passes `high` as easily as `medium`.
+  Phase 2 replaces it with a check of the evidence itself
+  ([#100](https://github.com/jennasrunbooks/consoletrack/issues/100), the evidence-based gate).
 
 ### Which OOMs reach `set_memory_limit`
 
