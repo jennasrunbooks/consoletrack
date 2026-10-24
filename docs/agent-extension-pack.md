@@ -12,7 +12,7 @@ See [permissions.md](permissions.md) for every permission layer side by side.
 | Permission notes | `docs/permissions.md` | Dev-time agent done; runtime identities come with the Terraform and Helm issues |
 | Skills | `agent-capabilities/add-endpoint/`, `agent-capabilities/break-demo/` | Planned |
 | Subagent | `custom-agent/k8s-manifest-reviewer.md` | Planned |
-| MCP servers | `mcp-server/k8s/` and `.mcp.json` (this page); `mcp-server/aws/` | `k8s-mcp` done; `aws-mcp` with #9 |
+| MCP servers | `mcp-server/k8s/` and `.mcp.json` (this page); `mcp-server/aws/` | `k8s-mcp` done; `aws-mcp` done (in-cluster only, no `.mcp.json` entry; see its README for a sandbox profile) |
 
 ## Installing
 

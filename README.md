@@ -22,7 +22,9 @@ No logins are shared and no cluster is kept running for visitors: these four are
 
 <sub>Dark-theme versions are in [docs/screenshots/](docs/screenshots/).</sub>
 
-**Live deployment.** The EKS deployment's URL is admin-only and is up during the review window (<!-- TODO: start date --> to <!-- TODO: end date -->). The demo site above is the always-on way to explore ConsoleTrack.
+**Reviewing this project for the course?** The [rubric table](#course-rubric-mapping) at the end maps every criterion to where its evidence is. The demo site is the quickest look; `make local` is the full system on your laptop.
+
+<sub>The EKS screenshot of a real console change, with the agent's summary, is [docs/screenshots/eks/](docs/screenshots/eks/); the account ID and source IP are blacked out.</sub>
 
 ## Contents
 
@@ -221,7 +223,8 @@ These targets are for a human at a terminal: they refuse to run in CI or without
 To plan and apply Terraform from pull requests and run Revert as a gated workflow, set `ENABLE_GITHUB_OIDC=true` and `GITHUB_REPO=<you>/consoletrack` before `make up`, then in your fork:
 
 1. Create the environments `consoletrack-plan`, `consoletrack-apply`, `consoletrack-revert`, and `consoletrack-deploy`. Require your approval on `-apply` and `-revert`, and limit all but `-plan` to `main`.
-2. Add an `AWS_ROLE_ARN` environment secret to each, from `terraform -chdir=terraform/consoletrack/global output -json`.
+2. Add an `AWS_ROLE_ARN` environment secret to each: `make gh-secrets` reads them from `terraform/consoletrack/global`'s outputs and sets them for you (run it as yourself, not an agent).
+3. After every `make up`, run `make gh-deploy-config`. It sets the repository variables `deploy.yaml` and `terraform.yaml` read (from `.env`, including `USE_SPOT`) and the `consoletrack-deploy` secrets that come from Terraform outputs: the queue URLs, the canary security group, and the certificate. Those change on every `make down` → `make up`, so a deploy run with the old values fails.
 
 Without it, Revert still works: the dashboard shows `make revert CHANGE=<id>`, which plans and applies the demo-app root from your machine after a confirmation.
 
@@ -410,9 +413,9 @@ Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalks
 | Application | 2 | [Try it without AWS](#try-it-without-aws): `make local` starts the frontend, backend, and Postgres |
 | Testing | 2 | `make test-all`: unit, contract, integration (Testcontainers), and frontend tests; see [Testing and CI/CD](#testing-and-cicd) |
 | Containerization | 2 | [docker-compose.yaml](docker-compose.yaml), started by `make local` |
-| Deployment | 2 | EKS via [terraform/](terraform/) and [helm/](helm/) ([Deploy to AWS](#deploy-to-aws)); the recorded walkthrough of the live deployment and the screenshots in [See it in 2 minutes](#see-it-in-2-minutes) |
+| Deployment | 2 | EKS via [terraform/](terraform/) and [helm/](helm/) ([Deploy to AWS](#deploy-to-aws)); the recorded walkthrough of the live deployment, the EKS screenshots in [docs/screenshots/eks/](docs/screenshots/eks/), and the always-on [demo site](https://consoletrack-demo.jennasrunbooks.com) |
 | CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
-| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana |
+| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana with Tempo and Loki (`make local`; screenshots in [docs/screenshots/](docs/screenshots/)). On EKS, Prometheus, Alertmanager, and the intake dashboard; Tempo and Loki there are in progress |
 | Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `demo-app` chart's alert rules ([helm/charts/demo-app/templates/prometheusrule.yaml](helm/charts/demo-app/templates/prometheusrule.yaml)) |
 | On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make local-oom-run` on kind: the alert, the diagnosis, the automatic fix, verified; the recorded incident in the demo site |
 

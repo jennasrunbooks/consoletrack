@@ -27,16 +27,25 @@ CONFIGS = ("eks", "eks-alb", "local")
 APP_CHARTS = ("consoletrack", "demo-app")
 OUR_CHARTS = (*APP_CHARTS, "cluster-defaults")
 
-# Mirrors helm/environments/eks.yaml: no aws-mcp Deployment, and the worker isn't pointed at it,
-# until it ships (#9). The tests below follow this one value.
-AWS_MCP_ENABLED = bool(
-    yaml.safe_load((HELM_DIR / "environments" / "eks.yaml").read_text())[
-        "awsMcpEnabled"
-    ]
-)
+
+def _aws_mcp_enabled(environment: str) -> bool:
+    return bool(
+        yaml.safe_load((HELM_DIR / "environments" / f"{environment}.yaml").read_text())[
+            "awsMcpEnabled"
+        ]
+    )
+
+
+# Mirrors helm/environments/{eks,local}.yaml: aws-mcp runs on EKS (#9); on kind it stays off
+# until its fixtures mode exists, and the worker isn't pointed at it. The tests follow these.
+AWS_MCP_ENABLED = {
+    "eks": _aws_mcp_enabled("eks"),
+    "eks-alb": _aws_mcp_enabled("eks"),
+    "local": _aws_mcp_enabled("local"),
+}
 _AWS_MCP = {
-    "awsMcp": {"enabled": AWS_MCP_ENABLED},
-    "worker": {"awsMcp": AWS_MCP_ENABLED},
+    "awsMcp": {"enabled": AWS_MCP_ENABLED["eks"]},
+    "worker": {"awsMcp": AWS_MCP_ENABLED["eks"]},
 }
 
 _EKS_AWS = {
@@ -58,8 +67,8 @@ _LOCAL = {
     "target": "local",
     "image": {"tag": "local"},
     "app": {"intakeMode": "replay"},
-    "awsMcp": {"mode": "fixtures", "enabled": AWS_MCP_ENABLED},
-    "worker": {"awsMcp": AWS_MCP_ENABLED},
+    "awsMcp": {"mode": "fixtures", "enabled": AWS_MCP_ENABLED["local"]},
+    "worker": {"awsMcp": AWS_MCP_ENABLED["local"]},
     "postgres": {"storage": {"storageClass": "standard"}},
 }
 

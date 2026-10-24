@@ -222,7 +222,7 @@ releases:
           enabled: {{ .Values.awsMcpEnabled }}
           mode: {{ if eq .Values.target "local" }}fixtures{{ else }}live{{ end }}
         worker:
-          # No AWS tools for the triage agent until aws-mcp ships (#9).
+          # AWS tools for the triage agent wherever aws-mcp runs (eks; not kind yet).
           awsMcp: {{ .Values.awsMcpEnabled }}
         postgres:
           storage:

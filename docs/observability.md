@@ -1,6 +1,6 @@
 # Observability
 
-ConsoleTrack instruments one journey end to end, the on-call loop: an alert arrives, an incident opens, the agent triages, a fix is applied or proposed, and the incident resolves. Each incident is **one trace**, and its metrics and JSON logs share the trace ID. Locally, `make local` collects all three and shows them in Grafana (#33). The EKS releases come in a second PR, after #12's Helmfile work.
+ConsoleTrack instruments one journey end to end, the on-call loop: an alert arrives, an incident opens, the agent triages, a fix is applied or proposed, and the incident resolves. Each incident is **one trace**, and its metrics and JSON logs share the trace ID. Locally, `make local` collects all three and shows them in Grafana (#33). On EKS, Prometheus, Alertmanager, the alert rules, and the Intake health dashboard run today; the collector, Tempo, Loki, and the Incident journey dashboard there are the next step (Phase 2 if they aren't ready by Oct 26).
 
 Read this before you add a span, a metric, a log field, or an alert.
 
