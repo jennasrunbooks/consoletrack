@@ -155,6 +155,7 @@ check_curl() {
 		return 1
 }
 
+start=$SECONDS
 deadline=$((SECONDS + timeout))
 last=""
 while :; do
@@ -168,13 +169,13 @@ while :; do
 		exit 1
 	fi
 	if [[ "$failed_step" != "$last" ]]; then
-		echo "wait-for-url: waiting at step $failed_step: ${detail%%$'\n'*}"
+		echo "wait-for-url: [$((SECONDS - start))s] waiting at step $failed_step: ${detail%%$'\n'*}"
 		last=$failed_step
 	fi
 	sleep "$interval"
 done
 
-echo "wait-for-url: https://$domain is up (Gateway Programmed, DNS record, healthy targets, authoritative answer, HTTPS 2xx/3xx)"
+echo "wait-for-url: https://$domain is up after $((SECONDS - start))s (Gateway Programmed, DNS record, healthy targets, authoritative answer, HTTPS 2xx/3xx)"
 cat <<NOTE
 wait-for-url: a resolver that answered "no such name" earlier may cache that for up to 15 minutes. If
 $domain still doesn't load on this machine, flush the local cache:
