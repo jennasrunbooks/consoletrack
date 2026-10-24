@@ -11,7 +11,7 @@
 #      NOERROR with nothing while the targets are unhealthy, and resolvers cache that)
 #   5. curl to the ALB's IP with DOMAIN's name gets a 2xx or 3xx
 #
-# Polls every WAIT_URL_INTERVAL seconds (15) for up to WAIT_URL_TIMEOUT (360); exits 1 naming the
+# Polls every WAIT_URL_INTERVAL seconds (15) for up to WAIT_URL_TIMEOUT (600); exits 1 naming the
 # step that failed. Read-only. Reads DOMAIN, NAME_SUFFIX, DNS_ZONE_ID, AWS_REGION, and KUBE_CONTEXT
 # from the environment (the Makefile exports them). Output masks any 12-digit number (account IDs).
 set -euo pipefail
@@ -41,7 +41,7 @@ zone=${DNS_ZONE_ID:-}
 context=${KUBE_CONTEXT:-consoletrack-eks}
 namespace=${GATEWAY_NAMESPACE:-consoletrack}
 interval=${WAIT_URL_INTERVAL:-15}
-timeout=${WAIT_URL_TIMEOUT:-360}
+timeout=${WAIT_URL_TIMEOUT:-600}
 region=${AWS_REGION:?set AWS_REGION}
 
 aws() {

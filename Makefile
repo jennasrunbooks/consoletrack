@@ -482,7 +482,7 @@ deploy: env-check-tf helm-values ## helmfile -l tier=app apply at IMAGE_TAG: the
 	@# The deploy role in CI has no Route 53 or ELB access, so only a human's run proves the URL.
 	@if [ "$(EXPOSURE)" = alb ] && [ -z "$$CI" ]; then $(MAKE) --no-print-directory wait-for-url; fi
 
-wait-for-url: env-check-aws ## EXPOSURE=alb: wait (up to ~6 min) until https://DOMAIN works, or say which step is stuck (humans only)
+wait-for-url: env-check-aws ## EXPOSURE=alb: wait (up to ~10 min) until https://DOMAIN works, or say which step is stuck (humans only)
 	$(check_human)
 	@$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global >/dev/null
 	DNS_ZONE_ID="$(dns_zone_id)" scripts/wait-for-url.sh
