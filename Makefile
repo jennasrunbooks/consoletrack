@@ -148,6 +148,10 @@ TARGET ?=
 TARGET_ARG = $(if $(strip $(TARGET)),-target='$(TARGET)')
 check_root = @case " $(TF_ROOTS) " in *" terraform/$(ROOT) "*) ;; \
 	*) echo "make $@: set ROOT to one of: $(patsubst terraform/%,%,$(TF_ROOTS))" >&2; exit 1 ;; esac
+# The DOMAIN zone's ID, from the global root's zone_id output (not a name lookup). Empty when the
+# root has no zone, or isn't initialized: the scripts then say so. Run `tf-init ROOT=consoletrack/global` first.
+dns_zone_id = $$($(TERRAFORM) -chdir=terraform/consoletrack/global output -raw zone_id 2>/dev/null)
+
 # Applies are for a human at a terminal: refuse in CI and without a TTY. Terraform then shows
 # the plan and asks for "yes" itself; -auto-approve is never passed.
 check_human = @if [ -n "$$CI" ] || [ ! -t 0 ]; then \
@@ -162,7 +166,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-aws-mcp test-aws-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
 	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e demo-site screenshots test-contract test-compose test-integration test-k8s \
-	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
+	preflight bootstrap up down down-all verify-clean dns-clean wait-for-url logins addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
 	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
@@ -436,11 +440,17 @@ up: env-check-up ## Create the platform, add-ons, and app; safe to rerun (run ma
 	$(MAKE) --no-print-directory addons
 	@umask 077; CREATE_SECRETS_BANNER_FILE="$(LOGIN_BANNER)" $(MAKE) --no-print-directory create-secrets
 	$(MAKE) --no-print-directory deploy
-	@# The Helmfile output buries the admin login, so print it again last. It stays in the file
-	@# if a later step fails, and the next make up prints it from there.
-	@if [ -f "$(LOGIN_BANNER)" ]; then cat "$(LOGIN_BANNER)"; rm -f "$(LOGIN_BANNER)"; fi
-	@echo "make $@: done. Run make open for the dashboard."
+	@# deploy ends with wait-for-url when EXPOSURE=alb, so the logins below mean the URL works.
+	@echo "make $@: done."
 	@echo "make $@: next: make gh-deploy-config (so deploy.yaml can deploy to this cluster)"
+	@# The Helmfile output buries the generated admin password, so everything needed to log in is
+	@# printed last, in one block. The password stays in the file if a later step fails, and the
+	@# next make up prints it from there.
+	@LOGIN_BANNER_FILE="$(LOGIN_BANNER)" scripts/print-logins.sh; rm -f "$(LOGIN_BANNER)"
+
+logins: ## Print the URLs and logins for ConsoleTrack and Grafana (the admin password only until a make up finishes after generating it; humans only)
+	$(check_human)
+	LOGIN_BANNER_FILE="$(LOGIN_BANNER)" scripts/print-logins.sh
 
 images: ## Build every image for linux/arm64 and push to GHCR as IMAGE_TAG (humans; run before the first make up)
 	$(check_human)
@@ -480,6 +490,19 @@ addons: env-check-aws helm-values ## helmfile -l tier=addons apply: Gateway API 
 # CI runs this too (deploy.yaml, role ct-gh-deploy-<suffix>), so no check_human and no AWS_PROFILE.
 deploy: env-check-tf helm-values ## helmfile -l tier=app apply at IMAGE_TAG: the consoletrack and demo-app releases
 	$(HELMFILE_EKS) -l tier=app --state-values-set imageTag=$(IMAGE_TAG) apply
+	@# The deploy role in CI has no Route 53 or ELB access, so only a human's run proves the URL.
+	@if [ "$(EXPOSURE)" = alb ] && [ -z "$$CI" ]; then $(MAKE) --no-print-directory wait-for-url; fi
+
+wait-for-url: env-check-aws ## EXPOSURE=alb: wait (up to ~10 min) until https://DOMAIN works, or say which step is stuck (humans only)
+	$(check_human)
+	@$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global >/dev/null
+	DNS_ZONE_ID="$(dns_zone_id)" scripts/wait-for-url.sh
+
+dns-clean: env-check-aws ## Delete DOMAIN's A/AAAA and ExternalDNS ownership TXT records left in its zone (humans only; make down runs it)
+	$(check_human)
+	@if [ -z "$(strip $(DOMAIN))" ]; then echo "make $@: DOMAIN is empty; nothing to clean"; exit 0; fi; \
+	$(MAKE) --no-print-directory tf-init ROOT=consoletrack/global >/dev/null && \
+	DNS_ZONE_ID="$(dns_zone_id)" scripts/dns-clean.sh
 
 OPEN_PORT ?= 8080
 # Where `make up` keeps the one-time admin login until it prints it at the end (mode 0600, removed after).
@@ -515,7 +538,8 @@ down: env-check-aws ## Destroy the releases, wait for load balancers and ENIs, t
 		$(MAKE) --no-print-directory kubeconfig; \
 	else echo "make $@: no cluster in the Terraform state; the Helmfile steps are skipped if the context is unreachable"; fi
 	$(MAKE) --no-print-directory helm-values HELM_VALUES_SOURCE=none
-	scripts/down-cluster.sh
+	@if [ -n "$(strip $(DOMAIN))" ]; then $(MAKE) --no-print-directory tf-init ROOT=consoletrack/global >/dev/null; fi
+	DNS_ZONE_ID="$(dns_zone_id)" scripts/down-cluster.sh
 	@if ls terraform/demo-app/us-east-1/*.tf >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory tf-init ROOT=demo-app/us-east-1 && \
 		$(MAKE) --no-print-directory tf-destroy ROOT=demo-app/us-east-1; \
@@ -550,9 +574,10 @@ clean-enis: env-check-aws ## Delete the available aws-K8S-* network interfaces a
 	$(check_human)
 	scripts/delete-leftover-enis.sh
 
-verify-clean: env-check-aws ## List project=consoletrack load balancers, ENIs, EBS volumes, Elastic IPs, and NAT gateways; fail if any remain
+verify-clean: env-check-aws ## List project=consoletrack load balancers, ENIs, EBS volumes, Elastic IPs, NAT gateways, and DOMAIN's A/AAAA/ownership TXT records; fail if any remain
 	$(check_human)
-	scripts/teardown-verify.sh verify
+	@if [ -n "$(strip $(DOMAIN))" ]; then $(MAKE) --no-print-directory tf-init ROOT=consoletrack/global >/dev/null; fi
+	DNS_ZONE_ID="$(dns_zone_id)" scripts/teardown-verify.sh verify
 
 ##@ Custom domain
 
