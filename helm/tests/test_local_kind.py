@@ -764,6 +764,29 @@ def test_eval_oom_counts_a_run_that_dies_as_a_fail_and_goes_on(tmp_path: Path) -
 
 
 @needs_jq
+def test_eval_oom_doesnt_wait_for_a_human_when_the_gate_says_manual(
+    tmp_path: Path,
+) -> None:
+    """Medium confidence sends the fix to manual; nobody approves in an eval, so the run ends there
+    as a FAIL (local-oom-run waits for you instead, up to 25 minutes)."""
+    manual = incident(
+        "awaiting_review",
+        fix("proposed", mode="manual", gate_reason="the agent's confidence is medium"),
+    )
+    result, calls, files = run_eval(
+        tmp_path, runs=1, details=[manual], OOM_RUN_TIMEOUT="60"
+    )
+    assert result.returncode == 1
+    assert (
+        "the gate sent it to a human: the agent's confidence is medium; not waiting"
+        in (result.stdout)
+    )
+    assert "gave up" not in result.stdout
+    assert "| manual | proposed |" in files[0].read_text()
+    assert fault_ends_off(calls)
+
+
+@needs_jq
 @pytest.mark.parametrize(
     "fix_args",
     [

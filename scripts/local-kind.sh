@@ -588,10 +588,16 @@ oom_run() {
 			last=$state
 		fi
 		jq -e "$oom_done" <<<"$detail" >/dev/null && break
-		if [ -z "$hinted" ] && jq -e '.remediation.status == "proposed" and .remediation.mode == "manual"' <<<"$detail" >/dev/null; then
-			echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail")"
-			echo "local-kind: approve it at $api_base/incidents/$id (admin password: make local printed it); waiting"
-			hinted=1
+		if jq -e '.remediation.status == "proposed" and .remediation.mode == "manual"' <<<"$detail" >/dev/null; then
+			if [ -n "${OOM_DETAIL_FILE:-}" ]; then
+				# eval-oom: nobody approves, so a manual gate is the result (auto mode didn't apply it).
+				echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail"); not waiting"
+				break
+			elif [ -z "$hinted" ]; then
+				echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail")"
+				echo "local-kind: approve it at $api_base/incidents/$id (admin password: make local printed it); waiting"
+				hinted=1
+			fi
 		fi
 	done
 	if [ -n "${OOM_DETAIL_FILE:-}" ]; then
