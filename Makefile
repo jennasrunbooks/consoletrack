@@ -164,7 +164,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	test-hooks test-terraform lint-hooks lint-backend lint-k8s-mcp test-k8s-mcp lint-openapi lint-terraform lint-terraform-providers \
 	lint-shell lint-frontend lint-compose lint-demo-app helm-lint helm-test db-sql hash-password \
 	test-all test-backend triage-smoke test-demo-app demo-app-image test-frontend test-e2e demo-site screenshots test-contract test-compose test-integration test-k8s \
-	preflight bootstrap up down down-all verify-clean dns-clean wait-for-url addons deploy open helm-values create-secrets \
+	preflight bootstrap up down down-all verify-clean dns-clean wait-for-url logins addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
 	local local-down local-fault local-incidents local-measure local-oom-run measure demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
@@ -429,12 +429,17 @@ up: env-check-up ## Create the platform, add-ons, and app; safe to rerun (run ma
 	$(MAKE) --no-print-directory addons
 	@umask 077; CREATE_SECRETS_BANNER_FILE="$(LOGIN_BANNER)" $(MAKE) --no-print-directory create-secrets
 	$(MAKE) --no-print-directory deploy
-	@# deploy ends with wait-for-url when EXPOSURE=alb, so a login printed below means the URL works.
-	@# The Helmfile output buries the admin login, so print it again last. It stays in the file
-	@# if a later step fails, and the next make up prints it from there.
-	@if [ -f "$(LOGIN_BANNER)" ]; then cat "$(LOGIN_BANNER)"; rm -f "$(LOGIN_BANNER)"; fi
-	@echo "make $@: done. Run make open for the dashboard."
+	@# deploy ends with wait-for-url when EXPOSURE=alb, so the logins below mean the URL works.
+	@echo "make $@: done."
 	@echo "make $@: next: make gh-deploy-config (so deploy.yaml can deploy to this cluster)"
+	@# The Helmfile output buries the generated admin password, so everything needed to log in is
+	@# printed last, in one block. The password stays in the file if a later step fails, and the
+	@# next make up prints it from there.
+	@LOGIN_BANNER_FILE="$(LOGIN_BANNER)" scripts/print-logins.sh; rm -f "$(LOGIN_BANNER)"
+
+logins: ## Print the URLs and logins for ConsoleTrack and Grafana (the admin password only if make up just generated it; humans only)
+	$(check_human)
+	scripts/print-logins.sh
 
 images: ## Build every image for linux/arm64 and push to GHCR as IMAGE_TAG (humans; run before the first make up)
 	$(check_human)

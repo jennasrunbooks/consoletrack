@@ -7,6 +7,7 @@ only if missing, values on stdin only), `images.sh` (`make images`: arm64 images
 run by `deploy.yaml`), `down-cluster.sh` (the Helmfile half of `make down`),
 `teardown-verify.sh` (`make verify-clean`, and the wait inside `make down`),
 `dns-clean.sh` (`make dns-clean`, and inside `make down`: `DOMAIN`'s stale Route 53 records),
+`print-logins.sh` (`make logins`, and the last block of `make up`: URLs and logins),
 `wait-for-url.sh` (`make wait-for-url`, the last step of `make up` with `EXPOSURE=alb`),
 `delete-leftover-enis.sh` (`make clean-enis`, and inside `make down`: the VPC CNI's leftover ENIs),
 `delete-state-bucket.sh` (`make down-all`), `replay-fixtures.py` (`make replay-fixtures`: the recorded CloudTrail fixtures to ElasticMQ for `INTAKE_MODE=replay`), `gh-deploy-config.sh` (`make gh-deploy-config`: deploy.yaml's repo variables and secrets), `gh-env-secrets.sh` (sets each GitHub environment's

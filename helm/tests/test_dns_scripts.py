@@ -486,3 +486,41 @@ def test_verify_clean_lists_dns_records_left_for_the_domain(stub: Path) -> None:
     # Without a zone ID there is nothing to look at, and it says so.
     out = verify(stub, DNS_ZONE_ID="")
     assert out.returncode == 0 and "DNS records not checked" in out.stdout
+
+
+# --- print-logins.sh ------------------------------------------------------------------------
+
+LOGINS = REPO / "scripts" / "print-logins.sh"
+
+
+def logins(
+    stub: Path, banner: str | None, **env: str
+) -> subprocess.CompletedProcess[str]:
+    # kubectl stub prints "c2VjcmV0" (base64 of "secret") unless STUB_NO_GRAFANA is set.
+    k = stub / "bin" / "kubectl"
+    k.write_text(
+        '#!/usr/bin/env bash\n[[ -z "${STUB_NO_GRAFANA-}" ]] && printf c2VjcmV0 || exit 1\n'
+    )
+    if banner is not None:
+        (stub / "banner").write_text(banner)
+        env["LOGIN_BANNER_FILE"] = str(stub / "banner")
+    return run(LOGINS, stub, **env)
+
+
+def test_logins_prints_the_generated_admin_password_and_grafana(stub: Path) -> None:
+    out = logins(
+        stub, "  username:  admin\n      password:  hunter2hunter2\n", EXPOSURE="alb"
+    )
+    assert out.returncode == 0, out.stderr
+    assert f"https://{DOMAIN}" in out.stdout
+    assert "password:  hunter2hunter2" in out.stdout
+    assert "password:  secret" in out.stdout and "port-forward" in out.stdout
+
+
+def test_logins_on_a_rerun_says_the_admin_password_is_not_shown_again(
+    stub: Path,
+) -> None:
+    out = logins(stub, None, EXPOSURE="port-forward", STUB_NO_GRAFANA="1")
+    assert out.returncode == 0
+    assert "not shown again" in out.stdout and "make open" in out.stdout
+    assert "could not read the kube-prometheus-stack-grafana Secret" in out.stdout
