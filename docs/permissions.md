@@ -19,7 +19,8 @@ mistakes:
 | `ec2:DescribeSecurityGroups` on `*` (aws-mcp) | same | Same: EC2 describe calls are account-wide | Not possible in IAM; it's a read |
 | EKS API public endpoint open to `0.0.0.0/0` | `terraform/consoletrack/us-east-1/eks.tf` | GitHub-hosted runners deploy through it, and their address ranges don't fit EKS's 40-CIDR limit. Every request still needs IAM authentication and an access entry; nodes use the private endpoint | Narrow `EKS_PUBLIC_ACCESS_CIDRS` (one variable), or turn public access off with a pull-based deploy (spec, Production hardening step 4) |
 | `query_prometheus` isn't namespace-scoped (k8s-mcp) | `mcp-server/k8s/k8s_mcp/tools.py` | Prometheus has no per-namespace access control. k8s-mcp requires at least one `namespace` matcher and refuses any that isn't `namespace="<allowlisted>"`, but a query that also has an unscoped selector (`up{namespace="demo"} or up`) still sees every namespace's metrics. Metrics hold numbers and labels, not Secret data | Put a label-enforcing proxy (prom-label-proxy) in front of Prometheus for k8s-mcp |
-| k8s-mcp's `/mcp` endpoint has no authentication | `mcp-server/k8s/` | Every tool is a read inside the allowlisted namespaces, with RBAC behind it. The chart has no NetworkPolicy yet, so any pod in the cluster can reach the Service | A chart NetworkPolicy admitting only the worker pods to k8s-mcp (and aws-mcp); a shared bearer token or mTLS later |
+| k8s-mcp's and aws-mcp's `/mcp` endpoints have no authentication | `mcp-server/k8s/`, `mcp-server/aws/` | Every tool is a read: k8s-mcp's inside the allowlisted namespaces with RBAC behind it, aws-mcp's within its read-only IAM role and the watched IAM paths. The chart has no NetworkPolicy yet, so any pod in the cluster can reach the Services | A chart NetworkPolicy admitting only the worker pods to k8s-mcp (and aws-mcp); a shared bearer token or mTLS later |
+| aws-mcp calls `iam:GetRole` before its path check | `mcp-server/aws/aws_mcp/tools.py` | The path isn't known until the role is read. IAM already denies `GetRole` outside the watched paths, and the server discards the role and refuses before any other call | — |
 | `.mcp.json` runs k8s-mcp with your own kubeconfig | repo root `.mcp.json` | Local kind only (`K8S_CONTEXT`, default `kind-consoletrack`); the in-server checks (namespace allowlist, no Secrets/ConfigMaps, env values redacted) still apply, but RBAC is whatever your context allows | Point `KUBECONFIG` at a kubeconfig for the `k8s-mcp` ServiceAccount's token (see `mcp-server/k8s/README.md` → Local use) |
 
 The node role has AmazonEC2ContainerRegistryReadOnly attached (the module’s default); the permissions boundary limits it to GetAuthorizationToken, BatchGetImage, and GetDownloadUrlForLayer.
@@ -115,7 +116,7 @@ ClusterRole or ClusterRoleBinding (`helm/tests/test_rendered.py` checks the rend
 | Subject | Role, namespaces | Allowed | Not allowed |
 | --- | --- | --- | --- |
 | ServiceAccount `consoletrack:k8s-mcp` | `k8s-mcp-read` in each of `allowedNamespaces` (`demo`) | get, list, watch on pods, pods/log, events, deployments, replicasets, statefulsets | Secrets, ConfigMaps, exec, attach, port-forward, any write, any other namespace |
-| ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets | create, delete, exec, Secrets, cluster-scoped resources |
+| ServiceAccount `consoletrack:remediator` (the backend) | `remediator` in each of `allowedNamespaces` | get, patch on deployments; get, list on replicasets and pods (rollout status and verify's OOM check) | create, delete, update, exec, pods/log, Secrets, ConfigMaps, other namespaces, cluster-scoped resources |
 | Group `consoletrack-deployers` (CI's deploy role, through its EKS access entry) | `consoletrack-deployer` in `consoletrack` and `demo` | Manage the kinds the app charts create, including Helm's release records (ConfigMaps, `HELM_DRIVER=configmap`); read pods, logs, events; port-forward for the smoke test | Secrets, anything cluster-scoped (CRDs, add-ons, namespaces), other namespaces, exec |
 
 Every other pod runs with `automountServiceAccountToken: false`: the worker, `aws-mcp`, the
@@ -140,14 +141,57 @@ is subverted:
   string passwords, private keys), lines capped at 200 and 2,000 characters each;
 - unexpected errors are masked; only the scope refusals' messages reach the model.
 
-`make test-k8s` renders the chart's `rbac-k8s-mcp.yaml` and `serviceaccounts.yaml`, applies them
-to a throwaway kind cluster, and checks every allow and deny in the `k8s-mcp` row with
-`kubectl auth can-i`, so the test proves the RBAC that ships.
+`make test-k8s` renders the chart's `rbac-k8s-mcp.yaml`, `rbac-remediator.yaml`, and
+`serviceaccounts.yaml`, applies them to a throwaway kind cluster, and checks every allow and deny
+in the `k8s-mcp` row and the `remediator` row with `kubectl auth can-i` (the remediator: patch
+Deployments in `demo`, nothing in `consoletrack`, `kube-system`, or cluster-wide), so the test
+proves the RBAC that ships.
 
-`make local` applies the same render to its kind cluster. It gives Compose's k8s-mcp a
-kubeconfig that uses a 24-hour token for this ServiceAccount (`kind-internal.kubeconfig`,
-gitignored, rewritten on every run), so the shipped RBAC limits it locally too, not kind's
-admin credentials. Only `.mcp.json` (Accepted gaps) runs with your own context.
+`make local` applies the same render to its kind cluster. It gives Compose's k8s-mcp and backend
+each a kubeconfig with a 24-hour token for their own ServiceAccount (`kind-internal.kubeconfig`
+for k8s-mcp, `kind-remediator.kubeconfig` for the backend; gitignored, rewritten on every run),
+so the shipped RBAC limits them locally too, not kind's admin credentials: the backend can patch
+Deployments in `demo` and nothing else. Only `.mcp.json` (Accepted gaps) runs with your own
+context.
+
+## AWS (Pod Identity)
+
+Pods that call AWS get their own Pod Identity role (`terraform/consoletrack/us-east-1/pod-identity.tf`,
+path `/ct/`, the `ct` permissions boundary). No pod uses the node role.
+
+| Role (ServiceAccount) | Allowed | Not allowed |
+| --- | --- | --- |
+| `ct-aws-mcp-<region>-<suffix>` (`consoletrack:aws-mcp`) | The reads in the table below | Any write; IAM outside `WATCHED_IAM_PATHS`; any S3 object but the demo-app state |
+| `ct-worker-<region>-<suffix>` (`consoletrack:worker`) | `sqs:ReceiveMessage`, `DeleteMessage`, `ChangeMessageVisibility` on the change queue; `sqs:GetQueueAttributes` on it and its DLQ; `cloudtrail:GetTrailStatus` on the ConsoleTrack trail | Every other AWS API. It reaches CloudTrail, IAM, EC2, and the state only through aws-mcp |
+| `ct-canary-<region>-<suffix>` (`consoletrack:canary`) | `ec2:CreateTags` with only the `ct:canary` key, on the canary security group | Any other tag, resource, or API |
+
+### aws-mcp: tools, APIs, and IAM
+
+| Tool | AWS API (boto3 operation) | IAM permission (`aws_mcp` policy) | Checks inside the server |
+| --- | --- | --- | --- |
+| `get_resource_changes(resource_arn, hours)` | `cloudtrail:LookupEvents` (`ResourceName`) | `cloudtrail:LookupEvents` on `*` | ARN shape; `hours` 1–72; writes only; ≤3 pages, 20 events |
+| `get_principal_activity(principal_arn, hours)` | `cloudtrail:LookupEvents` (`Username`, or `ReadOnly=false` for a role) | `cloudtrail:LookupEvents` on `*` | Principal ARN shape; events matched on the full identity; as above |
+| `get_iam_role(role_name)` | `iam:GetRole`, `ListRolePolicies`, `GetRolePolicy`, `ListAttachedRolePolicies`, `GetPolicy`, `GetPolicyVersion` | Those, on `role/<watched path>*` and `policy/<watched path>*` | Role path under `WATCHED_IAM_PATHS`, else refused; attached policies outside the paths by name only |
+| `simulate_access(role_name, actions, resources)` | `iam:GetRole`, `iam:SimulatePrincipalPolicy` | Those, on `role/<watched path>*` | Same path check before simulating; 1–10 actions, ≤10 ARNs |
+| `get_security_group(group_id)` | `ec2:DescribeSecurityGroups` | `ec2:DescribeSecurityGroups` on `*` | `sg-` ID shape |
+| `lookup_terraform_address(resource_arn)` | `s3:GetObject` | `s3:GetObject` on `<state bucket>/demo-app/us-east-1/terraform.tfstate` | The wrapper refuses any other bucket or key; sensitive attributes dropped |
+
+The policy also grants `iam:ListRoleTags`, `ListPolicyVersions`, `ListEntitiesForPolicy`, and
+`eks:DescribePodIdentityAssociation`, which no tool calls yet; aws-mcp's allowlist refuses them
+regardless. On top of IAM, the server (`mcp-server/aws/`, details in its README) holds each of
+these on its own if the prompt is subverted:
+
+- one wrapper allows only the operations above, checked before a request is built and again as a
+  botocore hook on every client; a unit test compares the allowlist with this policy's actions;
+- the role path check and the state-object pin above;
+- every result is redacted (access key IDs, session tokens, secrets, credential fields) and the
+  caller's source IP is cut to its /24; account IDs stay;
+- CloudTrail's caller-chosen text (user agent, session name, request parameters, error
+  messages) and security group descriptions come back as `untrusted_data`;
+- results are capped (events, characters per field, items per list, bytes) with `truncated`;
+- `LookupEvents` results are cached for 120 s and a throttled lookup returns `throttled: true`
+  instead of failing the run;
+- unexpected errors are masked; only refusals and AWS error codes reach the model.
 
 ## Runtime triage agent
 
@@ -157,11 +201,12 @@ read, and none of these depend on the prompt holding:
 | Layer | What it stops | Where |
 | --- | --- | --- |
 | Tools | The model's only tools are the MCP servers' reads plus `submit_analysis`. A tool name the servers don't offer gets a tool error; nothing is run | `app/agents/tools.py` |
-| RBAC and IAM | `k8s-mcp` and `aws-mcp` run under their own read-only identities (table above; `aws-mcp`'s Pod Identity role with #9). The worker itself has no Kubernetes token | `helm/charts/consoletrack/` |
+| RBAC and IAM | `k8s-mcp` and `aws-mcp` run under their own read-only identities (tables above). The worker itself has no Kubernetes token | `helm/charts/consoletrack/` |
 | Schema | `submit_analysis` is validated before anything is stored. Proposals are one of three narrow kinds that name a Deployment (or a change ID) and carry only the values the fix needs, with no free-form patch. Anything else, such as a Secret patch asked for by an injected log line, goes back to the model as an error | `app/agents/schema.py` |
 | Limits | 12 tool calls, 120 s, a token budget, one transient retry per run; a run that hits one stops and leaves the incident for a human | `app/agents/runner.py` |
 | Redaction | Tool results and arguments are redacted again in the backend before they're stored as evidence or sent back to the model | `app/agents/redact.py` |
-| Gate | A proposal is stored as `proposed` and handed to `PolicyGate.submit_proposal`. Phase 1's gate is `ManualPolicyGate`, which approves nothing; the validator, the `auto` policies, and the apply path are #34's | `app/services/policy_gate.py` |
+| Gate | A proposal is stored as `proposed` and handed to `PolicyGate.submit_proposal`. Only `set_memory_limit` in `demo` can go `auto` (policy `oom-memory-bump`), and only with both kill switches on, high confidence, no earlier failed auto fix of the workload, and at most one per workload per hour; AWS-side kinds can't be configured `auto`. Everything else waits for an admin | `app/services/policy_gate.py`, `remediation_policy.py` |
+| Validator and apply | The backend, not the worker or the agent, applies, as `remediator`: the deterministic validator against the live Deployment (only the container's memory, above the current limit, at most 2x and 512Mi), a server-side dry run whose result may differ only in that memory, a strategic-merge patch, rollout and verify, and the inverse patch if verify fails | `app/services/remediation_validator.py`, `remediation_apply.py` |
 
 `ANTHROPIC_API_KEY` reaches the worker only (a Secret by name in the chart; the shell in Compose).
 The backend API pod doesn't have it and never calls the model.

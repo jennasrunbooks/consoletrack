@@ -8,6 +8,10 @@ prometheus-node-exporter:
     enabled: false
 
 prometheus:
+  # The Compose otel-collector writes ConsoleTrack's metrics here (remote write, through the
+  # same NodePort): the backend runs in Compose, so there is nothing in kind to scrape.
+  prometheusSpec:
+    enableRemoteWriteReceiver: true
   # k8s-mcp runs in Compose (`make local`) and reaches Prometheus on kind's Docker network at
   # http://consoletrack-control-plane:30090. kind publishes no port on the host, so this stays
   # off the host's network.

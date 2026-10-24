@@ -26,7 +26,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.agents.model import ModelClient, ModelError, ModelTurn, ToolCall, TransientModelError
-from app.agents.prompts import load
+from app.agents.prompts import PROMPT_VERSION, load
 from app.agents.redact import redact, redact_value
 from app.agents.schema import TOOL_NAME, SubmitAnalysis, tool_definition
 from app.agents.tools import Toolbox
@@ -79,6 +79,8 @@ class RunResult:
     tool_calls: int
     input_tokens: int
     output_tokens: int
+    # The evidence calls that succeeded, as (tool name, redacted result), in call order.
+    evidence: tuple[tuple[str, str], ...] = ()
 
 
 class _Stop(Exception):
@@ -109,8 +111,9 @@ class AgentRunner:
         model: str,
         task_prompt: str,
         toolbox: Toolbox,
+        escalated: bool = False,
     ) -> RunResult:
-        run = _Run(self, subject_type, subject_id, model, toolbox)
+        run = _Run(self, subject_type, subject_id, model, toolbox, escalated)
         try:
             async with asyncio.timeout(self._limits.timeout_seconds):
                 analysis = await run.loop(task_prompt)
@@ -144,6 +147,7 @@ class AgentRunner:
             tool_calls=run.tool_calls,
             input_tokens=run.input_tokens,
             output_tokens=run.output_tokens,
+            evidence=tuple(run.evidence),
         )
 
     def failed_start(
@@ -157,6 +161,7 @@ class AgentRunner:
                     subject_type=subject_type,
                     subject_id=subject_id,
                     model=model,
+                    prompt_version=PROMPT_VERSION,
                     started_at=now,
                     finished_at=now,
                     input_tokens=0,
@@ -187,6 +192,7 @@ class _Run:
         subject_id: int,
         model: str,
         toolbox: Toolbox,
+        escalated: bool,
     ) -> None:
         self.runner = runner
         self.limits = runner._limits
@@ -195,12 +201,15 @@ class _Run:
         self.tool_calls = 0
         self.input_tokens = 0
         self.output_tokens = 0
+        self.evidence: list[tuple[str, str]] = []
         with runner._uow_factory() as uow:
             row = uow.agent_runs.add(
                 AgentRunRow(
                     subject_type=subject_type,
                     subject_id=subject_id,
                     model=model,
+                    prompt_version=PROMPT_VERSION,
+                    escalated=escalated,
                     started_at=runner._clock(),
                     outcome=AgentRunOutcome.running,
                 )
@@ -301,6 +310,8 @@ class _Run:
                 )
             )
             uow.commit()
+        if not result.is_error:
+            self.evidence.append((call.name, text))
         return _tool_result(call.id, _truncate(text, MODEL_RESULT_CHARS), result.is_error)
 
     def finish(self, outcome: AgentRunOutcome) -> None:

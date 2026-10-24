@@ -28,6 +28,7 @@ HEALTHY = IntakeSnapshot(
     oldest_message_age_seconds=30,
     dead_letter_count=0,
     trail_logging=True,
+    reported_at=NOW - timedelta(seconds=40),
 )
 
 

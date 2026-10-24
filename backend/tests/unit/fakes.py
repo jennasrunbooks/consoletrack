@@ -7,7 +7,7 @@ They hold real (transient) ORM objects in lists, so services run unchanged. The 
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime
 from typing import Any, Self
 
@@ -18,13 +18,18 @@ from app.db.models import (
     EvidenceRow,
     IncidentChangeRow,
     IncidentRow,
+    IntakeReportRow,
     RemediationRow,
 )
-from app.db.repositories import ChangeCountsData, ChangeFilters, IncidentFilters
+from app.db.repositories import ChangeCountsData, ChangeFilters, IncidentFilters, QueueReport
 from app.enums import (
     ACTIVE_INCIDENT_STATUSES,
     CLOSED_CHANGE_STATUSES,
+    ChangeStatus,
     Confidence,
+    RemediationKind,
+    RemediationMode,
+    RemediationStatus,
     Risk,
     SubjectType,
 )
@@ -137,6 +142,28 @@ class FakeChangeRepository:
     def last_detected_at(self) -> datetime | None:
         return max((row.detected_at for row in self.store.changes.rows), default=None)
 
+    def next_for_analysis(self, *, lease_start: datetime, max_runs: int) -> ChangeRow | None:
+        def due(row: ChangeRow) -> bool:
+            runs = [
+                run
+                for run in self.store.agent_runs.rows
+                if run.subject_type is SubjectType.change and run.subject_id == row.id
+            ]
+            analysed = any(
+                a.subject_type is SubjectType.change and a.subject_id == row.id
+                for a in self.store.analyses.rows
+            )
+            return (
+                row.status is ChangeStatus.detected
+                and not analysed
+                and all(run.started_at < lease_start for run in runs)
+                and len(runs) < max_runs
+            )
+
+        return min(
+            (row for row in self.store.changes.rows if due(row)), key=lambda r: r.id, default=None
+        )
+
 
 class FakeIncidentRepository:
     def __init__(self, store: FakeStore) -> None:
@@ -220,6 +247,12 @@ class FakeAgentRunRepository:
     def get(self, run_id: int) -> AgentRunRow | None:
         return next((row for row in self.store.agent_runs.rows if row.id == run_id), None)
 
+    def any_escalated(self, subject_type: SubjectType, subject_id: int) -> bool:
+        return any(
+            row.escalated and (row.subject_type, row.subject_id) == (subject_type, subject_id)
+            for row in self.store.agent_runs.rows
+        )
+
 
 class FakeEvidenceRepository:
     def __init__(self, store: FakeStore) -> None:
@@ -261,6 +294,68 @@ class _LatestForSubject[T]:
         return max(matches, key=lambda row: row.id, default=None)  # type: ignore[attr-defined]
 
 
+class FakeRemediationRepository(_LatestForSubject[RemediationRow]):
+    def get(self, remediation_id: int, *, for_update: bool = False) -> RemediationRow | None:
+        return next((row for row in self.table.rows if row.id == remediation_id), None)
+
+    def latest_for(
+        self, subject_type: SubjectType, subject_id: int, *, for_update: bool = False
+    ) -> RemediationRow | None:
+        return super().latest_for(subject_type, subject_id)
+
+    def auto_for_workload(self, namespace: str, workload: str) -> list[RemediationRow]:
+        return sorted(
+            (
+                row
+                for row in self.table.rows
+                if (row.namespace, row.workload) == (namespace, workload)
+                and row.mode is RemediationMode.auto
+            ),
+            key=lambda row: row.id,
+        )
+
+    def next_to_apply(
+        self, now: datetime, kinds: Collection[RemediationKind]
+    ) -> RemediationRow | None:
+        due = [
+            row
+            for row in self.table.rows
+            if row.kind in kinds
+            and (
+                row.status is RemediationStatus.approved
+                or (
+                    row.status is RemediationStatus.running
+                    and (row.lease_until is None or row.lease_until < now)
+                )
+            )
+        ]
+        return min(due, key=lambda row: row.id, default=None)
+
+
+class FakeIntakeReportRepository:
+    def __init__(self, store: FakeStore) -> None:
+        self.store = store
+
+    def get(self) -> IntakeReportRow | None:
+        return self.store.intake_report
+
+    def _row(self) -> IntakeReportRow:
+        if self.store.intake_report is None:
+            self.store.intake_report = IntakeReportRow(id=1)
+        return self.store.intake_report
+
+    def save_report(self, report: QueueReport, *, reported_at: datetime) -> None:
+        row = self._row()
+        for name, value in vars(report).items():
+            setattr(row, name, value)
+        row.reported_at = reported_at
+
+    def save_canary(self, event_time: datetime) -> None:
+        row = self._row()
+        if row.last_canary_at is None or event_time > row.last_canary_at:
+            row.last_canary_at = event_time
+
+
 class FakeUnitOfWork:
     def __init__(self, store: FakeStore) -> None:
         self.store = store
@@ -270,7 +365,8 @@ class FakeUnitOfWork:
         self.agent_runs = FakeAgentRunRepository(store)
         self.evidence = FakeEvidenceRepository(store)
         self.analyses = _LatestForSubject[AnalysisRow](store.analyses)
-        self.remediations = _LatestForSubject[RemediationRow](store.remediations)
+        self.remediations = FakeRemediationRepository(store.remediations)
+        self.intake_reports = FakeIntakeReportRepository(store)
 
     def commit(self) -> None:
         self.store.commits += 1
@@ -296,6 +392,7 @@ class FakeStore:
         self.evidence: _Table[EvidenceRow] = _Table()
         self.analyses: _Table[AnalysisRow] = _Table()
         self.remediations: _Table[RemediationRow] = _Table()
+        self.intake_report: IntakeReportRow | None = None
         self.commits = 0
 
     def uow(self) -> FakeUnitOfWork:

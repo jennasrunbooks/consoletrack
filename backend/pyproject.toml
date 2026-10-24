@@ -8,23 +8,28 @@ dependencies = [
     "alembic>=1.14",
     "anthropic>=1.15,<2",
     "argon2-cffi>=23.1",
+    "boto3>=1.40",
     "fastapi>=0.115",
     "fastmcp>=4.1,<5",
+    "httpx2>=2.9",
     "itsdangerous>=2.2",
+    "kubernetes>=37",
+    "opentelemetry-exporter-otlp-proto-http>=1.45,<2",
+    "opentelemetry-instrumentation-fastapi>=0.66b1",
+    "opentelemetry-sdk>=1.45,<2",
     "prometheus-client>=0.21",
     "psycopg[binary]>=3.2",
     "pydantic>=2.10",
     "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
     "sqlalchemy>=2.0.36",
     "uvicorn[standard]>=0.32",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx2>=2.9",
     "pytest>=8.3",
     "pytest-cov>=6.0",
-    "pyyaml>=6.0",
     "ruff==0.17.0",
     "testcontainers[postgres]>=4.15",
 ]

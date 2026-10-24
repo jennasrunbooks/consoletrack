@@ -13,6 +13,10 @@
 # joins kind's Docker network so Alertmanager can reach it. Plain `docker compose up` (and
 # LOCAL_KIND=false make local) runs without kind. The change intake (INTAKE_MODE=replay, SQS
 # through ElasticMQ) and aws-mcp (fixtures mode) join with #9.
+#
+# Observability (docs/observability.md): the backend, worker, and k8s-mcp send OTLP to
+# otel-collector, which writes traces to Tempo and logs to Loki; Grafana shows both with the
+# "Incident journey" dashboard. With kind, metrics go to kind's Prometheus (compose/kind.yaml).
 name: consoletrack
 
 x-hardening: &hardening
@@ -70,6 +74,9 @@ services:
       GRAFANA_URL: ${GRAFANA_URL:-}
       TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-haiku-5-5}
       TRIAGE_MODEL_ESCALATION: ${TRIAGE_MODEL_ESCALATION:-claude-sonnet-5-5}
+      # app/telemetry.py: OTLP to the collector. TELEMETRY_EXPORTER=none turns it off.
+      TELEMETRY_EXPORTER: ${TELEMETRY_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -117,6 +124,8 @@ services:
       # kube-prometheus-stack's NodePort on kind's network (helm/values/kube-prometheus-stack-local.yaml).
       PROMETHEUS_URL: ${PROMETHEUS_URL:-http://consoletrack-control-plane:30090}
       KUBECONFIG: /run/kube/config
+      TELEMETRY_EXPORTER: ${TELEMETRY_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     volumes:
       - ./kind-internal.kubeconfig:/run/kube/config:ro
     networks: [default, kind]
@@ -144,10 +153,20 @@ services:
       TRIAGE_MODEL: ${TRIAGE_MODEL:-claude-haiku-5-5}
       TRIAGE_MODEL_ESCALATION: ${TRIAGE_MODEL_ESCALATION:-claude-sonnet-5-5}
       WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      # The change intake reads ElasticMQ, unsigned; scripts/replay-fixtures.py fills it.
+      INTAKE_MODE: replay
+      CHANGES_QUEUE_URL: http://elasticmq:9324/123456789012/ct-changes-use1-local
+      AWS_ENDPOINT_URL_SQS: http://elasticmq:9324
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      # app/telemetry.py: OTLP to the collector. TELEMETRY_EXPORTER=none turns it off.
+      TELEMETRY_EXPORTER: ${TELEMETRY_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     depends_on:
       backend:
         condition: service_healthy
       k8s-mcp:
+        condition: service_healthy
+      elasticmq:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/worker-heartbeat') > 120)"]
@@ -155,6 +174,65 @@ services:
       timeout: 3s
       retries: 3
       start_period: 20s
+
+  # --- Observability (docs/observability.md) -------------------------------------------------
+  # Memory limits are ceilings for a laptop, not measurements; the PR for #33 lists what each
+  # used during an OOM scenario run. Tempo and Loki keep their data on tmpfs (until restart).
+
+  # OTLP/HTTP from the apps; not published on the host. compose/kind.yaml adds kind.yaml (metrics
+  # to kind's Prometheus) and kind's network.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.163.2@sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849
+    <<: *hardening
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector:/etc/otelcol:ro
+    mem_limit: 192m
+
+  tempo:
+    image: grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
+    <<: *hardening
+    command: ["-target=all", "-config.file=/etc/tempo/tempo.yaml"]
+    # Tempo 3's modules write under /var/tempo by default (live-store, WAL, blocks, the backend
+    # scheduler), not all of them configurable in one place: the whole directory is tmpfs.
+    # mode=1777 like /tmp: a new tmpfs is root's 0755, and Tempo runs as uid 10001.
+    tmpfs: [/tmp, "/var/tempo:mode=1777"]
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    mem_limit: 384m
+
+  loki:
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    <<: *hardening
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+    mem_limit: 384m
+
+  # Tempo, Loki, and Prometheus (kind's), and the provisioned "Incident journey" dashboard.
+  # Writes its database to the grafana-data volume, so the root filesystem stays writable.
+  grafana:
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # Sets the admin password: GRAFANA_ADMIN_PASSWORD, or a generated one `make local` prints.
+    entrypoint: ["/bin/sh", "/etc/consoletrack/entrypoint.sh"]
+    environment:
+      GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+      # kube-prometheus-stack's NodePort on kind's network, as for k8s-mcp.
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://consoletrack-control-plane:30090}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/incident-journey.json
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./observability/grafana/entrypoint.sh:/etc/consoletrack/entrypoint.sh:ro
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    mem_limit: 512m
 
 networks:
   # kind's own Docker network, created by `kind create cluster`; only the kind profile uses it.
@@ -164,3 +242,4 @@ networks:
 volumes:
   postgres-data:
   local-secrets:
+  grafana-data:

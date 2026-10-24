@@ -6,11 +6,12 @@ This module and `app/db/session.py` are the only code that touches a `Session`.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Any, Self
 
 from sqlalchemy import ColumnElement, Select, and_, exists, func, or_, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -20,13 +21,18 @@ from app.db.models import (
     EvidenceRow,
     IncidentChangeRow,
     IncidentRow,
+    IntakeReportRow,
     RemediationRow,
 )
-from app.db.repositories import ChangeCountsData, ChangeFilters, IncidentFilters
+from app.db.repositories import ChangeCountsData, ChangeFilters, IncidentFilters, QueueReport
 from app.enums import (
     ACTIVE_INCIDENT_STATUSES,
     CLOSED_CHANGE_STATUSES,
+    ChangeStatus,
     Confidence,
+    RemediationKind,
+    RemediationMode,
+    RemediationStatus,
     Risk,
     SubjectType,
 )
@@ -140,6 +146,30 @@ class SqlChangeRepository:
     def last_detected_at(self) -> datetime | None:
         return self.session.scalar(select(func.max(ChangeRow.detected_at)))
 
+    def next_for_analysis(self, *, lease_start: datetime, max_runs: int) -> ChangeRow | None:
+        runs = select(func.count(AgentRunRow.id)).where(
+            AgentRunRow.subject_type == SubjectType.change, AgentRunRow.subject_id == ChangeRow.id
+        )
+        return self.session.scalar(
+            select(ChangeRow)
+            .where(
+                ChangeRow.status == ChangeStatus.detected,
+                ~exists().where(
+                    AnalysisRow.subject_type == SubjectType.change,
+                    AnalysisRow.subject_id == ChangeRow.id,
+                ),
+                ~exists().where(
+                    AgentRunRow.subject_type == SubjectType.change,
+                    AgentRunRow.subject_id == ChangeRow.id,
+                    AgentRunRow.started_at >= lease_start,
+                ),
+                runs.scalar_subquery() < max_runs,
+            )
+            .order_by(ChangeRow.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+
 
 class SqlIncidentRepository:
     def __init__(self, session: Session) -> None:
@@ -245,6 +275,19 @@ class SqlAgentRunRepository:
     def get(self, run_id: int) -> AgentRunRow | None:
         return self.session.get(AgentRunRow, run_id)
 
+    def any_escalated(self, subject_type: SubjectType, subject_id: int) -> bool:
+        return bool(
+            self.session.scalar(
+                select(
+                    exists().where(
+                        AgentRunRow.subject_type == subject_type,
+                        AgentRunRow.subject_id == subject_id,
+                        AgentRunRow.escalated.is_(True),
+                    )
+                )
+            )
+        )
+
 
 class SqlEvidenceRepository:
     def __init__(self, session: Session) -> None:
@@ -301,8 +344,13 @@ class SqlRemediationRepository:
         self.session.flush()
         return row
 
-    def latest_for(self, subject_type: SubjectType, subject_id: int) -> RemediationRow | None:
-        return self.session.scalar(
+    def get(self, remediation_id: int, *, for_update: bool = False) -> RemediationRow | None:
+        return self.session.get(RemediationRow, remediation_id, with_for_update=for_update)
+
+    def latest_for(
+        self, subject_type: SubjectType, subject_id: int, *, for_update: bool = False
+    ) -> RemediationRow | None:
+        query = (
             select(RemediationRow)
             .where(
                 RemediationRow.subject_type == subject_type,
@@ -310,6 +358,76 @@ class SqlRemediationRepository:
             )
             .order_by(RemediationRow.id.desc())
             .limit(1)
+        )
+        return self.session.scalar(query.with_for_update() if for_update else query)
+
+    def auto_for_workload(self, namespace: str, workload: str) -> list[RemediationRow]:
+        return list(
+            self.session.scalars(
+                select(RemediationRow)
+                .where(
+                    RemediationRow.namespace == namespace,
+                    RemediationRow.workload == workload,
+                    RemediationRow.mode == RemediationMode.auto,
+                )
+                .order_by(RemediationRow.id)
+            )
+        )
+
+    def next_to_apply(
+        self, now: datetime, kinds: Collection[RemediationKind]
+    ) -> RemediationRow | None:
+        return self.session.scalar(
+            select(RemediationRow)
+            .where(
+                RemediationRow.kind.in_(list(kinds)),
+                or_(
+                    RemediationRow.status == RemediationStatus.approved,
+                    and_(
+                        RemediationRow.status == RemediationStatus.running,
+                        or_(
+                            RemediationRow.lease_until.is_(None),
+                            RemediationRow.lease_until < now,
+                        ),
+                    ),
+                ),
+            )
+            .order_by(RemediationRow.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+
+
+class SqlIntakeReportRepository:
+    """Upserts on the single row, so neither writer needs it to exist first."""
+
+    ROW_ID = 1
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    def get(self) -> IntakeReportRow | None:
+        return self.session.get(IntakeReportRow, self.ROW_ID)
+
+    def save_report(self, report: QueueReport, *, reported_at: datetime) -> None:
+        values = {**vars(report), "reported_at": reported_at}
+        self.session.execute(
+            insert(IntakeReportRow)
+            .values(id=self.ROW_ID, **values)
+            .on_conflict_do_update(index_elements=[IntakeReportRow.id], set_=values)
+        )
+
+    def save_canary(self, event_time: datetime) -> None:
+        stmt = insert(IntakeReportRow).values(id=self.ROW_ID, last_canary_at=event_time)
+        self.session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[IntakeReportRow.id],
+                set_={
+                    "last_canary_at": func.greatest(
+                        IntakeReportRow.last_canary_at, stmt.excluded.last_canary_at
+                    )
+                },
+            )
         )
 
 
@@ -325,6 +443,7 @@ class SqlUnitOfWork:
         self.evidence = SqlEvidenceRepository(session)
         self.analyses = SqlAnalysisRepository(session)
         self.remediations = SqlRemediationRepository(session)
+        self.intake_reports = SqlIntakeReportRepository(session)
 
     def commit(self) -> None:
         self.session.commit()

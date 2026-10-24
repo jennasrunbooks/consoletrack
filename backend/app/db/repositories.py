@@ -6,7 +6,7 @@ in memory for unit tests (spec: SQL behavior is tested only against real Postgre
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, Self
@@ -18,9 +18,18 @@ from app.db.models import (
     EvidenceRow,
     IncidentChangeRow,
     IncidentRow,
+    IntakeReportRow,
     RemediationRow,
 )
-from app.enums import ChangeStatus, Confidence, IncidentStatus, Risk, SubjectType, Via
+from app.enums import (
+    ChangeStatus,
+    Confidence,
+    IncidentStatus,
+    RemediationKind,
+    Risk,
+    SubjectType,
+    Via,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,12 @@ class ChangeRepository(Protocol):
 
     def last_detected_at(self) -> datetime | None: ...
 
+    def next_for_analysis(self, *, lease_start: datetime, max_runs: int) -> ChangeRow | None:
+        """The oldest `detected` change with no analysis yet, no agent run started at or after
+        `lease_start` (one in progress, or a crashed one not yet expired), and fewer than
+        `max_runs` runs; locked (`FOR UPDATE SKIP LOCKED`)."""
+        ...
+
 
 class IncidentRepository(Protocol):
     def get(self, incident_id: int, *, for_update: bool = False) -> IncidentRow | None: ...
@@ -109,6 +124,9 @@ class IncidentChangeRepository(Protocol):
 class AgentRunRepository(Protocol):
     def add(self, row: AgentRunRow) -> AgentRunRow: ...
     def get(self, run_id: int) -> AgentRunRow | None: ...
+    def any_escalated(self, subject_type: SubjectType, subject_id: int) -> bool:
+        """Whether the subject already had an escalated run."""
+        ...
 
 
 class EvidenceRepository(Protocol):
@@ -127,7 +145,43 @@ class AnalysisRepository(Protocol):
 
 class RemediationRepository(Protocol):
     def add(self, row: RemediationRow) -> RemediationRow: ...
-    def latest_for(self, subject_type: SubjectType, subject_id: int) -> RemediationRow | None: ...
+    def get(self, remediation_id: int, *, for_update: bool = False) -> RemediationRow | None: ...
+    def latest_for(
+        self, subject_type: SubjectType, subject_id: int, *, for_update: bool = False
+    ) -> RemediationRow | None: ...
+    def auto_for_workload(self, namespace: str, workload: str) -> list[RemediationRow]:
+        """Every `auto` remediation of that workload, oldest first (the gate's rate limit and
+        block list)."""
+        ...
+
+    def next_to_apply(
+        self, now: datetime, kinds: Collection[RemediationKind]
+    ) -> RemediationRow | None:
+        """The oldest of `kinds` that is `approved`, or `running` with a lease that expired
+        before `now`, locked (`FOR UPDATE SKIP LOCKED`, so two backends never take the same)."""
+        ...
+
+
+@dataclass(frozen=True)
+class QueueReport:
+    """One `GetQueueAttributes` / `GetTrailStatus` round; None where that call failed."""
+
+    queue_backlog: int | None
+    oldest_message_age_seconds: int | None
+    dead_letter_count: int | None
+    trail_logging: bool | None
+
+
+class IntakeReportRepository(Protocol):
+    def get(self) -> IntakeReportRow | None: ...
+    def save_report(self, report: QueueReport, *, reported_at: datetime) -> None:
+        """Overwrite the queue and trail fields (nulls included) and `reported_at`."""
+        ...
+
+    def save_canary(self, event_time: datetime) -> None:
+        """Keep the newer of the stored canary time and `event_time` (redelivered or
+        out-of-order canaries never move it back)."""
+        ...
 
 
 class UnitOfWork(Protocol):
@@ -140,6 +194,7 @@ class UnitOfWork(Protocol):
     evidence: EvidenceRepository
     analyses: AnalysisRepository
     remediations: RemediationRepository
+    intake_reports: IntakeReportRepository
 
     def commit(self) -> None: ...
     def rollback(self) -> None: ...

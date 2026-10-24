@@ -17,27 +17,35 @@ aws:
   bucket: ""
   objectKey: seed.txt
 
-# The app uses ~50 MiB (~25 MiB on kind, where boto3 is never loaded). The limit is sized so the
-# OOM fault's correct fix, 2x the faulted limit, still fits: see faults.oom.
+# The app uses about 19 MiB under the OOM fault, on EKS and on kind (make measure and make
+# local-measure, #79), plus the report cache. 128Mi fits the app alone, not a full cache: see
+# faults.oom.
 resources:
-  requests: {cpu: 10m, memory: 128Mi}
-  limits: {cpu: 200m, memory: 256Mi}
+  requests: {cpu: 10m, memory: 64Mi}
+  limits: {cpu: 200m, memory: 128Mi}
+
+# Every `X-Demo-Report: large` request adds perRequestMi to an in-memory cache bounded at capMi
+# (DEMO_REPORT_MI, DEMO_REPORT_CACHE_MI). Always set, whatever the faults: only the traffic
+# generator's requests decide whether the cache fills.
+reportCache:
+  perRequestMi: 2
+  capMi: 140
 
 probes:
   path: /healthz
 
 # Cluster faults for the baseline scenarios (`make demo`, the break-demo skill). At most one at a
-# time; turning it off again is the fix the agent should find. Set them through Helmfile's
-# demoFault state value (README → Faults), which also turns off wait and atomic for that sync.
+# time. Set them through Helmfile's demoFault state value (README → Faults), which also turns off
+# wait and atomic for that sync.
 faults:
-  # Memory request and limit drop to oomMemoryLimit and the app allocates and holds allocateMi at
-  # startup, before it listens: ~150 MiB on kind, ~175 MiB with the S3 client on EKS, so the
-  # container is OOMKilled every start (CrashLoopBackOff). The correct fix, 256Mi, is exactly
-  # oom-memory-bump's 2x (and under its 512Mi ceiling) and leaves ~80 MiB of headroom with
-  # DEMO_ALLOCATE_MI still set.
+  # The app outgrows its limit; nothing about the app rolls out. Only the traffic generator
+  # changes: it sends `X-Demo-Report: large` on every request, so at loadgen.rps the cache passes
+  # the 128Mi limit within about 15s of each start: OOMKilled under traffic, CrashLoopBackOff,
+  # with no new demo-app revision. The fix the agent should find is set_memory_limit to 256Mi:
+  # exactly oom-memory-bump's 2x, under its 512Mi ceiling. Measured peak with the fault on:
+  # 159 MiB on EKS, 158 MiB on kind: 31 MiB over 128Mi, so the OOM is certain, and 97 MiB under
+  # 256Mi, so the fix holds.
   oom: false
-  oomMemoryLimit: 128Mi
-  allocateMi: 128
   # An image tag that doesn't exist: ImagePullBackOff, fixed by a rollout undo.
   badImage: false
   badImageTag: does-not-exist

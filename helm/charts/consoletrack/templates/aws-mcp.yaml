@@ -1,6 +1,7 @@
 # aws-mcp: read-only CloudTrail, IAM, EC2, and Terraform state tools (mcp-server/aws/). Pod
 # Identity role ct-aws-mcp-<region>-<suffix>, read-only and limited to the watched IAM paths and
 # the demo-app root's state object. No Kubernetes token. Only the worker calls it.
+{{- if .Values.awsMcp.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,3 +71,4 @@ spec:
     - name: http
       port: {{ .Values.awsMcp.port }}
       targetPort: http
+{{- end }}

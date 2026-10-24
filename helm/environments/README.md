@@ -32,10 +32,29 @@ Every key the Helmfile reads. `eks.yaml` and `local.yaml` set each one (most emp
 | `changesQueueUrl`, `changesDlqUrl` | outputs `changes_queue_url`, `changes_dlq_url` | worker |
 | `trailName` | output `trail_name` | worker (`cloudtrail:GetTrailStatus`) |
 | `canarySecurityGroupId` | output `canary_security_group_id` | canary CronJob |
-| `demoBucket` | `demo-app/us-east-1` output (bucket name) | demo-app |
+| `demoBucket` | `demo-app/us-east-1` output `bucket_name`; empty until that root exists, and the demo app then reads no S3 object | demo-app |
 | `imageTag` | the commit SHA in `deploy.yaml` (`--state-values-set imageTag=<sha>`); `local` on kind | consoletrack and demo-app images |
 | `demoFault` | empty; `--state-values-set demoFault=oom` (or `badImage`, `badProbe`) for one run | demo-app's `faults.*`, and turns off wait and atomic for that sync |
+| `awsMcpEnabled` | `true` on eks, `false` on local until aws-mcp has a fixtures mode | the aws-mcp Deployment and the worker's `AWS_MCP_URL` |
 | `intakeMode` | `live` on eks, `replay` on local | worker, backend |
 | `storageClass` | `gp3` on eks (cluster-defaults), `standard` on kind | Postgres volume |
 
 `helm/tests/values/` holds placeholder values in the same shape for `make helm-lint`.
+
+## How `values.generated.yaml` is written
+
+`make helm-values` runs `scripts/helm-values.sh`; `make addons` and `make deploy` depend on it,
+and `make down` runs it with only the `.env` keys. It writes a key only when it has a value, so
+the default in `eks.yaml` applies otherwise, and the file is mode 0600. `HELM_VALUES_SOURCE`
+picks where the Terraform outputs come from:
+
+- `terraform` (default): `terraform output -json` of `consoletrack/us-east-1`, plus
+  `demo-app/us-east-1` when it has `.tf` files.
+- `env`: the variables `deploy.yaml` sets from GitHub variables and environment secrets
+  (`CLUSTER_NAME`, `CHANGES_QUEUE_URL`, `CHANGES_DLQ_URL`, `TRAIL_NAME`, `CANARY_SECURITY_GROUP_ID`;
+  optionally `VPC_ID`, `CERTIFICATE_ARN`, `DEMO_BUCKET`). The deploy role can't read Terraform state.
+- `none`: the `.env` keys only.
+
+`helm/tests/test_values_generated.py` checks that every key the script writes is declared in
+`eks.yaml` and `local.yaml` and read by the Helmfile, and that it produces the placeholder
+values' keys.

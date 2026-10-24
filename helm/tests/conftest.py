@@ -27,6 +27,27 @@ CONFIGS = ("eks", "eks-alb", "local")
 APP_CHARTS = ("consoletrack", "demo-app")
 OUR_CHARTS = (*APP_CHARTS, "cluster-defaults")
 
+
+def _aws_mcp_enabled(environment: str) -> bool:
+    return bool(
+        yaml.safe_load((HELM_DIR / "environments" / f"{environment}.yaml").read_text())[
+            "awsMcpEnabled"
+        ]
+    )
+
+
+# Mirrors helm/environments/{eks,local}.yaml: aws-mcp runs on EKS (#9); on kind it stays off
+# until its fixtures mode exists, and the worker isn't pointed at it. The tests follow these.
+AWS_MCP_ENABLED = {
+    "eks": _aws_mcp_enabled("eks"),
+    "eks-alb": _aws_mcp_enabled("eks"),
+    "local": _aws_mcp_enabled("local"),
+}
+_AWS_MCP = {
+    "awsMcp": {"enabled": AWS_MCP_ENABLED["eks"]},
+    "worker": {"awsMcp": AWS_MCP_ENABLED["eks"]},
+}
+
 _EKS_AWS = {
     "nameSuffix": "test",
     "clusterName": "ct-eks-use1-test",
@@ -46,8 +67,8 @@ _LOCAL = {
     "target": "local",
     "image": {"tag": "local"},
     "app": {"intakeMode": "replay"},
-    "awsMcp": {"mode": "fixtures"},
-    "worker": {"awsMcp": False},
+    "awsMcp": {"mode": "fixtures", "enabled": AWS_MCP_ENABLED["local"]},
+    "worker": {"awsMcp": AWS_MCP_ENABLED["local"]},
     "postgres": {"storage": {"storageClass": "standard"}},
 }
 
@@ -60,7 +81,7 @@ _FALLBACK = {
             "demo-app",
             {"aws": {"bucket": "demo-app-data-use1-test"}},
         ),
-        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS}),
+        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS, **_AWS_MCP}),
         ("cluster-defaults", "kube-system", "cluster-defaults", {}),
     ],
     "eks-alb": [
@@ -70,7 +91,12 @@ _FALLBACK = {
             "demo-app",
             {"aws": {"bucket": "demo-app-data-use1-test"}},
         ),
-        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS, **_ALB}),
+        (
+            "consoletrack",
+            "consoletrack",
+            "consoletrack",
+            {"aws": _EKS_AWS, **_AWS_MCP, **_ALB},
+        ),
         (
             "cluster-defaults",
             "kube-system",

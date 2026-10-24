@@ -126,22 +126,62 @@ class FakeToolProvider:
         return ToolResult(result if isinstance(result, str) else json.dumps(result))
 
 
-OOM_LOG = (
-    "2026-10-16T11:58:01Z INFO allocating 128 MiB (DEMO_ALLOCATE_MI)\n"
-    "2026-10-16T11:58:01Z INFO starting demo-app on :8080"
-)
+# What the app logs before the OOM kill: its start, nothing about memory.
+OOM_LOG = "2026-10-16 11:58:01,204 INFO demo_app serving on :8080, S3 read off"
+IMAGE = "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234"
 
 
-def k8s_oom(*, log_lines: str = OOM_LOG) -> FakeToolProvider:
-    """k8s-mcp for the demo-app OOM fault: limit 128Mi, OOMKilled on every start."""
+def revision(
+    number: int,
+    memory_limit: str,
+    *,
+    current: bool,
+    remediation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One get_rollout_history revision, shaped like k8s-mcp's."""
+    return {
+        "revision": number,
+        "replica_set": f"demo-app-rev{number}",
+        "current": current,
+        "state": "current" if current else "superseded",
+        "desired_replicas": 1 if current else 0,
+        "ready_replicas": 0,
+        "images": {"demo-app": IMAGE},
+        "resources": {
+            "demo-app": {
+                "requests": {"cpu": "10m", "memory": "64Mi"},
+                "limits": {"cpu": "200m", "memory": memory_limit},
+            }
+        },
+        "change_cause": None,
+        "remediation": remediation,
+    }
+
+
+# The scenario: one revision, the app outgrew its limit under traffic.
+UNCHANGED_LIMIT = [revision(1, "128Mi", current=True)]
+# The other branch of the rule: the newest revision lowered the limit.
+LOWERED_LIMIT = [revision(2, "128Mi", current=True), revision(1, "256Mi", current=False)]
+
+
+def k8s_oom(
+    *, log_lines: str = OOM_LOG, revisions: list[dict[str, Any]] = UNCHANGED_LIMIT
+) -> FakeToolProvider:
+    """k8s-mcp for the demo-app OOM fault: the report cache outgrows the 128Mi limit under
+    traffic, so the container is OOMKilled a few seconds into every start."""
+    limit = next(r for r in revisions if r["current"])["resources"]["demo-app"]["limits"]
     container = {
         "name": "demo-app",
-        "image": "ghcr.io/jennasrunbooks/consoletrack-demo-app:abc1234",
-        "resources": {
-            "requests": {"cpu": "10m", "memory": "128Mi"},
-            "limits": {"cpu": "200m", "memory": "128Mi"},
-        },
-        "env_names": ["PORT", "AWS_REGION", "DEMO_BUCKET", "DEMO_OBJECT_KEY", "DEMO_ALLOCATE_MI"],
+        "image": IMAGE,
+        "resources": {"requests": {"cpu": "10m", "memory": "64Mi"}, "limits": dict(limit)},
+        "env_names": [
+            "PORT",
+            "AWS_REGION",
+            "DEMO_BUCKET",
+            "DEMO_OBJECT_KEY",
+            "DEMO_REPORT_MI",
+            "DEMO_REPORT_CACHE_MI",
+        ],
         "env_values": "redacted",
     }
     return FakeToolProvider(
@@ -160,8 +200,11 @@ def k8s_oom(*, log_lines: str = OOM_LOG) -> FakeToolProvider:
                                 "ready": False,
                                 "restart_count": 6,
                                 "state": {"waiting": {"reason": "CrashLoopBackOff"}},
-                                "last_state": {
-                                    "terminated": {"reason": "OOMKilled", "exit_code": 137}
+                                "last_termination": {
+                                    "reason": "OOMKilled",
+                                    "exit_code": 137,
+                                    "started": "2026-10-16T11:57:58Z",
+                                    "finished": "2026-10-16T11:58:01Z",
                                 },
                             }
                         ],
@@ -186,7 +229,13 @@ def k8s_oom(*, log_lines: str = OOM_LOG) -> FakeToolProvider:
                 "namespace": "demo",
                 "untrusted_data": [{"object": "Pod/demo-app-7d9f8b6c5-x2x4z", "reason": "BackOff"}],
             },
-            "get_rollout_history": lambda args: {"namespace": "demo", "revisions": []},
+            "get_rollout_history": lambda args: {
+                "namespace": "demo",
+                "deployment": "demo-app",
+                "strategy": "Recreate",
+                "current_revision": revisions[0]["revision"],
+                "revisions": revisions,
+            },
             "query_prometheus": lambda args: {"result_type": "matrix", "result": []},
         },
     )

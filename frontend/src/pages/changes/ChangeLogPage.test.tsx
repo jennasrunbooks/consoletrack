@@ -43,7 +43,7 @@ describe("change log", () => {
     expect(first.getByText("Awaiting review")).toBeInTheDocument();
     expect(first.getByText("4 min ago")).toBeInTheDocument();
 
-    expect(within(rows()[1]!).getByRole("link", { name: "Linked to INC-12: demo-app CrashLoopBackOff" })).toHaveAttribute(
+    expect(within(rows()[1]!).getByRole("link", { name: "Linked to INC-12: demo-app DemoAppHighErrorRate" })).toHaveAttribute(
       "href",
       "/incidents/12",
     );

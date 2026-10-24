@@ -63,9 +63,11 @@ grafana:
       labelValue: "1"
       # The consoletrack chart's "Intake health" dashboard lives in the consoletrack namespace.
       searchNamespace: ALL
+  # Grafana 13 needs more than 256Mi while it starts (database migrations, bundled plugins):
+  # at 256Mi it was OOMKilled in a restart loop and the release timed out.
   resources:
-    requests: {cpu: 25m, memory: 128Mi}
-    limits: {memory: 256Mi}
+    requests: {cpu: 25m, memory: 256Mi}
+    limits: {memory: 512Mi}
 
 prometheusOperator:
   resources:
