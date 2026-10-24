@@ -163,7 +163,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure local-oom-run eval-oom measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -625,7 +625,7 @@ local-oom-run: env-check-local ## One OOM acceptance run on kind: clean demo-app
 
 # N runs of local-oom-run's steps, each on a fresh database (EVAL_OOM_RESET is the reset between
 # its two halves), then a Markdown table in eval/results/ (#60).
-eval-oom: env-check-local ## N (5) OOM acceptance runs on kind, PASS/FAIL each, results table in eval/results/ (~15 min a run, ~75 min for 5; N=<runs>; humans only)
+local-eval-oom: env-check-local ## N (5) OOM acceptance runs on kind, PASS/FAIL each, results table in eval/results/ (~15 min a run, ~75 min for 5; N=<runs>; humans only)
 	$(check_human)
 	EVAL_OOM_N=$(or $(N),5) \
 	EVAL_OOM_RESET='$(COMPOSE_KIND) down --volumes && $(MAKE) --no-print-directory local SKIP_BUILD=1' \

@@ -658,7 +658,7 @@ def test_run_refuses_a_database_with_incidents(tmp_path: Path) -> None:
     assert not any(c.startswith("helmfile ") for c in calls)  # the fault never went on
 
 
-# --- make eval-oom (#60) ------------------------------------------------------------------------
+# --- make local-eval-oom (#60) ------------------------------------------------------------------------
 
 PASSING = incident(
     "resolved",

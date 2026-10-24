@@ -1,6 +1,6 @@
 # Eval results
 
-`make eval-oom` (on kind, about 75 minutes for the default 5 runs) writes one Markdown file here per
+`make local-eval-oom` (on kind, about 75 minutes for the default 5 runs) writes one Markdown file here per
 evaluation, `eval-oom-<UTC timestamp>.md`: a summary line (`eval-oom: 5/5 PASS`) and one row per run
 with the agent's diagnosis, proposal, gate mode, remediation outcome, model, tool calls, tokens, and
 the time from incident open to resolved. A run passes when the proposal is `set_memory_limit` →

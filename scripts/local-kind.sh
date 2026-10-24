@@ -20,7 +20,7 @@
 #   scripts/local-kind.sh oom-prepare, oom-run
 #                                   one OOM acceptance run, around a database reset
 #                                   (`make local-oom-run`, #79)
-#   scripts/local-kind.sh eval-oom  N of those runs and a Markdown results table (`make eval-oom`, #60)
+#   scripts/local-kind.sh eval-oom  N of those runs and a Markdown results table (`make local-eval-oom`, #60)
 #
 # Only kube-prometheus-stack and demo-app are installed. Compose provides Postgres (so no
 # CloudNativePG), the backend and dashboard (so no consoletrack release, Gateway API CRDs, or
@@ -658,7 +658,7 @@ oom_cleanup() {
 	exit "$rc"
 }
 
-# --- N OOM acceptance runs and a results table (make eval-oom, #60) ----------------------------
+# --- N OOM acceptance runs and a results table (make local-eval-oom, #60) ----------------------------
 # Each run is oom-prepare, the database reset (EVAL_OOM_RESET, a shell command from the Makefile:
 # Compose down --volumes, then `make local SKIP_BUILD=1`), and oom-run, which leaves its final
 # incident in OOM_DETAIL_FILE. A run that fails, or dies early, is a FAIL row and the next one starts.
@@ -741,8 +741,8 @@ eval_oom() {
 	case "$eval_runs" in
 	"" | *[!0-9]* | 0) die "N must be a positive number of runs, not $eval_runs" ;;
 	esac
-	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make eval-oom\` (HELM_DRIVER=configmap)"
-	[ -n "${EVAL_OOM_RESET:-}" ] || die "run this through \`make eval-oom\` (EVAL_OOM_RESET is the database reset)"
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-eval-oom\` (HELM_DRIVER=configmap)"
+	[ -n "${EVAL_OOM_RESET:-}" ] || die "run this through \`make local-eval-oom\` (EVAL_OOM_RESET is the database reset)"
 	for tool in curl jq; do
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
