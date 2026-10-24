@@ -43,7 +43,7 @@ output attached, and only when all of these hold:
 4. **Automatic rollback.** If verify fails, the backend undoes exactly what it applied, and the
    workload gets no further auto attempts.
 5. **A passing eval.** The agent picks this kind with the correct values in 5 of 5 runs of the
-   scenario on kind (`make eval-oom`, #60; the full `make eval` in Phase 2).
+   scenario on kind (`make local-eval-oom`, #60; the full `make eval` in Phase 2).
 
 ### `set_memory_limit` against the criteria
 
@@ -54,12 +54,111 @@ output attached, and only when all of these hold:
 | Dry run | A server-side `dryRun=All` patch first; its result may differ from the live pod template only in that container's memory, so a mutating webhook or a merge surprise is caught before anything changes | `remediation_apply.py` |
 | Verify | Rollout complete within `rolloutTimeout` (3m); then within `waitForResolved` (5m): no new `OOMKilled` in a pod running the new limit, and the incident resolved (Alertmanager) or the `DemoAppHighErrorRate` ratio below 0.05 (Prometheus) | `remediation_apply.py`, chart `values.yaml` |
 | Rollback | The inverse strategic-merge patch: the previous limit and request back, which makes the pod template equal to the previous revision's, so the Deployment returns to that ReplicaSet as `kubectl rollout undo` would, without touching anything else. The incident goes back to `awaiting_review` with every step recorded | `remediation_apply.py` |
-| Eval | 5 of 5 `make eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app` | #60; attach the output to the PR that sets `mode: auto` |
+| Eval | 5 of 5 `make local-eval-oom` runs propose `set_memory_limit` → 256Mi for `demo/demo-app/demo-app`. Met: 5/5 on Sonnet and 5/5 on Haiku with the fix applied and verified (`minConfidence: medium`); 10/10 correct proposals earlier, held at `high` | #60, PR #95; [tables below](#eval-results-and-the-confidence-floor) |
 
-**Phase 1 evidence: 3 runs on kind (Oct 21); `make eval-oom` 5/5 to follow. If it fails, the
-policy reverts to manual.** `oom-memory-bump` ships as `mode: auto` before the eval (#60 item 5)
-has run, which is an exception to criterion 5 for the course timeline. It's acceptable because
-the kill switch and the automatic rollback are in place.
+**Phase 1 evidence: `make local-eval-oom` on kind (Oct 24): 0/5 on Haiku and 1/5 on Sonnet at
+`minConfidence: high`, then 5/5 on both Sonnet and Haiku at `minConfidence: medium`. The policy ships with
+`medium`. The tables and the reasoning are in
+[Eval results and the confidence floor](#eval-results-and-the-confidence-floor).** The eval ran after
+`oom-memory-bump` had already shipped as `mode: auto`, an exception to criterion 5 for the course
+timeline. The kill switch and the automatic rollback are what made that acceptable.
+
+### Eval results and the confidence floor
+
+`make local-eval-oom` (#60, PR #95) runs the OOM scenario N times from a clean demo-app and a fresh
+database. A run **passes** when the proposal is `set_memory_limit` → `256Mi` for
+`demo/demo-app/demo-app` **and** the auto fix succeeded, which also needs the gate to let it
+through. Results are written to [eval/results/](../eval/results/README.md).
+
+**Haiku (`claude-haiku-5-5`, the default `TRIAGE_MODEL`): 0/5 PASS**
+
+| Run | Result | Diagnosis | Confidence | Proposal | Mode | Remediation | Model | Escalated | Tool calls | Input tokens | Output tokens | Incident open → resolved |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | FAIL | The demo-app container is OOM-killed during startup (its S3 read and report load) because its 128Mi memory limit is too small for its peak usage. The limit has… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-haiku-5-5 | n | 7 | 36633 | 3241 | - |
+| 2 | FAIL | The demo-app container is OOM-killed (exit 137, reason OOMKilled) about 17 seconds after start, while it loads its S3 object into memory. Its 128Mi memory limi… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-haiku-5-5 | n | 7 | 89087 | 7215 | - |
+| 3 | FAIL | The demo-app container is OOMKilled (exit 137) shortly after start, because its 128Mi memory limit is too small for its startup work (the S3 report read and bu… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-haiku-5-5 | n | 7 | 39384 | 3026 | - |
+| 4 | FAIL | The demo-app container's 128Mi memory limit is below its working set during report generation. The kubelet OOM-kills it (exit 137, reason OOMKilled), so the De… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-haiku-5-5 | n | 7 | 63438 | 3339 | - |
+| 5 | FAIL | The demo-app container exceeds its 128Mi memory limit during startup and is OOM-killed (exit 137, reason OOMKilled). The limit was never changed (one revision)… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-haiku-5-5 | n | 7 | 41628 | 3054 | - |
+
+`eval-oom: 0/5 PASS`
+
+**Sonnet (`claude-sonnet-5-5`): 1/5 PASS**
+
+| Run | Result | Diagnosis | Confidence | Proposal | Mode | Remediation | Model | Escalated | Tool calls | Input tokens | Output tokens | Incident open → resolved |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | FAIL | The demo-app container is repeatedly killed (exit 137, most likely OOM) at its unchanged 128Mi memory limit, shortly after start. Its memory demand, probably t… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-sonnet-5-5 | n | 6 | 27593 | 2232 | - |
+| 2 | FAIL | The demo-app container exceeds its 128Mi memory limit shortly after starting and is OOMKilled (exit 137). It restarts in a loop and returns connection-refused … | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-sonnet-5-5 | n | 5 | 26563 | 1923 | - |
+| 3 | FAIL | The demo-app container exceeds its 128Mi memory limit shortly after start and is OOMKilled (exit 137), which causes a CrashLoopBackOff and failed requests. The… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-sonnet-5-5 | n | 5 | 28461 | 1956 | - |
+| 4 | FAIL | The demo-app container exceeds its 128Mi memory limit shortly after start and is OOMKilled (exit 137). The limit has been the same since revision 1, so the wor… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | manual | proposed | claude-sonnet-5-5 | n | 5 | 30727 | 1952 | - |
+| 5 | PASS | The demo-app container exceeds its 128Mi memory limit and is OOMKilled (exit 137) in a restart loop. The limit has not changed since revision 1, so the workloa… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 32659 | 2018 | 3:00 |
+
+`eval-oom: 1/5 PASS`
+
+(One earlier single run, `make local-oom-run` on Sonnet, also reached `high` and passed.)
+
+**Sonnet (`claude-sonnet-5-5`) with `minConfidence: medium`: 5/5 PASS** (Oct 24, same harness and
+fault, after the policy change)
+
+| Run | Result | Diagnosis | Confidence | Proposal | Mode | Remediation | Model | Escalated | Tool calls | Input tokens | Output tokens | Incident open → resolved |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOMKilled (exit 137). The limit is unchanged since revision 1, so the worklo… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 32300 | 1881 | 3:00 |
+| 2 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOMKilled (exit 137). The limit was not changed in any revision, so the work… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 31636 | 1812 | 3:00 |
+| 3 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOMKilled (exit 137). The workload has outgrown its limit, and no revision l… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 31018 | 1974 | 3:30 |
+| 4 | PASS | The demo-app container exceeds its 128Mi memory limit shortly after startup and is OOM-killed (exit 137). The resulting restart loop makes the service refuse c… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 30027 | 1875 | 4:30 |
+| 5 | PASS | The demo-app container is OOMKilled (exit 137) at its 128Mi memory limit shortly after startup. The limit has not changed across revisions, so the workload's m… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-sonnet-5-5 | n | 5 | 31015 | 1796 | 3:00 |
+
+`eval-oom: 5/5 PASS`. Every run proposed `set_memory_limit` → `256Mi` for `demo/demo-app/demo-app`,
+the gate applied it automatically, the fix succeeded (verify passed), and the incident resolved
+3–4.5 minutes after it opened. Run 3 reached only `medium` and passed, which is the case the
+`medium` floor exists for; at `high` it would have waited for a human.
+
+**Haiku (`claude-haiku-5-5`) with `minConfidence: medium`: 5/5 PASS** (Oct 24, same harness and
+fault)
+
+| Run | Result | Diagnosis | Confidence | Proposal | Mode | Remediation | Model | Escalated | Tool calls | Input tokens | Output tokens | Incident open → resolved |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | PASS | The demo-app container's 128Mi memory limit is too low for its startup or report workload. Its memory spikes past the limit and the kernel OOM-kills it (OOMKil… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-haiku-5-5 | n | 7 | 39638 | 3075 | 3:30 |
+| 2 | PASS | The demo-app container exceeds its 128Mi memory limit during startup/report generation and is OOM-killed (exit 137) repeatedly. The limit was not changed in an… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-haiku-5-5 | n | 7 | 46602 | 2837 | 3:30 |
+| 3 | PASS | The demo-app container outgrows its 128Mi memory limit. The kernel OOM-kills it (OOMKilled, exit 137) during startup or early operation. The limit has been unc… | high | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-haiku-5-5 | n | 7 | 46924 | 2979 | 3:30 |
+| 4 | PASS | The demo-app container's 128Mi memory limit is too low for its working set. The container is OOM-killed (exit 137, reason OOMKilled) and restarts in a loop. Th… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-haiku-5-5 | n | 7 | 48910 | 3140 | 3:30 |
+| 5 | PASS | The demo-app container is OOM-killed (exit 137, no liveness failure) because its 128Mi memory limit is below its runtime memory use. The limit has been unchang… | medium | set_memory_limit → 256Mi (demo/demo-app/demo-app) | auto | succeeded | claude-haiku-5-5 | n | 7 | 48148 | 3101 | 3:00 |
+
+`eval-oom: 5/5 PASS`. Four of five runs reached only `medium`, so at `high` this would have been
+1 of 5, as before. Cost per run is about 40–49k input and 3k output tokens on Haiku, against
+30–32k and about 1.9k on Sonnet (Haiku makes 7 tool calls to Sonnet's 5).
+
+**What the runs show.** The proposal was `set_memory_limit` → `256Mi` for the right target in 10 of
+10 runs on both models. The only thing that failed was the confidence floor: `high` in 1 of 10, and
+in the Sonnet runs the same prompt and the same fault gave `medium` four times and `high` once. So
+the agent's self-reported `high` vs `medium` is not a signal that separates a good proposal from a
+bad one here; it varies between identical runs. The failing diagnoses hedge ("most likely OOM",
+"probably"), and the passing one doesn't, but the evidence behind each wasn't saved
+(the database is reset between runs); the harness now saves it for failing runs.
+
+**Why the floor is `medium` for `oom-memory-bump`.** With `high`, the policy would never apply a
+fix that was right 10 times in 10, and the auto mode would exist only on paper. What makes the fix
+safe doesn't depend on the agent's confidence:
+
+- the proposal schema has no free-form patch, and the validator allows only the container's memory
+  limit (and request), at most 2x the current limit and at most 512Mi, in an allowlisted namespace;
+- a server-side dry run checks the live object first;
+- verify (rollout, no new `OOMKilled`, incident resolved or error ratio below 0.05) and the
+  automatic rollback undo the one patch if it doesn't hold;
+- one auto fix per workload per hour, no further auto attempts after a failure, and the kill switch.
+
+`low` confidence still goes to a human, and the setting applies to this policy only: the `default`
+policy stays manual and no other kind can be `auto`.
+
+**What this doesn't show.**
+- **The model:** both models passed 5/5 at the `medium` floor, so the evidence covers the default
+  `TRIAGE_MODEL` (Haiku) and Sonnet. Haiku reaches `high` rarely (1 of 5), which makes the floor
+  what lets it work at all; with `high`, only Sonnet-class runs would sometimes apply.
+- **Sample size:** 5 runs on one fault on kind. It meets the criterion; it doesn't prove the rate is
+  100%. The kill switch and the rollback remain the backstop.
+- **The weak input:** confidence is the one gate input the agent controls itself, and the floor
+  didn't make it more reliable: a confidently wrong proposal passes `high` as easily as `medium`.
+  Phase 2 replaces it with a check of the evidence itself
+  ([#100](https://github.com/jennasrunbooks/consoletrack/issues/100), the evidence-based gate).
 
 ### Which OOMs reach `set_memory_limit`
 
@@ -81,7 +180,7 @@ a human, with the reason stored as `remediations.gate_reason`:
 2. the kind isn't AWS-side (config validation already refuses that; checked again here);
 3. the kill switch: `remediation.autoEnabled` in the policies file **and** `AUTOFIX_ENABLED`;
 4. the incident is still `awaiting_review`;
-5. the agent's confidence is at least the policy's `minConfidence` (`high`). After an escalation
+5. the agent's confidence is at least the policy's `minConfidence` (`medium` for `oom-memory-bump`). After an escalation
    (#60) that's the escalated run's analysis, the incident's latest;
 6. no earlier auto fix of this workload failed;
 7. the rate limit: at most `rateLimit.perWorkload` (1) auto fixes per workload per

@@ -18,7 +18,7 @@ ConsoleTrack turns undocumented cloud changes into documented, reviewable record
 
 **Who it's for.** Platform and SRE teams who share AWS accounts with application developers, manage infrastructure with Terraform, and haven't fully locked down console access (which is most teams). For this project it is also a portfolio piece covering EKS, IAM and Pod Identity, CloudTrail and EventBridge, Terraform, MCP, and governed agent actions.
 
-**Expected behavior in the demo.** `make demo-drift`: a "developer" role opens port 22 to the internet on a security group; a few minutes later a change record shows who did it, the risk, and Revert or Codify options. `make demo-identity`: the same role removes `s3:GetObject` from the demo app's IAM role policy; the app starts failing, an alert fires, and the incident links straight to that change; Revert restores service. The cluster-only faults (OOM, bad image, bad probe) remain as a baseline.
+**Expected behavior in the demo.** Someone opens all traffic from `0.0.0.0/0` on a security group in the console; a few minutes later a change record shows who did it, how, and the high risk, with the agent's analysis and the read-only AWS lookups behind it, and a reviewer accepts it with a note. Separately, `make fault FAULT=oom` makes the demo app run out of memory under its traffic; the error-rate alert opens an incident, the agent diagnoses the OOM kill, and the backend applies, verifies, and resolves the memory-limit fix. In Phase 2, scripted versions (`make demo-drift`, `make demo-identity`) run the console change and an IAM permission removal as a separate "developer" role, and Revert restores the Terraform state.
 
 **How this differs from existing tools.** HolmesGPT and K8sGPT reason mainly inside the cluster and its observability stack. AWS DevOps Agent is a managed, per-second-billed incident investigator. None of them makes the out-of-band cloud change the primary object, documents it, and reconciles it with Terraform through least-privilege, human-approved actions.
 
@@ -197,7 +197,7 @@ Network and ingress references: [NAT gateway pricing](https://aws.amazon.com/vpc
 | DNS record | ExternalDNS in the cluster | Watches the Gateway's HTTPRoute and points the hostname at whichever ALB the current cluster has, so a rebuild needs no manual DNS change |
 | ExternalDNS identity | Pod Identity, `eks-pod-identity` module's ExternalDNS policy | `route53:ChangeResourceRecordSets` on that one zone's ARN, plus list and read on zones; a `txtOwnerId` so it never touches records it didn't create |
 
-Setup is once per domain. With `DNS_PARENT=route53`, `make domain` does everything in one run. With `external` it takes two steps, because the certificate can't validate until the parent delegates the subdomain: `make domain-zone` applies the zone in `terraform/consoletrack/global` and prints the host, record type, and four name servers to add at your DNS provider; `make domain-cert` waits until `dig NS $DOMAIN` returns them, then requests and validates the certificate. If the parent domain has CAA records, one must allow `amazon.com`, and `make preflight` checks for that. The zone lives in `terraform/consoletrack/global`, so it survives `make down`; the certificate lives with the regional platform and comes back automatically on the next `make up`. `make domain-destroy` removes the zone and reminds you to delete the NS records at your provider. The README walks through both paths, using the author's setup (four NS records in Namecheap's Advanced DNS with host `consoletrack`) as the `external` example.
+Setup is once per domain. With `DNS_PARENT=route53`, `make domain` will do everything in one run (Phase 2; make domain, domain-cert, and domain-destroy are stubs, and make domain-zone followed by make up works today). With `external` it takes two steps, because the certificate can't validate until the parent delegates the subdomain: `make domain-zone` applies the zone in `terraform/consoletrack/global` and prints the host, record type, and four name servers to add at your DNS provider; `make domain-cert` waits until `dig NS $DOMAIN` returns them, then requests and validates the certificate. If the parent domain has CAA records, one must allow `amazon.com`, and `make preflight` checks for that. The zone lives in `terraform/consoletrack/global`, so it survives `make down`; the certificate lives with the regional platform and comes back automatically on the next `make up`. `make domain-destroy` removes the zone and reminds you to delete the NS records at your provider. The README walks through both paths, using the author's setup (four NS records in Namecheap's Advanced DNS with host `consoletrack`) as the `external` example.
 
 **How people see it.** No login is ever shared, and no cluster stays up for reviewers. There are four ways in: `make local` runs the whole system on the reader's machine with kind and Docker Compose; `make up` deploys it to the reader's own AWS account; the **recorded demo site**, the real frontend built in mock mode on GitHub Pages at `consoletrack-demo.jennasrunbooks.com`, needs no login, shows sample data with a banner saying so, and stays up after teardown; and a **recorded walkthrough** of the live EKS deployment, with the author clicking through the examples as admin. The two fixed accounts (admin and a read-only viewer) stay for whoever runs their own copy. On screen, the source IP is masked to its /24 (`198.51.100.x`) unless an admin clicks Show, so recordings and screenshots don't carry the operator's address.
 
@@ -389,7 +389,7 @@ The worker stores its report every 60 seconds in the `intake_reports` table; the
 | GET | /metrics | Prometheus | Intake and agent metrics for Grafana and alert rules |
 | GET | /healthz, /readyz | Kubernetes probes | Liveness and readiness (DB check) |
 
-**Contract workflow.** Edit `openapi.yaml` → `openapi-typescript` regenerates `frontend/src/api/schema.d.ts` → backend Pydantic models are hand-written to match → `tests/contract/test_openapi.py` compares `app.openapi()` with the file. Auth for the MVP is two fixed accounts, admin and a read-only viewer, each issued a session cookie by `POST /api/v1/auth/login` (with `/auth/logout` and `/auth/me`), with every write endpoint requiring admin. The Alertmanager webhook uses its own bearer token; the GitHub webhook can't send one, so it is verified with GitHub's `X-Hub-Signature-256` HMAC of the body and a shared webhook secret.
+**Contract workflow.** Edit `openapi.yaml` → `openapi-typescript` regenerates `frontend/src/api/schema.d.ts` → backend Pydantic models are hand-written to match → backend/`tests/contract/test_openapi.py` compares `app.openapi()` with the file. Auth for the MVP is two fixed accounts, admin and a read-only viewer, each issued a session cookie by `POST /api/v1/auth/login` (with `/auth/logout` and `/auth/me`), with every write endpoint requiring admin. The Alertmanager webhook uses its own bearer token; the GitHub webhook can't send one, so it is verified with GitHub's `X-Hub-Signature-256` HMAC of the body and a shared webhook secret.
 
 ## Triage agent and guardrails
 
@@ -449,7 +449,7 @@ remediation:
       mode: auto              # graduation phase 1 (#34); manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
-      minConfidence: high
+      minConfidence: medium
       rateLimit: {perWorkload: 1, window: 1h}
       verify:
         rolloutTimeout: 3m
@@ -473,7 +473,7 @@ remediation:
 4. Verify, within 5 minutes: no new OOM kill in the pods running the new limit, and either the `resolved` webhook arrived or the error ratio fell below 0.05. On failure the backend rolls back with the inverse patch, returns the incident to `awaiting_review`, and turns auto off for that workload.
 5. The remediation row records `decided_by = policy:oom-memory-bump`, the mode, the gate reason, the before and after values, and every step, and the dashboard shows it as auto-applied.
 
-**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for \`oom-memory-bump\`: three runs on kind (Oct 21), with \`make eval-oom\` (five runs) to follow; if it doesn't pass 5/5, the policy goes back to \`manual\`. AWS-side kinds (\`revert\_workflow\`, \`codify\_pr\`) can never be \`auto\`: the backend and worker refuse to start with such a policy, and the chart fails to render.
+**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for \`oom-memory-bump\`: three runs on kind (Oct 21), with \`make local-eval-oom\` (five runs on kind, results in eval/results/) as the evidence; if it doesn't pass 5/5, the policy goes back to \`manual\`. AWS-side kinds (\`revert\_workflow\`, \`codify\_pr\`) can never be \`auto\`: the backend and worker refuse to start with such a policy, and the chart fails to render.
 
 **Headless Claude Code runner (P2).** An alternative agent backend runs `claude -p` in a Kubernetes Job with only the `k8s-mcp` tools allowed and JSON output. It must return the same `submit_analysis` schema, so it passes through the same policy gate and needs no extra cluster permissions.
 
@@ -494,7 +494,7 @@ The pack is cheap because its centerpiece already exists: the same `k8s-mcp` ser
 | Permission notes | Who can do what: dev-time agent, runtime agent, backend apply SA, CI deploy role | `docs/permissions.md` |
 | Overview | How the pieces fit and how to install them | `docs/agent-extension-pack.md` |
 
-**Development setup.** Claude Code runs in your existing rootless dev-agent container, with a kind cluster on the host. Moving that setup to Podman is optional and off the critical path; nothing in the project depends on the container engine. The PreToolUse hook makes the current practice of handing mutating commands back to a human an enforced rule rather than a habit. `docs/ai-workflow.md` keeps a short log per feature: the prompt or task given, which context files were loaded, what was reviewed by hand, and how it was verified.
+**Development setup.** Claude Code runs in your existing rootless dev-agent container, with a kind cluster on the host. Moving that setup to Podman is optional and off the critical path; nothing in the project depends on the container engine. The PreToolUse hook makes the current practice of handing mutating commands back to a human an enforced rule rather than a habit. A planned `docs/ai-workflow.md` (Phase 2) will keep a short log per feature; today the PRs carry it: the prompt or task given, which context files were loaded, what was reviewed by hand, and how it was verified.
 
 ## Testing, CI/CD, and deployment
 
@@ -509,7 +509,7 @@ CI never calls the real Claude API or needs a running EKS cluster: the agent is 
 | Contract | pytest | FastAPI schema matches `openapi.yaml` | `make test-contract` |
 | Integration | pytest + Testcontainers Postgres | Webhook → incident → fake agent → approve → patch sent to a fake K8s client, all over HTTP | `make test-integration` |
 | Cluster integration | pytest + kind in Actions | `k8s-mcp` tools against a real API server with the real RBAC | `make test-k8s` |
-| Agent eval (manual) | script against kind | Three fault scenarios with the real model; outcome logged in `docs/evals.md` | `make eval` |
+| Agent eval (manual) | script against kind | Three fault scenarios with the real model (Phase 2); today `make local-eval-oom` covers the OOM scenario, with results in `eval/results/` | `make eval` |
 
 Integration tests live in `backend/tests/integration/` behind a pytest marker so the unit suite stays fast.
 
@@ -598,7 +598,7 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 4. `make demo` applies the three fault scenarios one at a time, waits for each incident to reach `awaiting_review`, and prints its link.
 5. `make down` runs `helmfile destroy` first (app releases, Gateway, then add-ons), then destroys `terraform/demo-app/us-east-1` and `terraform/consoletrack/us-east-1`, leaving `terraform/consoletrack/global` (roles, zone, optional budget) and the state bucket for next time. `make down-all` also destroys `global` and the state bucket for a fully clean account. `make verify-clean` lists any project-tagged load balancers, ENIs, EBS volumes, or public IPs still present and exits non-zero if it finds one.
 
-**No-AWS option.** `make local` runs the same stack on kind with Docker Compose, covering every criterion except cloud deployment, for which the README has the always-on recorded demo site, the recorded walkthrough of the EKS deployment, and screenshots of it. `make demo-replay` then fills in the cloud side without an AWS account: it replays the recorded CloudTrail events used by the change-flow integration tests into a local SQS-compatible queue (ElasticMQ), so the change log, change detail, agent analysis, and linked incident all appear as they would on EKS. The agent runs for real against the Claude API; its AWS lookups are answered from the same recorded fixtures through a `fixtures` mode of `aws-mcp`. Revert and Codify are disabled in this mode and labeled "AWS required" in the UI, and the cluster-side faults (OOM, bad image, bad probe) work normally on kind.
+**No-AWS option.** `make local` runs the same stack on kind with Docker Compose, covering every criterion except cloud deployment, for which the README has the always-on recorded demo site, the recorded walkthrough of the EKS deployment, and screenshots of it. `make demo-replay` (Phase 2; `make replay-fixtures` already loads the fixtures into ElasticMQ) will fill in the cloud side without an AWS account: it replays the recorded CloudTrail events used by the change-flow integration tests into a local SQS-compatible queue (ElasticMQ), so the change log, change detail, agent analysis, and linked incident all appear as they would on EKS. The agent runs for real against the Claude API; its AWS lookups are answered from the same recorded fixtures through a `fixtures` mode of `aws-mcp` (also Phase 2). Revert and Codify are disabled in this mode and labeled "AWS required" in the UI, and the cluster-side faults (OOM, bad image, bad probe) work normally on kind.
 
 | Works on kind | Needs AWS |
 | --- | --- |
@@ -612,10 +612,10 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 - Every AWS name starts with `ct-` and ends with a random suffix, and every resource carries `project` and `owner` tags, so two reviewers in one account don't collide and cleanup can find everything.
 - No hardcoded account IDs, ARNs, or domains. The dashboard opens with `make open` (a port-forward) by default; with `EXPOSURE=alb` it is served over HTTPS at `DOMAIN`, which `EXPOSURE=alb` requires, on an ALB restricted to `ALLOWED_CIDRS`.
 - The API key and admin password are written to Kubernetes Secrets by a script, not passed through Terraform, so they never land in state.
-- Spot capacity errors fall back to on-demand via `USE_SPOT=false`, documented in `docs/troubleshooting.md` with the other known failure modes (quota, slow ALB deletion).
+- Spot capacity errors fall back to on-demand via `USE_SPOT=false`, documented in the README's Deploy section with the other known failure modes (DNS after `make up`, quota, slow ALB deletion).
 - Before submitting, the author runs the full guide from a fresh clone in a clean AWS account and fixes every step that needed knowledge not written down.
 
-Reviewers who don't set up GitHub OIDC on their fork still get a working Revert: the dashboard shows the exact command, `make revert CHANGE=<id>`, which plans and applies the demo-app root from their machine after a confirmation prompt. `make demo-drift` and `make demo-identity` assume the demo "developer" role, so the changes appear in CloudTrail as an outside principal just as a real console edit would.
+Reviewers who don't set up GitHub OIDC on their fork will still get a working Revert (Phase 2, with Revert itself): the dashboard will show the exact command, `make revert CHANGE=<id>`, which plans and applies the demo-app root from their machine after a confirmation prompt. The scripted `make demo-drift` and `make demo-identity` (Phase 2) assume the demo "developer" role, so the changes appear in CloudTrail as an outside principal just as a real console edit would; until then, the console change is made by hand.
 
 ## Rubric mapping
 
@@ -660,7 +660,7 @@ No longer graded but kept, because they make the build reliable: the OpenAPI con
 | OOM fault sized from measurements (158–159 MiB peak on kind and EKS); 3 of 3 runs on kind | Oct 23 (done) |
 | Change intake worker: SQS consumer, CloudTrail parser, canary, intake health, change analysis (done Oct 23, verified on EKS) | Oct 23 – Oct 24 |
 | Recorded demo site on GitHub Pages (live Oct 23 at consoletrack-demo.jennasrunbooks.com, done); README video and screenshots | Oct 23 – Oct 24 |
-| `make eval-oom` 5 of 5; demo-app Terraform root; security-group scenario on EKS | Oct 24 |
+| `make local-eval-oom` 5 of 5 on kind; make fault for the OOM fault on EKS; the security-group scenario on EKS (done Oct 23); the demo-app Terraform root moves to Phase 2 | Oct 24 |
 | `aws-mcp`; the identity scenario if it works by Oct 26, 3 pm | Oct 24 – Oct 26 |
 | README, rubric check, recorded walkthrough of the EKS deployment | Oct 24 – Oct 26 |
 | **Submit (Zoomcamp)** | **Oct 26, 6 pm** |
@@ -691,7 +691,7 @@ The slice comes first because it shows the core of the project and runs on kind 
 | Risk | Likelihood | Mitigation |
 | --- | --- | --- |
 | CloudTrail delivery delay makes the live demo slow or flaky | High | If the optional demo video is made, speed up the CloudTrail wait in editing with an on-screen note of the real elapsed time; the worker retries lookups; `make demo-*` waits for the change record before moving on |
-| Revert workflow or apply role ends up broader than intended | Medium | Permissions boundary, ARNs scoped by prefix and IAM path (`ct-` for ConsoleTrack, `demo-app-` for the watched workload), demo-app root kept tiny; `make audit-iam` runs IAM Access Analyzer policy validation on every role |
+| Revert workflow or apply role ends up broader than intended | Medium | Permissions boundary, ARNs scoped by prefix and IAM path (`ct-` for ConsoleTrack, `demo-app-` for the watched workload), demo-app root kept tiny; an IAM Access Analyzer policy-validation target (`make audit-iam`) is planned for Phase 2 |
 | Agent links the wrong change to an incident | Medium | Link confidence stored and shown; IAM simulation must confirm the denial before a link is marked high confidence |
 | The single NAT gateway's AZ fails mid-demo | Low | AWS operates the gateway, so there is no instance to fail; a full AZ outage is an accepted risk for a single-AZ demo; `make up` checks egress to the Claude and GitHub APIs before the demo starts |
 | Spot reclaim during the review window or a recording | Medium | Node group allows t4g.medium and t4g.large; switch to on-demand for demo day |
