@@ -127,12 +127,19 @@ check_targets() {
 }
 
 check_authoritative() {
-	local ns answers
+	local ns answers full status eval
 	ns=$(aws route53 get-hosted-zone --id "$zone" --output json | jq -r '.DelegationSet.NameServers[0] // empty')
 	[[ -n "$ns" ]] || fail "4. Authoritative DNS" "the zone has no name servers" || return 1
 	answers=$(dig +short +time=3 +tries=1 "@$ns" "$domain" A | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
-	[[ -n "$answers" ]] ||
-		fail "4. Authoritative DNS" "$ns answers $domain with no addresses (the alias is health-evaluated, or has not propagated)" ||
+	[[ -n "$answers" ]] && return 0
+	# Say why: the response status (none at all means the query timed out or was refused on the way),
+	# and whether the alias is health-evaluated.
+	full=$(dig +time=3 +tries=1 "@$ns" "$domain" A 2>&1 || true)
+	status=$(grep -oE 'status: [A-Z]+' <<<"$full" | head -n1 || true)
+	eval=$(aws route53 list-resource-record-sets --hosted-zone-id "$zone" --output json |
+		jq -r --arg d "$domain." '[.ResourceRecordSets[] | select(.Name == $d and .Type == "A")
+			| (.AliasTarget.EvaluateTargetHealth | tostring)][0] // "no A record"')
+	fail "4. Authoritative DNS" "$ns answers $domain with no addresses (${status:-no response from dig: ${full:-no output}}; the A alias has EvaluateTargetHealth=$eval)" ||
 		return 1
 }
 

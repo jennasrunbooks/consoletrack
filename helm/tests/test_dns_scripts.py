@@ -445,6 +445,11 @@ def test_wait_fails_on_an_empty_authoritative_answer(stub: Path) -> None:
     out = wait(stub)
     assert out.returncode == 1
     assert "step 4. Authoritative DNS" in out.stderr and "no addresses" in out.stderr
+    # The stub's alias has EvaluateTargetHealth false, and the stub dig prints no response at all.
+    assert (
+        "EvaluateTargetHealth=false" in out.stderr
+        and "no response from dig" in out.stderr
+    )
 
 
 def test_wait_fails_when_curl_does_not_get_2xx_or_3xx(stub: Path) -> None:
