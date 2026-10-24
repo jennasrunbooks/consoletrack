@@ -38,6 +38,19 @@ class Risk(StrEnum):
     high = "high"
 
 
+class AnalysisFlag(StrEnum):
+    """Caveats the agent attaches to an analysis (`submit_analysis.flags`)."""
+
+    stateful_workload = "stateful_workload"
+    migration = "migration"
+    # Logs show an AWS error but CloudTrail had no matching change yet.
+    cloudtrail_delay = "cloudtrail_delay"
+    aws_evidence_unavailable = "aws_evidence_unavailable"
+    # Tool output contained instructions aimed at the agent.
+    possible_prompt_injection = "possible_prompt_injection"
+    insufficient_evidence = "insufficient_evidence"
+
+
 class Confidence(StrEnum):
     low = "low"
     medium = "medium"
@@ -97,6 +110,18 @@ class RemediationStatus(StrEnum):
     running = "running"
     succeeded = "succeeded"
     failed = "failed"
+
+
+class RemediationMode(StrEnum):
+    """How the policy gate decided: a human approves (`manual`), or the gate does (`auto`)."""
+
+    manual = "manual"
+    auto = "auto"
+
+
+# Kinds that change AWS (through the gated Terraform workflow or a pull request). No policy may
+# set them to `auto` (docs/remediation-graduation.md).
+AWS_REMEDIATION_KINDS = frozenset({RemediationKind.revert_workflow, RemediationKind.codify_pr})
 
 
 class SubjectType(StrEnum):

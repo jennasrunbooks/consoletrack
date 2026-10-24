@@ -7,9 +7,11 @@ product-spec.md → Intake health and canary:
 - Down: SQS unreachable, dead-letter messages, trail not logging, or no canary for 45 min.
 - Replay: `INTAKE_MODE=replay` (recorded fixtures).
 
-The worker (#9) reports the queue, trail, and canary numbers through an `IntakeStatusSource`.
-Until it does, `UnreportedIntakeStatus` reports nothing and the state is Down with reasons
-that say so, rather than a reassuring Live.
+The intake worker (`app/intake/`) stores the queue, trail, and canary numbers in the
+`intake_reports` row every `INTAKE_REPORT_SECONDS`; `DbIntakeStatus` reads them back for the API,
+which runs in another pod. A report older than `REPORT_STALE` means the worker isn't running, so
+the state is Down. `UnreportedIntakeStatus` (no database, replay) reports nothing: Down with
+reasons that say so, rather than a reassuring Live.
 """
 
 from __future__ import annotations
@@ -18,13 +20,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from app.db.repositories import UnitOfWork
+from app.db.repositories import QueueReport, UnitOfWork
 from app.enums import IntakeState
 from app.schemas import IntakeHealth
 
 OLDEST_MESSAGE_DELAYED = timedelta(minutes=10)
 CANARY_DELAYED = timedelta(minutes=35)
 CANARY_DOWN = timedelta(minutes=45)
+# Three missed 60-second reports.
+REPORT_STALE = timedelta(minutes=3)
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,8 @@ class IntakeSnapshot:
     oldest_message_age_seconds: int | None = None
     dead_letter_count: int | None = None
     trail_logging: bool | None = None
+    # When the worker last wrote the queue and trail fields.
+    reported_at: datetime | None = None
 
 
 class IntakeStatusSource(Protocol):
@@ -47,6 +53,34 @@ class UnreportedIntakeStatus:
 
     def snapshot(self, uow: UnitOfWork) -> IntakeSnapshot:
         return IntakeSnapshot()
+
+
+class DbIntakeStatus:
+    """The worker's report from the `intake_reports` row (live mode)."""
+
+    def snapshot(self, uow: UnitOfWork) -> IntakeSnapshot:
+        row = uow.intake_reports.get()
+        if row is None:
+            return IntakeSnapshot()
+        return IntakeSnapshot(
+            last_canary_at=row.last_canary_at,
+            queue_backlog=row.queue_backlog,
+            oldest_message_age_seconds=row.oldest_message_age_seconds,
+            dead_letter_count=row.dead_letter_count,
+            trail_logging=row.trail_logging,
+            reported_at=row.reported_at,
+        )
+
+
+def record_report(uow: UnitOfWork, report: QueueReport, *, now: datetime) -> None:
+    """The worker's periodic report. Commits."""
+    uow.intake_reports.save_report(report, reported_at=now)
+    uow.commit()
+
+
+def record_canary(uow: UnitOfWork, event_time: datetime) -> None:
+    """A canary arrived through the intake. The caller commits (with the message's batch)."""
+    uow.intake_reports.save_canary(event_time)
 
 
 @dataclass
@@ -71,6 +105,12 @@ def derive_state(
         return IntakeState.replay, ["replay mode: events are recorded fixtures, not live AWS"]
     verdict = _Verdict()
     down, delayed = IntakeState.down, IntakeState.delayed
+
+    if snapshot.reported_at is None:
+        verdict.flag(down, "the intake worker hasn't reported yet")
+    elif now - snapshot.reported_at > REPORT_STALE:
+        age = now - snapshot.reported_at
+        verdict.flag(down, f"the intake worker hasn't reported for {_minutes(age)} min")
 
     if snapshot.queue_backlog is None or snapshot.oldest_message_age_seconds is None:
         verdict.flag(down, "the worker hasn't reported the change queue (SQS unreachable?)")

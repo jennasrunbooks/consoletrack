@@ -48,7 +48,13 @@ def test_detail(
     incident_state.apply(incident, IncidentEvent.alert_resolved, now=NOW)
     change = make_change(title="s3:GetObject removed from the demo app role")
     link(store, incident, change)
-    add_analysis(store, SubjectType.incident, incident.id, root_cause="policy edited")
+    add_analysis(
+        store,
+        SubjectType.incident,
+        incident.id,
+        root_cause="policy edited",
+        flags=["possible_prompt_injection"],
+    )
 
     response = viewer.get(f"/api/v1/incidents/{incident.id}")
     assert response.status_code == 200, response.text
@@ -59,6 +65,7 @@ def test_detail(
     assert body["annotations"] == {"summary": "AccessDenied from S3"}
     assert body["time_to_resolve_seconds"] == 3600  # opened an hour before NOW
     assert body["analysis"]["root_cause"] == "policy edited"
+    assert body["analysis"]["flags"] == ["possible_prompt_injection"]
     assert body["remediation"] is None
     assert body["linked_changes"] == [
         {
@@ -159,25 +166,49 @@ def test_evidence_rejects_unknown_subject_path(viewer: TestClient) -> None:
     assert viewer.get("/api/v1/widgets/1/evidence").status_code == 422
 
 
-# --- Later-issue stubs -----------------------------------------------------------------------
+# --- Postmortem ------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body"),
-    [
-        ("post", "remediation/approve", None),
-        ("post", "remediation/reject", {"reason": "wrong pod"}),
-        ("put", "postmortem", {"postmortem_md": "# Postmortem"}),
-    ],
-)
-def test_incident_writes_are_501_for_admins_and_403_for_viewers(
-    admin: TestClient, viewer: TestClient, make_incident, method: str, path: str, body
+def test_postmortem_replaces_the_draft_on_the_latest_analysis(
+    admin: TestClient, viewer: TestClient, make_incident, store: FakeStore
 ) -> None:
-    url = f"/api/v1/incidents/{make_incident().id}/{path}"
-    response = admin.request(method, url, json=body)
-    assert response.status_code == 501, response.text
-    assert response.json()["code"] == "not_implemented"
-    assert viewer.request(method, url, json=body).status_code == 403
+    incident = make_incident()
+    add_analysis(store, SubjectType.incident, incident.id, postmortem_md="# Old run")
+    latest = add_analysis(store, SubjectType.incident, incident.id, postmortem_md="# Draft")
+    body = {"postmortem_md": "# Postmortem\n\n<script>alert(1)</script> stays text"}
+
+    response = admin.put(f"/api/v1/incidents/{incident.id}/postmortem", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == latest.id
+    assert response.json()["postmortem_md"] == body["postmortem_md"]
+    assert latest.postmortem_md == body["postmortem_md"]
+    assert store.commits == 1
+    detail = viewer.get(f"/api/v1/incidents/{incident.id}").json()
+    assert detail["analysis"]["postmortem_md"] == body["postmortem_md"]
+
+
+def test_postmortem_can_be_cleared(admin: TestClient, make_incident, store: FakeStore) -> None:
+    incident = make_incident()
+    row = add_analysis(store, SubjectType.incident, incident.id, postmortem_md="# Draft")
+    url = f"/api/v1/incidents/{incident.id}/postmortem"
+    assert admin.put(url, json={"postmortem_md": ""}).status_code == 200
+    assert row.postmortem_md == ""
+
+
+def test_postmortem_needs_an_analysis(admin: TestClient, make_incident) -> None:
+    url = f"/api/v1/incidents/{make_incident().id}/postmortem"
+    response = admin.put(url, json={"postmortem_md": "# Postmortem"})
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "no_analysis"
+
+
+def test_postmortem_errors(admin: TestClient, viewer: TestClient, make_incident) -> None:
+    url = f"/api/v1/incidents/{make_incident().id}/postmortem"
+    assert viewer.put(url, json={"postmortem_md": "x"}).status_code == 403
+    assert admin.put(url, json={}).status_code == 422
+    assert admin.put(url, json={"postmortem_md": "x" * 100_001}).status_code == 422
+    missing = admin.put("/api/v1/incidents/999/postmortem", json={"postmortem_md": "x"})
+    assert missing.status_code == 404
 
 
 def test_reject_still_validates_its_body(admin: TestClient, make_incident) -> None:

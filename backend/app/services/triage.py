@@ -39,6 +39,8 @@ class TriageClaim:
     opened_at: datetime
     # The re-run's model override; None = TRIAGE_MODEL.
     model: str | None
+    # `incident.open`'s span, which the triage run continues (app/telemetry.py).
+    traceparent: str | None = None
 
 
 def request_triage(row: IncidentRow, *, now: datetime, model: str | None = None) -> None:
@@ -86,6 +88,7 @@ def claim_next(uow: UnitOfWork, *, now: datetime, lease: timedelta) -> TriageCla
         annotations=dict(row.annotations),
         opened_at=row.opened_at,
         model=row.triage_model,
+        traceparent=row.traceparent,
     )
 
 
@@ -145,6 +148,18 @@ def record_triage(
         incident_state.apply(row, event, now=now)
     uow.commit()
     return remediation
+
+
+def record_superseded_analysis(
+    uow: UnitOfWork, incident_id: int, *, run_id: int, analysis: SubmitAnalysis
+) -> None:
+    """Keep a run's analysis that an escalated run replaced, for the record and the OOM eval.
+
+    Only the analysis row: no links, no remediation, no state change. Stored before the winning
+    run's analysis, so that one stays the incident's latest.
+    """
+    uow.analyses.add(_analysis_row(incident_id, run_id, analysis))
+    uow.commit()
 
 
 def _analysis_row(incident_id: int, run_id: int, analysis: SubmitAnalysis) -> AnalysisRow:

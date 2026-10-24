@@ -17,8 +17,11 @@ from app.services.errors import (
     InvalidModel,
     InvalidTransition,
     MissingReason,
+    NoAnalysis,
+    NoProposedRemediation,
     NotFound,
     TooManyLoginAttempts,
+    UnsupportedRemediation,
 )
 
 # Response declarations for routers: {status: Error schema}.
@@ -111,6 +114,18 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(InvalidTransition)
     async def conflict(_: Request, exc: InvalidTransition) -> JSONResponse:
         return error_response(409, "invalid_state_transition", str(exc))
+
+    @app.exception_handler(NoProposedRemediation)
+    async def no_proposal(_: Request, exc: NoProposedRemediation) -> JSONResponse:
+        return error_response(409, "no_proposed_remediation", str(exc))
+
+    @app.exception_handler(NoAnalysis)
+    async def no_analysis(_: Request, exc: NoAnalysis) -> JSONResponse:
+        return error_response(409, "no_analysis", str(exc))
+
+    @app.exception_handler(UnsupportedRemediation)
+    async def unsupported(_: Request, exc: UnsupportedRemediation) -> JSONResponse:
+        return error_response(501, "not_implemented", str(exc))
 
     @app.exception_handler(MissingReason)
     async def missing_reason(_: Request, exc: MissingReason) -> JSONResponse:

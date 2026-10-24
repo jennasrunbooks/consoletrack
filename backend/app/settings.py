@@ -19,6 +19,16 @@ class IntakeMode(StrEnum):
     replay = "replay"
 
 
+class TelemetryExporter(StrEnum):
+    # Spans and metrics stay in the process; logs still go to stdout as JSON (unit tests, kind
+    # without the observability stack).
+    none = "none"
+    # OTLP/HTTP to OTEL_EXPORTER_OTLP_ENDPOINT, the OpenTelemetry Collector (docs/observability.md).
+    otlp = "otlp"
+    # Spans printed to stdout, for debugging.
+    console = "console"
+
+
 class Settings(BaseSettings):
     # The process environment holds plenty of unrelated variables (AWS_PROFILE, TF_VAR_*, ...).
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
@@ -46,6 +56,22 @@ class Settings(BaseSettings):
 
     # `replay` is set by `make demo-replay`: recorded CloudTrail fixtures, no AWS (#9, #15).
     intake_mode: IntakeMode = IntakeMode.live
+    # The change intake (app/intake/). The queue URLs and trail come from Terraform's outputs
+    # (helm worker.yaml). An empty CHANGES_QUEUE_URL leaves the intake off. In replay mode the
+    # queue is ElasticMQ: boto3 reads AWS_ENDPOINT_URL_SQS itself.
+    changes_queue_url: str | None = None
+    changes_dlq_url: str | None = None
+    trail_name: str | None = None
+    # IAM paths the intake rates as watched, comma-separated (also aws-mcp's scope).
+    watched_iam_paths: str = "/demo-app/"
+    # The canary's security group; unset accepts the canary role's tag on any one group.
+    canary_security_group_id: str | None = None
+    # How often the worker stores queue and trail status for GET /api/v1/intake/health.
+    intake_report_seconds: float = 60
+    # How long a received message stays hidden while the worker records it.
+    intake_visibility_timeout_seconds: int = 60
+    # Analysis runs a change may get (a crashed worker's run counts once its lease ends).
+    change_analysis_max_runs: int = 3
     # The "Intake health" Grafana dashboard, if the browser can reach it.
     grafana_url: str | None = None
 
@@ -64,12 +90,42 @@ class Settings(BaseSettings):
     triage_token_budget: int = 200_000
     triage_max_output_tokens: int = 8_192
     # How long a claimed incident stays the worker's before another worker may claim it again
-    # (a crashed run). Longer than the run's own timeout.
+    # (a crashed run). Longer than two runs' timeouts: a low-confidence run gets one escalation.
     triage_lease_seconds: int = 300
     mcp_call_timeout_seconds: float = 30
     worker_poll_seconds: float = 5
     # Touched after every poll; the worker's probes check its age (helm worker.yaml).
     worker_heartbeat_file: str | None = None
+
+    # Remediation (product-spec.md → Remediation modes; docs/remediation-graduation.md).
+    # The chart's remediation-policies ConfigMap. Unset = no policies: every proposal is manual.
+    remediation_policies_file: str | None = None
+    # The kill switch, next to the file's autoEnabled: auto needs both. Unset or false sends
+    # every proposal to a human; the chart sets it from remediation.autoEnabled, and
+    # `kubectl set env deploy/worker AUTOFIX_ENABLED=false` turns auto off without a release.
+    autofix_enabled: bool = False
+    # Namespaces the backend may patch, comma-separated (the chart's allowedNamespaces, one
+    # remediator Role each). Empty refuses every cluster remediation.
+    k8s_allowed_namespaces: str = ""
+    # The backend's apply loop: Kubernetes through the remediator ServiceAccount (in cluster) or
+    # KUBECONFIG (make local), and Prometheus for the error-ratio check. Off = approved cluster
+    # remediations wait (plain Compose, no cluster).
+    remediation_apply_enabled: bool = False
+    remediation_poll_seconds: float = 5
+    prometheus_url: str | None = None
+
+    # Telemetry (app/telemetry.py, docs/observability.md). The OTLP endpoint is the SDK's own
+    # OTEL_EXPORTER_OTLP_ENDPOINT, read by the exporters, not by this class.
+    telemetry_exporter: TelemetryExporter = TelemetryExporter.none
+    log_level: str = "INFO"
+
+    @property
+    def watched_paths(self) -> tuple[str, ...]:
+        return tuple(p.strip() for p in self.watched_iam_paths.split(",") if p.strip())
+
+    @property
+    def allowed_namespaces(self) -> frozenset[str]:
+        return frozenset(ns.strip() for ns in self.k8s_allowed_namespaces.split(",") if ns.strip())
 
 
 @lru_cache

@@ -18,6 +18,7 @@ from app.schemas import (
     LinkedChange,
     LinkedIncident,
     Remediation,
+    RemediationStep,
 )
 
 
@@ -96,7 +97,7 @@ def change_detail(uow: UnitOfWork, row: ChangeRow) -> Change:
         decided_by=row.decided_by,
         decided_at=row.decided_at,
         reason=row.reason,
-        analysis=_analysis(uow, uow.analyses.latest_for(SubjectType.change, row.id)),
+        analysis=analysis_detail(uow, uow.analyses.latest_for(SubjectType.change, row.id)),
         drift=Drift.model_validate(row.drift) if row.drift else None,
         remediation=_remediation(uow.remediations.latest_for(SubjectType.change, row.id)),
         linked_incidents=[
@@ -142,7 +143,7 @@ def incident_detail(uow: UnitOfWork, row: IncidentRow) -> Incident:
         labels=row.labels,
         annotations=row.annotations,
         time_to_resolve_seconds=time_to_resolve,
-        analysis=_analysis(uow, uow.analyses.latest_for(SubjectType.incident, row.id)),
+        analysis=analysis_detail(uow, uow.analyses.latest_for(SubjectType.incident, row.id)),
         remediation=_remediation(uow.remediations.latest_for(SubjectType.incident, row.id)),
         linked_changes=[
             LinkedChange(change=change_ref(change), confidence=confidence)
@@ -151,7 +152,7 @@ def incident_detail(uow: UnitOfWork, row: IncidentRow) -> Incident:
     )
 
 
-def _analysis(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
+def analysis_detail(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
     if row is None:
         return None
     run = uow.agent_runs.get(row.agent_run_id)
@@ -166,10 +167,13 @@ def _analysis(uow: UnitOfWork, row: AnalysisRow | None) -> Analysis | None:
         risk_reason=row.risk_reason,
         root_cause=row.root_cause,
         confidence=row.confidence,
+        flags=list(row.flags),
         postmortem_md=row.postmortem_md,
         agent_run=AgentRun(
             id=run.id,
             model=run.model,
+            prompt_version=run.prompt_version,
+            escalated=run.escalated,
             started_at=run.started_at,
             finished_at=run.finished_at,
             tool_calls=uow.evidence.count_for_run(run.id),
@@ -195,4 +199,11 @@ def _remediation(row: RemediationRow | None) -> Remediation | None:
         created_at=row.created_at,
         applied_at=row.applied_at,
         error=row.error,
+        mode=row.mode,
+        policy=row.policy,
+        gate_reason=row.gate_reason,
+        decided_at=row.decided_at,
+        before=row.before_json,
+        after=row.after_json,
+        steps=[RemediationStep.model_validate(step) for step in row.steps or []],
     )

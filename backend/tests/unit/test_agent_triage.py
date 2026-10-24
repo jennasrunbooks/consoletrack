@@ -6,12 +6,14 @@ and the database is the in-memory store. No network, no API key.
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agents.prompts import PROMPT_VERSION
 from app.agents.runner import AgentRunner, RunLimits
 from app.agents.schema import TOOL_NAME
 from app.agents.tools import ToolsUnavailable
@@ -25,9 +27,12 @@ from app.enums import (
     Via,
 )
 from app.services.policy_gate import GateDecision, GateMode, ManualPolicyGate
+from app.services.triage import rerun_triage
 from app.settings import Settings
 from tests.unit.agent_fakes import (
+    LOWERED_LIMIT,
     ROLE_ARN,
+    UNCHANGED_LIMIT,
     FakeModelClient,
     FakeToolProvider,
     aws_put_role_policy,
@@ -44,13 +49,15 @@ from tests.unit.fakes import FakeStore
 pytestmark = pytest.mark.anyio
 
 POD = "demo-app-7d9f8b6c5-x2x4z"
+TRIAGE_MODEL = "claude-haiku-5-5"
+ESCALATION_MODEL = "claude-sonnet-5-5"
 OOM_PROPOSAL = {
     "kind": "set_memory_limit",
     "namespace": "demo",
     "deployment": "demo-app",
     "container": "demo-app",
     "memory_limit": "256Mi",
-    "reason": "OOMKilled at 128Mi; the app holds ~150 MiB at startup. 2x the current limit.",
+    "reason": "OOMKilled under traffic at an unchanged 128Mi limit; 2x the current limit.",
 }
 
 
@@ -104,9 +111,14 @@ def make_triage(
     gate: RecordingGate | None = None,
     limits: RunLimits | None = None,
     factory: Any = None,
+    escalation: str = ESCALATION_MODEL,
 ) -> tuple[IncidentTriage, RecordingGate]:
     gate = gate or RecordingGate()
-    settings = Settings(k8s_mcp_url="http://k8s-mcp:8080/mcp")
+    settings = Settings(
+        k8s_mcp_url="http://k8s-mcp:8080/mcp",
+        triage_model=TRIAGE_MODEL,
+        triage_model_escalation=escalation,
+    )
     runner = AgentRunner(model, store.uow, limits=limits or RunLimits(), clock=lambda: NOW)
     triage = IncidentTriage(
         uow_factory=store.uow,
@@ -236,8 +248,9 @@ async def test_twelve_tool_calls_then_limit_reached(store: FakeStore, make_incid
     incident = make_incident(triage_requested_at=NOW)
     pods = call("get_pods", {"namespace": "demo"})
     # 12 calls in, then a 13th that is refused, then another tool call instead of submitting.
+    # (No escalation here: the limit is what's under test.)
     model = FakeModelClient([turn(pods)] * 14)
-    triage, gate = make_triage(store, model, k8s_oom())
+    triage, gate = make_triage(store, model, k8s_oom(), escalation="")
     await triage.run_next()
 
     (run,) = store.agent_runs.rows
@@ -256,7 +269,7 @@ async def test_a_submit_after_the_limit_still_counts(store: FakeStore, make_inci
     make_incident(triage_requested_at=NOW)
     pods = call("get_pods", {"namespace": "demo"})
     model = FakeModelClient([turn(pods)] * 13 + [submit(confidence="low")])
-    triage, _ = make_triage(store, model, k8s_oom())
+    triage, _ = make_triage(store, model, k8s_oom(), escalation="")
     await triage.run_next()
     assert store.agent_runs.rows[0].outcome is AgentRunOutcome.succeeded
     assert len(store.evidence.rows) == 12
@@ -391,6 +404,239 @@ async def test_an_incident_resolved_during_triage_keeps_the_analysis(
     assert len(store.analyses.rows) == 1
     # The proposal is still recorded and goes to the (manual) gate, which applies nothing.
     assert gate.proposals and gate.proposals[0][0] == incident.id
+
+
+# --- escalation (#60) -----------------------------------------------------------------------
+
+PODS = call("get_pods", {"namespace": "demo", "selector": "app=demo-app"})
+UNSURE = submit(
+    summary="demo-app restarts; the liveness probe may be failing.",
+    confidence="low",
+    flags=["insufficient_evidence"],
+)
+
+
+def k8s_restart(reason: str = "Error", restart_count: int = 3) -> FakeToolProvider:
+    """The OOM fault as run 2 on kind saw it: exit 137 reported as `Error`."""
+    k8s = k8s_oom()
+    pods = k8s.handlers["get_pods"]({"selector": "app=demo-app"})
+    status = pods["pods"][0]["containers"][0]
+    status["restart_count"] = restart_count
+    status["last_termination"]["reason"] = reason
+    k8s.handlers["get_pods"] = lambda args: pods
+    return k8s
+
+
+async def test_exit_137_reported_as_error_without_a_probe_event_takes_the_oom_path(
+    store: FakeStore, make_incident: Any
+) -> None:
+    # Run 2 on kind: the kubelet said Error, not OOMKilled, and there was no liveness failure.
+    make_incident(triage_requested_at=NOW)
+    events = call("get_events", {"namespace": "demo", "involved_object": f"Pod/{POD}"})
+    model = FakeModelClient([turn(PODS), turn(events), submit(proposed_remediation=OOM_PROPOSAL)])
+    triage, gate = make_triage(store, model, k8s_restart(reason="Error"))
+    await triage.run_next()
+
+    system = model.requests[0]["system"]
+    assert "even when the reason says `Error`" in system
+    assert "Without\n  those events, don't blame the probe" in system
+    (pods,) = model.tool_results(1)
+    termination = json.loads(pods["content"])["pods"][0]["containers"][0]["last_termination"]
+    assert (termination["reason"], termination["exit_code"]) == ("Error", 137)
+    (seen_events,) = model.tool_results(2)
+    assert "Unhealthy" not in seen_events["content"] and "Killing" not in seen_events["content"]
+    (run,) = store.agent_runs.rows
+    assert (run.prompt_version, run.escalated) == (PROMPT_VERSION, False)
+    assert [(p.kind, p.memory_limit) for _, p in gate.proposals] == [("set_memory_limit", "256Mi")]
+
+
+ROLLOUT = call("get_rollout_history", {"namespace": "demo", "deployment": "demo-app"})
+ROLLBACK_PROPOSAL = {
+    "kind": "rollback",
+    "namespace": "demo",
+    "deployment": "demo-app",
+    "to_revision": 1,
+    "reason": "Revision 2 lowered the memory limit from 256Mi to 128Mi; revision 1 ran at 256Mi.",
+}
+
+
+@pytest.mark.parametrize(
+    ("revisions", "proposal", "limits"),
+    [
+        # The scenario: the app outgrew an unchanged limit, so raise it.
+        (UNCHANGED_LIMIT, OOM_PROPOSAL, ["128Mi"]),
+        # A revision lowered the limit, so roll back to the one before it.
+        (LOWERED_LIMIT, ROLLBACK_PROPOSAL, ["128Mi", "256Mi"]),
+    ],
+    ids=["unchanged-limit-raises", "lowered-limit-rolls-back"],
+)
+async def test_the_rollout_history_decides_the_oom_fix(
+    store: FakeStore,
+    make_incident: Any,
+    revisions: list[dict[str, Any]],
+    proposal: dict[str, Any],
+    limits: list[str],
+) -> None:
+    make_incident(triage_requested_at=NOW)
+    model = FakeModelClient([turn(PODS), turn(ROLLOUT), submit(proposed_remediation=proposal)])
+    triage, gate = make_triage(store, model, k8s_oom(revisions=revisions))
+    await triage.run_next()
+
+    # The model saw each revision's memory limit, which the v3 rule turns on.
+    assert "only the memory limit does" in " ".join(model.requests[0]["system"].split())
+    (history,) = model.tool_results(2)
+    seen = json.loads(history["content"])["revisions"]
+    assert [r["resources"]["demo-app"]["limits"]["memory"] for r in seen] == limits
+    assert len({r["images"]["demo-app"] for r in seen}) == 1
+    ((_, gated),) = gate.proposals
+    assert gated.kind == proposal["kind"]
+    assert store.remediations.rows[0].kind is RemediationKind(proposal["kind"])
+    assert store.agent_runs.rows[0].prompt_version == "v4"
+
+
+async def test_low_confidence_on_a_restart_escalates_once(
+    store: FakeStore, make_incident: Any, viewer: TestClient
+) -> None:
+    incident = make_incident(triage_requested_at=NOW)
+    model = FakeModelClient(
+        [
+            turn(PODS),
+            UNSURE,
+            # The escalated run: its own budget, so its tool calls count from 1 again.
+            turn(PODS),
+            turn(call("get_workload", {"namespace": "demo", "kind": "Deployment"})),
+            submit(proposed_remediation=OOM_PROPOSAL),
+        ]
+    )
+    triage, gate = make_triage(store, model, k8s_restart())
+    await triage.run_next()
+
+    first, escalated = store.agent_runs.rows
+    assert (first.model, first.escalated, first.outcome) == (
+        TRIAGE_MODEL,
+        False,
+        AgentRunOutcome.succeeded,
+    )
+    assert (escalated.model, escalated.escalated) == (ESCALATION_MODEL, True)
+    assert first.prompt_version == escalated.prompt_version == PROMPT_VERSION
+    assert [request["model"] for request in model.requests] == [TRIAGE_MODEL] * 2 + [
+        ESCALATION_MODEL
+    ] * 3
+    # The escalated run starts fresh, with the same task prompt.
+    assert model.requests[2]["messages"] == model.requests[0]["messages"][:1]
+    assert [(e.agent_run_id, e.seq) for e in store.evidence.rows] == [
+        (first.id, 1),
+        (escalated.id, 1),
+        (escalated.id, 2),
+    ]
+    # The escalated run's analysis wins: it's the latest row, and its proposal is at the gate.
+    # The first run's analysis is kept before it, with no proposal of its own.
+    kept, analysis = store.analyses.rows
+    assert (kept.agent_run_id, kept.confidence) == (first.id, Confidence.low)
+    assert kept.summary.startswith("demo-app restarts")
+    assert analysis.agent_run_id == escalated.id
+    assert analysis.confidence is Confidence.high
+    assert [p.memory_limit for _, p in gate.proposals] == ["256Mi"]
+    assert len(store.remediations.rows) == 1  # none from the first run
+    assert incident.status is IncidentStatus.awaiting_review
+
+    run = viewer.get(f"/api/v1/incidents/{incident.id}").json()["analysis"]["agent_run"]
+    assert (run["model"], run["escalated"], run["prompt_version"]) == (
+        ESCALATION_MODEL,
+        True,
+        PROMPT_VERSION,
+    )
+
+
+async def test_no_proposal_on_a_restart_escalates(store: FakeStore, make_incident: Any) -> None:
+    make_incident(triage_requested_at=NOW)
+    model = FakeModelClient([turn(PODS), submit(), turn(PODS), submit()])
+    triage, _ = make_triage(store, model, k8s_restart(reason="OOMKilled"))
+    await triage.run_next()
+    assert [run.escalated for run in store.agent_runs.rows] == [False, True]
+
+
+async def test_a_run_that_stops_on_a_restart_escalates(
+    store: FakeStore, make_incident: Any
+) -> None:
+    make_incident(triage_requested_at=NOW)
+    # Three calls, a refused fourth, a fifth instead of submitting; then the escalated run.
+    model = FakeModelClient(
+        [turn(PODS)] * 5 + [turn(PODS), submit(proposed_remediation=OOM_PROPOSAL)]
+    )
+    triage, gate = make_triage(store, model, k8s_restart(), limits=RunLimits(max_tool_calls=3))
+    await triage.run_next()
+    first, escalated = store.agent_runs.rows
+    assert first.outcome is AgentRunOutcome.limit_reached
+    assert escalated.outcome is AgentRunOutcome.succeeded
+    assert store.analyses.rows[0].agent_run_id == escalated.id
+    assert len(gate.proposals) == 1
+
+
+async def test_high_confidence_does_not_escalate(store: FakeStore, make_incident: Any) -> None:
+    make_incident(triage_requested_at=NOW)
+    model = FakeModelClient(OOM_SCRIPT)
+    triage, _ = make_triage(store, model, k8s_restart(reason="OOMKilled"))
+    await triage.run_next()
+    (run,) = store.agent_runs.rows
+    assert run.escalated is False
+
+
+@pytest.mark.parametrize("looked_at_pods", [False, True])
+async def test_low_confidence_without_a_restart_does_not_escalate(
+    store: FakeStore, make_incident: Any, looked_at_pods: bool
+) -> None:
+    make_incident(triage_requested_at=NOW)
+    k8s = k8s_restart(restart_count=0)
+    k8s.handlers["get_pods"]({})["pods"][0]["containers"][0]["last_termination"] = None
+    script = [turn(PODS), UNSURE] if looked_at_pods else [UNSURE]
+    triage, _ = make_triage(store, FakeModelClient(script), k8s)
+    await triage.run_next()
+    (run,) = store.agent_runs.rows
+    assert run.escalated is False
+
+
+async def test_never_two_escalations(store: FakeStore, make_incident: Any) -> None:
+    incident = make_incident(triage_requested_at=NOW)
+    # The escalated run is unsure too: no third run.
+    model = FakeModelClient([turn(PODS), UNSURE, turn(PODS), UNSURE])
+    triage, _ = make_triage(store, model, k8s_restart())
+    await triage.run_next()
+    assert [run.escalated for run in store.agent_runs.rows] == [False, True]
+    assert store.analyses.rows[-1].agent_run_id == store.agent_runs.rows[1].id
+
+    # A re-run of the same incident later doesn't escalate again.
+    with store.uow() as uow:
+        rerun_triage(uow, incident.id, model=None, settings=Settings(), now=NOW)
+    triage, _ = make_triage(store, FakeModelClient([turn(PODS), UNSURE]), k8s_restart())
+    await triage.run_next()
+    assert [run.escalated for run in store.agent_runs.rows] == [False, True, False]
+
+
+async def test_a_run_on_the_escalation_model_does_not_escalate(
+    store: FakeStore, make_incident: Any
+) -> None:
+    make_incident(triage_requested_at=NOW, triage_model=ESCALATION_MODEL)
+    triage, _ = make_triage(store, FakeModelClient([turn(PODS), UNSURE]), k8s_restart())
+    await triage.run_next()
+    (run,) = store.agent_runs.rows
+    assert (run.model, run.escalated) == (ESCALATION_MODEL, False)
+
+
+async def test_an_escalation_that_stops_keeps_the_first_analysis(
+    store: FakeStore, make_incident: Any
+) -> None:
+    make_incident(triage_requested_at=NOW)
+    # The escalated run: one call, one refused, one more instead of submitting.
+    model = FakeModelClient([turn(PODS), UNSURE] + [turn(PODS)] * 3)
+    triage, gate = make_triage(store, model, k8s_restart(), limits=RunLimits(max_tool_calls=1))
+    await triage.run_next()
+    first, escalated = store.agent_runs.rows
+    assert escalated.outcome is AgentRunOutcome.limit_reached
+    (analysis,) = store.analyses.rows
+    assert analysis.agent_run_id == first.id
+    assert analysis.summary.startswith("demo-app restarts")
+    assert gate.proposals == []
 
 
 def test_manual_gate_never_approves() -> None:

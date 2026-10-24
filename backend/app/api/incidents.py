@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from app.api.deps import Admin, AppSettings, Now, Uow, Viewer
-from app.api.errors import NotImplementedYet, error_responses
+from app.api.errors import error_responses
 from app.db.repositories import IncidentFilters
 from app.enums import IncidentStatus
 from app.schemas import (
@@ -25,7 +25,6 @@ router = APIRouter(prefix="/api/v1/incidents", tags=["incidents"])
 
 IncidentId = Annotated[int, Path(ge=1, json_schema_extra={"format": "int64"})]
 WRITE_ERRORS = error_responses(400, 401, 403, 404, 409, 422)
-GATE_ISSUE = "#34 (validator, policy gate, and apply)"
 
 
 @router.get(
@@ -88,10 +87,11 @@ def triage_incident(
     responses=WRITE_ERRORS,
 )
 def approve_remediation(
-    id: IncidentId, _: Admin, body: ApproveRemediationRequest | None = None
+    id: IncidentId, uow: Uow, now: Now, user: Admin, body: ApproveRemediationRequest | None = None
 ) -> Incident:
     """Approve the proposed remediation. Requires admin."""
-    raise NotImplementedYet("POST /api/v1/incidents/{id}/remediation/approve", GATE_ISSUE)
+    note = body.note if body is not None else None
+    return incidents.approve_remediation(uow, id, actor=user.username, note=note, now=now)
 
 
 @router.post(
@@ -100,9 +100,11 @@ def approve_remediation(
     response_model=Incident,
     responses=WRITE_ERRORS,
 )
-def reject_remediation(id: IncidentId, body: RejectRemediationRequest, _: Admin) -> Incident:
+def reject_remediation(
+    id: IncidentId, body: RejectRemediationRequest, uow: Uow, now: Now, user: Admin
+) -> Incident:
     """Reject the proposed remediation and close the incident. Requires admin."""
-    raise NotImplementedYet("POST /api/v1/incidents/{id}/remediation/reject", GATE_ISSUE)
+    return incidents.reject_remediation(uow, id, actor=user.username, reason=body.reason, now=now)
 
 
 @router.put(
@@ -111,8 +113,6 @@ def reject_remediation(id: IncidentId, body: RejectRemediationRequest, _: Admin)
     response_model=Analysis,
     responses=WRITE_ERRORS,
 )
-def save_postmortem(id: IncidentId, body: PostmortemRequest, _: Admin) -> Analysis:
+def save_postmortem(id: IncidentId, body: PostmortemRequest, uow: Uow, _: Admin) -> Analysis:
     """Save the edited postmortem. Requires admin."""
-    raise NotImplementedYet(
-        "PUT /api/v1/incidents/{id}/postmortem", "the postmortem editor (#13, PR 2)"
-    )
+    return incidents.save_postmortem(uow, id, postmortem_md=body.postmortem_md)

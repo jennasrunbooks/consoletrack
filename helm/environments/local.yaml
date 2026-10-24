@@ -27,6 +27,14 @@ imageTag: local
 
 # A demo-app fault (empty, oom, badImage, badProbe), set per run: --state-values-set demoFault=oom.
 demoFault: ""
+# demo-app's memory limit for one sync (make local-measure sets 512Mi); empty: the chart's.
+demoMemoryLimit: ""
+# demo-app's report cache (MiB) for one sync (make measure CACHE_MI=96); empty: the chart's.
+demoReportCacheMi: ""
+
+# aws-mcp's fixtures mode isn't implemented yet (it refuses to start with AWS_MCP_MODE=fixtures),
+# so kind runs without it and the worker without AWS tools.
+awsMcpEnabled: false
 
 intakeMode: replay
 # kind's built-in local-path class.

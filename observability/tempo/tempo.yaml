@@ -1,0 +1,28 @@
+# Tempo 3, single binary (-target=all), for `make local`. Everything under /var/tempo, which
+# docker-compose.yaml mounts as tmpfs (the root filesystem is read-only): traces last until the
+# container restarts. Modules with no path here (live-store, the backend scheduler) use their
+# defaults under /var/tempo too. Based on grafana/tempo example/docker-compose/single-binary at
+# v3.1.1.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+usage_report:
+  reporting_enabled: false

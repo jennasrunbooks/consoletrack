@@ -9,6 +9,8 @@ provisioner: ebs.csi.aws.com
 parameters:
   type: gp3
   encrypted: "true"
+  # `make verify-clean` finds leftover volumes by this tag (the CSI driver adds it to each volume).
+  tagSpecification_1: "project=consoletrack"
 reclaimPolicy: {{ .Values.storageClass.reclaimPolicy }}
 # The volume is created in the zone of the node the pod lands on.
 volumeBindingMode: WaitForFirstConsumer

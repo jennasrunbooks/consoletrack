@@ -1,4 +1,15 @@
-import type { ChangeStatus, IncidentRef, IntakeState, Risk, Via } from "../api";
+import type {
+  AnalysisFlag,
+  Evidence,
+  ChangeStatus,
+  IncidentRef,
+  IncidentStatus,
+  IntakeState,
+  Remediation,
+  RemediationStatus,
+  Risk,
+  Via,
+} from "../api";
 
 /** 42 → "CHG-0042" (openapi.yaml → ChangeSummary). */
 export const changeLabel = (id: number): string => `CHG-${String(id).padStart(4, "0")}`;
@@ -20,6 +31,41 @@ export const STATUS_LABELS: Record<ChangeStatus, string> = {
   failed: "Failed",
 };
 
+export const INCIDENT_STATUS_LABELS: Record<IncidentStatus, string> = {
+  open: "Open",
+  triaging: "Triaging",
+  awaiting_review: "Awaiting review",
+  remediating: "Remediating",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+export const REMEDIATION_STATUS_LABELS: Record<RemediationStatus, string> = {
+  proposed: "Proposed",
+  approved: "Approved",
+  rejected: "Rejected",
+  running: "Running",
+  succeeded: "Succeeded",
+  failed: "Failed",
+};
+
+/** The agent's flags (openapi.yaml → AnalysisFlag). */
+export const FLAG_LABELS: Record<AnalysisFlag, string> = {
+  possible_prompt_injection: "Possible prompt injection",
+  aws_evidence_unavailable: "AWS evidence unavailable",
+  cloudtrail_delay: "CloudTrail delay",
+  insufficient_evidence: "Insufficient evidence",
+  stateful_workload: "Stateful workload",
+  migration: "Migration",
+};
+
+/** Flags a reviewer must see before trusting the analysis; shown in the warning color. */
+export const WARNING_FLAGS: ReadonlySet<AnalysisFlag> = new Set([
+  "possible_prompt_injection",
+  "aws_evidence_unavailable",
+  "insufficient_evidence",
+]);
+
 export const RISK_LABELS: Record<Risk, string> = { low: "Low", medium: "Medium", high: "High" };
 
 export const VIA_LABELS: Record<Via, string> = {
@@ -29,6 +75,44 @@ export const VIA_LABELS: Record<Via, string> = {
   sdk: "sdk",
   terraform_outside_pipeline: "terraform, outside pipeline",
 };
+
+/** Where a change was made, for the change detail page's facts (openapi.yaml → Via). */
+export const VIA_DETAIL: Record<Via, string> = {
+  console: "AWS console",
+  cli: "AWS CLI",
+  cloudshell: "AWS CloudShell",
+  sdk: "AWS SDK",
+  terraform_outside_pipeline: "Terraform, outside the pipeline",
+};
+
+/** "made in the AWS console", for the line under a change's title. */
+export const VIA_PHRASE: Record<Via, string> = {
+  console: "made in the AWS console",
+  cli: "made with the AWS CLI",
+  cloudshell: "made in AWS CloudShell",
+  sdk: "made with an AWS SDK",
+  terraform_outside_pipeline: "made with Terraform outside the pipeline",
+};
+
+/**
+ * The resource part of an ARN, for display: `…:security-group/sg-0a1b` → `sg-0a1b`,
+ * `arn:aws:s3:::demo-app-data` → `demo-app-data`, `…:role/demo-app/demo-app` → `role/demo-app/demo-app`.
+ */
+export function resourceId(arn: string): string {
+  const resource = arn.split(":").slice(5).join(":");
+  if (!resource) return arn;
+  const [type, ...rest] = resource.split("/");
+  if (rest.length === 0) return resource;
+  return type === "role" || type === "user" || type === "policy" ? resource : rest.join("/");
+}
+
+/** A UTC timestamp as "Oct 14, 2026 14:52:07 UTC", the way CloudTrail reports it. */
+export function utcTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const day = date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+  return `${day} ${date.toISOString().slice(11, 19)} UTC`;
+}
 
 export const INTAKE_LABELS: Record<IntakeState, string> = {
   live: "Live",
@@ -99,5 +183,49 @@ export function safeHttpUrl(value: string | null | undefined): string | null {
     return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
   } catch {
     return null;
+  }
+}
+
+const str = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
+
+/**
+ * A remediation's payload as one line (openapi.yaml → Remediation.payload), e.g.
+ *   set_memory_limit demo/demo-app container demo-app → 256Mi
+ * The payload is the agent's output, so it is only ever shown as text.
+ */
+/** The agent's `reason` from a proposal payload, if it gave one. */
+export const proposalReason = (remediation: Pick<Remediation, "payload">): string | null =>
+  str(remediation.payload.reason);
+
+export function proposedFix(remediation: Pick<Remediation, "kind" | "payload">): string {
+  const p = remediation.payload;
+  const target = [str(p.namespace), str(p.deployment)].filter(Boolean).join("/");
+  switch (remediation.kind) {
+    case "set_memory_limit":
+      return `set_memory_limit ${target} container ${str(p.container) ?? "?"} → ${str(p.memory_limit) ?? "?"}`;
+    case "rollback":
+      return `rollback ${target} to ${typeof p.to_revision === "number" ? `revision ${p.to_revision}` : "the previous revision"}`;
+    case "revert_workflow":
+      return `revert_workflow ${typeof p.change_id === "number" ? changeLabel(p.change_id) : "?"}`;
+    default:
+      return `${remediation.kind} ${target}`.trim();
+  }
+}
+
+/** `get_pods(namespace="demo", tail=50)`: a tool call as one line of text. */
+export function callSignature(e: Pick<Evidence, "tool_name" | "args">): string {
+  const args = Object.entries(e.args).map(([key, value]) => `${key}=${JSON.stringify(value)}`);
+  return `${e.tool_name}(${args.join(", ")})`;
+}
+
+/**
+ * A tool result for display: the worker stores k8s-mcp's structured output as compact JSON, so
+ * pretty-print it when it parses. Either way the caller renders it as text.
+ */
+export function readableResult(excerpt: string): string {
+  try {
+    return JSON.stringify(JSON.parse(excerpt), null, 2);
+  } catch {
+    return excerpt; // not JSON, or cut off at the 8,000-character excerpt limit
   }
 }

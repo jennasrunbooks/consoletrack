@@ -10,13 +10,35 @@ export type ChangeSummary = Schemas["ChangeSummary"];
 export type ChangePage = Schemas["ChangePage"];
 export type ChangeCounts = Schemas["ChangeCounts"];
 export type ChangeStatus = Schemas["ChangeStatus"];
+export type Change = Schemas["Change"];
+export type ChangeDecision = Schemas["ChangeDecision"];
+export type Drift = Schemas["Drift"];
+export type DriftLine = Schemas["DriftLine"];
+export type LinkedIncident = Schemas["LinkedIncident"];
+export type RevertResponse = Schemas["RevertResponse"];
 export type Risk = Schemas["Risk"];
 export type Via = Schemas["Via"];
 export type IncidentRef = Schemas["IncidentRef"];
+export type IncidentSummary = Schemas["IncidentSummary"];
+export type IncidentPage = Schemas["IncidentPage"];
+export type Incident = Schemas["Incident"];
+export type IncidentStatus = Schemas["IncidentStatus"];
+export type ChangeRef = Schemas["ChangeRef"];
+export type Analysis = Schemas["Analysis"];
+export type AgentRun = Schemas["AgentRun"];
+export type AnalysisFlag = Schemas["AnalysisFlag"];
+export type Confidence = Schemas["Confidence"];
+export type Evidence = Schemas["Evidence"];
+export type EvidenceList = Schemas["EvidenceList"];
+export type Remediation = Schemas["Remediation"];
+export type RemediationKind = Schemas["RemediationKind"];
+export type RemediationStatus = Schemas["RemediationStatus"];
+export type SubjectPath = Schemas["SubjectPath"];
 export type IntakeHealth = Schemas["IntakeHealth"];
 export type IntakeState = Schemas["IntakeState"];
 export type ErrorBody = Schemas["Error"];
 export type ListChangesQuery = NonNullable<paths["/api/v1/changes"]["get"]["parameters"]["query"]>;
+export type ListIncidentsQuery = NonNullable<paths["/api/v1/incidents"]["get"]["parameters"]["query"]>;
 
 /** Every non-2xx response, carrying the `Error` body when the backend sent one. */
 export class ApiError extends Error {
@@ -111,6 +133,61 @@ export async function getCurrentUser(signal?: AbortSignal): Promise<User | null>
 
 export function listChanges(query: ListChangesQuery, signal?: AbortSignal): Promise<ChangePage> {
   return unwrap(client.GET("/api/v1/changes", { params: { query }, signal }));
+}
+
+export function getChange(id: number, signal?: AbortSignal): Promise<Change> {
+  return unwrap(client.GET("/api/v1/changes/{id}", { params: { path: { id } }, signal }));
+}
+
+/** Dispatch the gated revert workflow (202); the change moves to `reverting`. */
+export function revertChange(id: number, note: string | null = null): Promise<RevertResponse> {
+  return unwrap(client.POST("/api/v1/changes/{id}/revert", { params: { path: { id } }, body: { note } }));
+}
+
+/** Close the change as `accepted`; the note is required (openapi.yaml → AcceptRequest). */
+export function acceptChange(id: number, note: string): Promise<Change> {
+  return unwrap(client.POST("/api/v1/changes/{id}/accept", { params: { path: { id } }, body: { note } }));
+}
+
+// --- Incidents --------------------------------------------------------------------------------
+
+export function listIncidents(query: ListIncidentsQuery, signal?: AbortSignal): Promise<IncidentPage> {
+  return unwrap(client.GET("/api/v1/incidents", { params: { query }, signal }));
+}
+
+export function getIncident(id: number, signal?: AbortSignal): Promise<Incident> {
+  return unwrap(client.GET("/api/v1/incidents/{id}", { params: { path: { id } }, signal }));
+}
+
+/** Re-run triage; `model` null uses the configured default (TRIAGE_MODEL). */
+export function triageIncident(id: number, model: string | null): Promise<Incident> {
+  return unwrap(client.POST("/api/v1/incidents/{id}/triage", { params: { path: { id } }, body: { model } }));
+}
+
+export function approveRemediation(id: number, note: string | null = null): Promise<Incident> {
+  return unwrap(
+    client.POST("/api/v1/incidents/{id}/remediation/approve", { params: { path: { id } }, body: { note } }),
+  );
+}
+
+export function rejectRemediation(id: number, reason: string): Promise<Incident> {
+  return unwrap(
+    client.POST("/api/v1/incidents/{id}/remediation/reject", { params: { path: { id } }, body: { reason } }),
+  );
+}
+
+/** Replace the postmortem Markdown on the incident's latest analysis. */
+export function savePostmortem(id: number, postmortemMd: string): Promise<Analysis> {
+  return unwrap(
+    client.PUT("/api/v1/incidents/{id}/postmortem", { params: { path: { id } }, body: { postmortem_md: postmortemMd } }),
+  );
+}
+
+// --- Evidence ---------------------------------------------------------------------------------
+
+/** Every agent run's tool calls for a change or an incident, oldest first, already redacted. */
+export function listEvidence(subject: SubjectPath, id: number, signal?: AbortSignal): Promise<EvidenceList> {
+  return unwrap(client.GET("/api/v1/{subject}/{id}/evidence", { params: { path: { subject, id } }, signal }));
 }
 
 // --- Intake -----------------------------------------------------------------------------------

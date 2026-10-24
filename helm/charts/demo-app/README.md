@@ -10,13 +10,14 @@ policy, the bucket, the security group, and the `demo:demo-app` Pod Identity ass
 | Object | Notes |
 |---|---|
 | ServiceAccount `demo-app` | No Kubernetes token; Pod Identity binds it to `demo-app-role-<suffix>` |
-| Deployment `demo-app` | Same pod security as the consoletrack chart (UID 10001, read-only root, no capabilities). Memory: 128Mi request, 256Mi limit |
+| Deployment `demo-app` | Same pod security as the consoletrack chart (UID 10001, read-only root, no capabilities). Memory: 64Mi request, 128Mi limit |
 | PrometheusRule `demo-app` (`alertRules.enabled`, default on) | `DemoAppHighErrorRate`, below |
-| Service `demo-app` (:8080), ServiceMonitor | The app's own metrics: `demo_app_requests_total{code}`, `demo_app_s3_errors_total{error}`, `demo_app_allocated_bytes` |
+| Service `demo-app` (:8080), ServiceMonitor | The app's own metrics: `demo_app_requests_total{code}`, `demo_app_s3_errors_total{error}`, `demo_app_report_cache_bytes` |
 | ServiceAccount, Deployment, Service, ServiceMonitor `demo-app-loadgen` (`loadgen.enabled`, default on) | The traffic generator (`DEMO_MODE=loadgen`): `GET http://demo-app.demo:8080/` at `loadgen.rps` (5) with a `loadgen.timeoutSeconds` (1s) timeout, exporting `demo_client_requests_total{result="ok\|http_error\|conn_error\|timeout"}`, scraped every 15s. No token, no Pod Identity; the faults never change it |
 
-The image reads `PORT`, `AWS_REGION`, `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, and, with the OOM fault,
-`DEMO_ALLOCATE_MI`. An empty `DEMO_BUCKET` (kind) means no S3 read and no AWS calls.
+The image reads `PORT`, `AWS_REGION`, `DEMO_BUCKET`, `DEMO_OBJECT_KEY`, `DEMO_REPORT_MI`, and
+`DEMO_REPORT_CACHE_MI` (from `reportCache`, set whatever the faults). An empty `DEMO_BUCKET`
+(kind) means no S3 read and no AWS calls.
 
 ## The user-impact alert
 
@@ -39,13 +40,13 @@ chart's AlertmanagerConfig only routes alerts from its allowlisted namespaces.
 ## Faults
 
 Values toggles for the cluster-only baseline scenarios. Turn on at most one (the chart refuses
-two); turning it off again is the fix.
+two); turning it off again always ends it, and the table has the fix the agent should propose.
 The Deployment uses the `Recreate` strategy, so the old pod stops first and a fault takes the app
 down (with a rolling update the old pod would keep serving behind the faulted one).
 
 | Value | Effect | Expected fix |
 |---|---|---|
-| `faults.oom` | Memory request and limit both drop to `oomMemoryLimit` (128Mi; normally 128Mi request, 256Mi limit) and the app allocates and holds `allocateMi` (128) before it listens: ~150 MiB used on kind, ~175 MiB on EKS (boto3 loaded), so it's OOMKilled on every start | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling, ~80 MiB headroom) |
+| `faults.oom` | Only the traffic generator changes: it sends `X-Demo-Report: large`, and the app's report cache (2 MiB a request, bounded at 140 MiB) passes the unchanged 128Mi limit within about 15s of each start: OOMKilled under traffic, CrashLoopBackOff, and no new demo-app revision | Raise the memory limit to 256Mi (`set_memory_limit`, the `oom-memory-bump` policy: exactly 2x, under the 512Mi ceiling; the measured peak with the fault still on is 159 MiB on EKS and 158 MiB on kind, 97 MiB under the fix). Turning the fault off also stops it |
 | `faults.badImage` | Image tag `does-not-exist`: ImagePullBackOff | Rollout undo |
 | `faults.badProbe` | Liveness and readiness on a path the app doesn't serve: restarts, never Ready | Rollout undo (the agent's `rollback`); fixing the probe path also works |
 

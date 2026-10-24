@@ -5,8 +5,9 @@
 #
 #   scripts/local-kind.sh cluster   before `docker compose up`: the cluster, the demo-app image
 #                                   (built by make), the add-on and demo-app releases, the
-#                                   consoletrack chart's k8s-mcp RBAC, and a kubeconfig for
-#                                   Compose's k8s-mcp
+#                                   consoletrack chart's k8s-mcp and remediator RBAC, a
+#                                   kubeconfig each for Compose's k8s-mcp and backend, and the
+#                                   chart's remediation policies for the backend and worker
 #   scripts/local-kind.sh alerts    after it: the backend's webhook token and the
 #                                   AlertmanagerConfig, then a check that Alertmanager reaches
 #                                   the Compose backend
@@ -14,6 +15,11 @@
 #                                   turn one demo-app fault on, or all off (`make local-fault`)
 #   scripts/local-kind.sh incidents the incidents, with the agent's root cause and proposal, from
 #                                   the local API (`make local-incidents`)
+#   scripts/local-kind.sh measure   demo-app's memory under the OOM fault with a 512Mi limit
+#                                   (`make local-measure`, #79)
+#   scripts/local-kind.sh oom-prepare, oom-run
+#                                   one OOM acceptance run, around a database reset
+#                                   (`make local-oom-run`, #79)
 #
 # Only kube-prometheus-stack and demo-app are installed. Compose provides Postgres (so no
 # CloudNativePG), the backend and dashboard (so no consoletrack release, Gateway API CRDs, or
@@ -41,9 +47,13 @@ context=kind-$cluster
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 # Read by Compose's k8s-mcp (docker-compose.yaml); gitignored (*.kubeconfig).
 mcp_kubeconfig=$repo_root/kind-internal.kubeconfig
+# Read by Compose's backend, which applies approved remediations (compose/kind.yaml); gitignored.
+remediator_kubeconfig=$repo_root/kind-remediator.kubeconfig
+# The chart's remediation-policies ConfigMap data, for Compose's backend and worker; gitignored.
+policies_file=$repo_root/kind-remediation-policies.yaml
 # Compose's backend on kind's Docker network (compose/kind.yaml).
 backend_url=http://consoletrack-backend:8000
-# The k8s-mcp token's lifetime; `make local` writes a new one on every run.
+# The k8s-mcp and remediator tokens' lifetime; `make local` writes new ones on every run.
 token_duration=${K8S_MCP_TOKEN_DURATION:-24h}
 compose=${COMPOSE:-docker compose}
 
@@ -83,13 +93,17 @@ cluster_up() {
 	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
 		-l name=kube-prometheus-stack -l name=demo-app "${verb[@]}"
 
-	# The consoletrack chart's ServiceAccounts and k8s-mcp's read-only Roles in `demo`, rendered
-	# from the chart that ships to EKS. Each object names its own namespace.
-	echo "local-kind: applying the consoletrack chart's k8s-mcp RBAC"
+	# The consoletrack chart's ServiceAccounts, k8s-mcp's read-only Roles, and the remediator's
+	# patch Role in `demo`, rendered from the chart that ships to EKS. Each object names its own
+	# namespace.
+	echo "local-kind: applying the consoletrack chart's k8s-mcp and remediator RBAC"
 	kc create namespace consoletrack --dry-run=client -o yaml | kc apply -f - >/dev/null
-	render templates/rbac-k8s-mcp.yaml templates/serviceaccounts.yaml | kc apply -f -
+	render templates/rbac-k8s-mcp.yaml templates/rbac-remediator.yaml templates/serviceaccounts.yaml |
+		kc apply -f -
 
-	write_mcp_kubeconfig
+	write_kubeconfig k8s-mcp "$mcp_kubeconfig"
+	write_kubeconfig remediator "$remediator_kubeconfig"
+	write_policies
 }
 
 # Templates of the consoletrack chart with compose/kind-values.yaml.
@@ -102,20 +116,22 @@ render() {
 		-f "$repo_root/compose/kind-values.yaml" "${args[@]}"
 }
 
-# Compose's k8s-mcp gets the ServiceAccount's token, not kind's admin credentials, so the RBAC
-# that ships is what limits it locally too (docs/permissions.md → k8s-mcp). The server address is
-# kind's internal one: the control-plane container's name on kind's Docker network.
-write_mcp_kubeconfig() {
-	local internal server ca token
+# Compose's k8s-mcp and backend get their ServiceAccount's token, not kind's admin credentials,
+# so the RBAC that ships is what limits them locally too (docs/permissions.md): k8s-mcp reads
+# `demo`, the backend (remediator) patches Deployments in `demo` and nothing else. The server
+# address is kind's internal one: the control-plane container's name on kind's Docker network.
+#   write_kubeconfig <serviceaccount> <file>
+write_kubeconfig() {
+	local account=$1 file=$2 internal server ca token
 	internal=$(mktemp)
 	kind get kubeconfig --internal --name "$cluster" >"$internal"
 	server=$(kubectl --kubeconfig "$internal" config view --raw -o jsonpath='{.clusters[0].cluster.server}')
 	ca=$(kubectl --kubeconfig "$internal" config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
 	rm -f "$internal"
-	token=$(kc -n consoletrack create token k8s-mcp --duration "$token_duration")
-	[ -n "$server" ] && [ -n "$ca" ] && [ -n "$token" ] || die "couldn't build the k8s-mcp kubeconfig"
+	token=$(kc -n consoletrack create token "$account" --duration "$token_duration")
+	[ -n "$server" ] && [ -n "$ca" ] && [ -n "$token" ] || die "couldn't build the $account kubeconfig"
 
-	cat >"$mcp_kubeconfig.tmp" <<-EOF
+	cat >"$file.tmp" <<-EOF
 		apiVersion: v1
 		kind: Config
 		clusters:
@@ -124,22 +140,33 @@ write_mcp_kubeconfig() {
 		      server: $server
 		      certificate-authority-data: $ca
 		users:
-		  - name: k8s-mcp
+		  - name: $account
 		    user:
 		      token: $token
 		contexts:
-		  - name: k8s-mcp
+		  - name: $account
 		    context:
 		      cluster: $cluster
-		      user: k8s-mcp
+		      user: $account
 		      namespace: demo
-		current-context: k8s-mcp
+		current-context: $account
 	EOF
-	# k8s-mcp runs as uid 10001 and reads it through a read-only bind mount. The token can only
-	# read the demo namespace, and expires.
-	chmod 0644 "$mcp_kubeconfig.tmp"
-	mv "$mcp_kubeconfig.tmp" "$mcp_kubeconfig"
-	echo "local-kind: wrote $(basename "$mcp_kubeconfig") (k8s-mcp ServiceAccount token, $token_duration)"
+	# The containers run as uid 10001 and read it through a read-only bind mount. The token is
+	# limited to the demo namespace by the chart's RBAC, and expires.
+	chmod 0644 "$file.tmp"
+	mv "$file.tmp" "$file"
+	echo "local-kind: wrote $(basename "$file") ($account ServiceAccount token, $token_duration)"
+}
+
+# The same policies.yaml the remediation-policies ConfigMap carries on EKS
+# (helm/charts/consoletrack/values.yaml → remediation), so the gate behaves the same locally.
+write_policies() {
+	render templates/remediation-policies.yaml |
+		kc create --dry-run=client -f - -o jsonpath='{.data.policies\.yaml}' >"$policies_file.tmp"
+	[ -s "$policies_file.tmp" ] || die "couldn't render the remediation policies"
+	chmod 0644 "$policies_file.tmp"
+	mv "$policies_file.tmp" "$policies_file"
+	echo "local-kind: wrote $(basename "$policies_file") (the chart's remediation policies)"
 }
 
 alerts() {
@@ -163,16 +190,43 @@ alerts() {
 	# from `demo` to the Compose backend (compose/kind-values.yaml → monitoring.webhookUrl).
 	render templates/monitoring.yaml | kc apply -f -
 
-	# Alertmanager's own pod, so this checks the path alerts take: pod DNS, kind's network, and
-	# the backend's alias on it. The alertmanager image is busybox-based (wget).
 	local pod
 	pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
 	[ -n "$pod" ] || die "no Alertmanager pod in monitoring"
-	if kc -n monitoring exec "$pod" -c alertmanager -- wget -q -T 5 -O /dev/null "$backend_url/readyz"; then
-		echo "local-kind: Alertmanager reaches the Compose backend at $backend_url"
-	else
-		die "Alertmanager can't reach $backend_url; is the backend on kind's network (compose/kind.yaml)?"
+	probe_backend "$pod"
+}
+
+# From Alertmanager's own pod, so this checks the path alerts take: pod DNS, kind's network, and
+# the backend's alias on it. The alertmanager image is busybox-based (wget), and that wget
+# sometimes crashes (exit 139, a segfault) on a path that works. So each attempt is retried, and
+# a crash (exit >= 128, killed by a signal) says nothing about the network: only a real failure
+# (wget or kubectl exiting 1-127) stops make local. If every attempt crashed, it warns and goes on.
+probe_attempts=${LOCAL_KIND_PROBE_ATTEMPTS:-5}
+probe_delay=${LOCAL_KIND_PROBE_DELAY:-2}
+probe_backend() {
+	local pod=$1 attempt rc failed=0 crashed=0
+	for attempt in $(seq 1 "$probe_attempts"); do
+		rc=0
+		kc -n monitoring exec "$pod" -c alertmanager -- \
+			wget -q -T 5 -O /dev/null "$backend_url/readyz" || rc=$?
+		if [ "$rc" -eq 0 ]; then
+			echo "local-kind: Alertmanager reaches the Compose backend at $backend_url"
+			return 0
+		elif [ "$rc" -ge 128 ]; then
+			crashed=$rc
+			echo "local-kind: attempt $attempt: wget in the Alertmanager pod crashed (exit $rc); retrying" >&2
+		else
+			failed=$rc
+			echo "local-kind: attempt $attempt: Alertmanager can't reach $backend_url yet (exit $rc)" >&2
+		fi
+		[ "$attempt" -eq "$probe_attempts" ] || sleep "$probe_delay"
+	done
+	if [ "$failed" -ne 0 ]; then
+		die "Alertmanager can't reach $backend_url (exit $failed); is the backend on kind's network (compose/kind.yaml)?"
 	fi
+	echo "local-kind: warning: couldn't check the alert path: wget in the Alertmanager pod crashed" \
+		"on every attempt (exit $crashed). The connection itself may be fine; after a fault," \
+		"\`docker compose logs backend | grep alerts/webhook\` should show 202 Accepted." >&2
 }
 
 # demoFault also turns off Helmfile's wait and atomic for this sync (helm/helmfile.yaml.gotmpl): a
@@ -186,9 +240,7 @@ fault() {
 	*) die "usage: make local-fault FAULT=oom|badImage|badProbe|off" ;;
 	esac
 	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-fault\` (HELM_DRIVER=configmap)"
-	# ${args[@]+...}: an empty array under set -u fails in macOS's bash 3.2.
-	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e local --kube-context "$context" \
-		-l name=demo-app sync ${args[@]+"${args[@]}"}
+	sync_demo_app ${args[@]+"${args[@]}"}
 	if [ "$1" = off ]; then
 		echo "local-kind: fault off; the alert resolves and its incident follows in about 3 minutes"
 	else
@@ -196,32 +248,376 @@ fault() {
 	fi
 }
 
-# Until the dashboard's Incidents page lands: log in as admin with the generated local password
-# (never printed) and show each incident with the agent's analysis and proposal.
-incidents() {
-	local pw jar base id
+sync_demo_app() {
+	local env=local tag=()
+	if [ "$measure_target" = eks ]; then
+		# The image the cluster ran when the measurement started (measure reads it first): an
+		# IMAGE_TAG from this checkout might not be in GHCR, and after the cleanup deletes the
+		# Deployment there is nothing left to read it from. Never sync without one: Helm would
+		# install demo-app with no image tag and wait 10 minutes for pods that can't start.
+		[ -n "$eks_image_tag" ] || die "no demo-app image tag; refusing to sync demo-app on $context"
+		env=eks
+		tag=(--state-values-set "imageTag=$eks_image_tag")
+	fi
+	# ${@+...}: an empty array under set -u fails in macOS's bash 3.2.
+	helmfile --file "$repo_root/helm/helmfile.yaml.gotmpl" -e "$env" --kube-context "$context" \
+		-l name=demo-app sync ${tag[@]+"${tag[@]}"} ${@+"$@"}
+}
+
+# demo-app recreated with the fault off and the chart's values: one rollout revision, and every
+# field Helm's again. A plain sync isn't enough after a remediation or a measurement: another
+# field manager (the backend's consoletrack-remediator patch, or kubectl) owns the memory limit,
+# and Helm 4's server-side apply refuses to take it back.
+recreate_demo_app() {
+	kc -n demo delete deployment demo-app --ignore-not-found --wait >/dev/null &&
+		sync_demo_app >/dev/null
+}
+
+# The tag of the image demo-app runs now; empty when it can't be read (no Deployment, no tag).
+live_image_tag() {
+	local image
+	image=$(kc -n demo get deployment demo-app \
+		-o jsonpath='{.spec.template.spec.containers[?(@.name=="demo-app")].image}' 2>/dev/null) || return 0
+	[ "${image##*:}" = "$image" ] || echo "${image##*:}"
+}
+
+# demo-app's memory under the OOM fault, with the limit raised so it never OOMs (#79): its
+# working set (what the kernel's OOM killer and the container limit count), RSS, and the report
+# cache's own gauge, once a minute and as peaks over the last 5 minutes. The worker is stopped
+# meanwhile (no triage, no auto fix). On exit, even an interrupted one, demo-app's Deployment is
+# recreated with the fault off and the chart's 128Mi limit, and the worker starts again. Recreated,
+# not just synced: the 512Mi and 128Mi revisions would stay in the rollout history, and the next
+# OOM triage would read "limit lowered from 512Mi" and propose a rollback (#79).
+measure() {
+	local minute
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-measure\` or \`make measure\` (HELM_DRIVER=configmap)"
+	for tool in curl jq; do
+		command -v "$tool" >/dev/null || die "$tool is not installed"
+	done
+	if [ "$measure_target" = eks ]; then
+		# Read once, before anything changes (see sync_demo_app).
+		eks_image_tag=$(live_image_tag)
+		[ -n "$eks_image_tag" ] || die "demo-app isn't deployed on $context (or its image has no tag);" \
+			"deploy it first: make deploy IMAGE_TAG=<the commit the cluster runs>"
+		echo "local-kind: measuring on $context, demo-app image tag $eks_image_tag"
+	fi
+	start_prometheus
+	trap measure_cleanup EXIT
+	echo "local-kind: baseline, no fault: working set $(promql_mib "max($working_set)")"
+	if [ "$measure_target" = local ]; then
+		$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind stop worker
+	fi
+	# Through Helm, not kubectl: Helm 4 applies server-side, and a field another manager changed
+	# (kubectl set resources) would make the sync that puts it back fail with a conflict.
+	local cache=()
+	if [ -n "$measure_cache_mi" ]; then
+		# This run's cache size, to compare sizes on one image (make measure CACHE_MI=140).
+		cache=(--state-values-set "demoReportCacheMi=$measure_cache_mi")
+	fi
+	sync_demo_app --state-values-set demoFault=oom --state-values-set demoMemoryLimit=512Mi \
+		${cache[@]+"${cache[@]}"}
+	kc -n demo rollout status deployment/demo-app --timeout=3m
+	echo "local-kind: oom fault on, limit 512Mi, report cache ${measure_cache_mi:-the default} MiB;" \
+		"sampling for $measure_minutes minutes"
+	for minute in $(seq 1 "$measure_minutes"); do
+		sleep "$measure_interval"
+		echo "local-kind: minute $minute: working set $(promql_mib "max($working_set)")," \
+			"RSS $(promql_mib "max($rss)"), report cache $(promql_mib "max($report_cache)")"
+	done
+	echo "local-kind: peaks over the last 5 minutes:"
+	echo "  working set  $(promql_mib "max(max_over_time(${working_set}[5m]))")"
+	echo "  RSS          $(promql_mib "max(max_over_time(${rss}[5m]))")"
+	echo "  report cache $(promql_mib "max(max_over_time(${report_cache}[5m]))")"
+}
+
+# `make measure` runs measure against EKS (MEASURE_TARGET=eks, KUBE_CONTEXT): the eks Helmfile
+# environment at the image demo-app runs now. The worker keeps running there: at 512Mi nothing
+# OOMs, so no alert fires, and scaling it with kubectl would leave Helm a field conflict.
+measure_target=${MEASURE_TARGET:-local}
+eks_image_tag=""
+case "$measure_target" in
+local) ;;
+eks) context=${KUBE_CONTEXT:?KUBE_CONTEXT is unset (make measure sets it)} ;;
+*) die "MEASURE_TARGET must be local or eks, not $measure_target" ;;
+esac
+measure_minutes=${MEASURE_MINUTES:-7}
+# The report cache for this measurement only (MiB); empty: the environment's.
+measure_cache_mi=${MEASURE_CACHE_MI:-}
+case "$measure_cache_mi" in
+"" | *[!0-9]*) [ -z "$measure_cache_mi" ] || die "MEASURE_CACHE_MI must be a number of MiB, not $measure_cache_mi" ;;
+esac
+measure_interval=${MEASURE_INTERVAL:-60}
+# Series, wrapped as max(series) now or max(max_over_time(series[5m])) for the peaks.
+working_set='container_memory_working_set_bytes{namespace="demo",container="demo-app"}'
+rss='container_memory_rss{namespace="demo",container="demo-app"}'
+report_cache='demo_app_report_cache_bytes{namespace="demo"}'
+
+measure_cleanup() {
+	local rc=$? failed=""
+	trap - EXIT
+	# Each step even if the one before fails: the worker must never stay stopped.
+	set +e
+	stop_prometheus
+	echo "local-kind: putting it back: demo-app recreated (fault off, 128Mi, one revision)"
+	recreate_demo_app || failed="recreating demo-app"
+	if [ "$measure_target" = local ]; then
+		$compose -f "$repo_root/docker-compose.yaml" -f "$repo_root/compose/kind.yaml" --profile kind \
+			start worker || failed="${failed:+$failed and }starting the worker"
+	fi
+	if [ -n "$failed" ]; then
+		echo "local-kind: couldn't put everything back: $failed failed; rerun it by hand" >&2
+		exit 1
+	fi
+	exit "$rc"
+}
+
+# Prometheus through `kubectl port-forward` on a free local port. Not the API server's service
+# proxy: on EKS the control plane runs outside the cluster's network and the nodes' security group
+# doesn't let it reach port 9090 ("dial tcp ...:9090: connect: connection timed out").
+prometheus_url=""
+prometheus_forward_pid=""
+start_prometheus() {
+	local log port=""
+	log=$(mktemp)
+	# kubectl itself, not the kc function: `kc ... &` would background a subshell, and $! would be
+	# that subshell's PID, so stop_prometheus would leave the port-forward running.
+	kubectl --context "$context" -n monitoring port-forward svc/kube-prometheus-stack-prometheus :9090 \
+		>"$log" 2>&1 &
+	prometheus_forward_pid=$!
+	for _ in $(seq 1 30); do
+		port=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 9090$/\1/p' "$log" | head -n 1)
+		[ -z "$port" ] || break
+		kill -0 "$prometheus_forward_pid" 2>/dev/null || break
+		sleep 1
+	done
+	if [ -z "$port" ]; then
+		stop_prometheus
+		die "couldn't port-forward to Prometheus on $context: $(cat "$log")"
+	fi
+	rm -f "$log"
+	prometheus_url=http://127.0.0.1:$port
+	# Checked before anything changes, so a failure stops here.
+	[ "$(promql_value 'vector(1)')" = 1 ] || {
+		stop_prometheus
+		die "Prometheus on $context doesn't answer at $prometheus_url"
+	}
+}
+
+stop_prometheus() {
+	if [ -n "$prometheus_forward_pid" ]; then
+		kill "$prometheus_forward_pid" 2>/dev/null || true
+		# Reaped here, so bash doesn't report "Terminated: 15" for it.
+		wait "$prometheus_forward_pid" 2>/dev/null || true
+		prometheus_forward_pid=""
+	fi
+}
+
+# An instant query: the first series' value, or "no data" (also when Prometheus doesn't answer).
+promql_value() {
+	curl -fsS --max-time 10 -G --data-urlencode "query=$1" "$prometheus_url/api/v1/query" 2>/dev/null |
+		jq -r '.data.result[0].value[1] // null | if . == null then "no data" else tonumber end' 2>/dev/null ||
+		echo "no data"
+}
+
+promql_mib() {
+	local value
+	value=$(promql_value "$1")
+	if [ "$value" = "no data" ]; then echo "$value"; else jq -rn --argjson v "$value" '"\($v / 1048576 | floor) MiB"'; fi
+}
+
+# The local API as admin, with the generated local password (never printed): api_login sets
+# api_base and api_jar (a cookie file the caller removes), api GETs a path.
+api_login() {
+	local pw
 	for tool in curl jq; do
 		command -v "$tool" >/dev/null || die "$tool is not installed"
 	done
 	pw=$($compose exec -T backend cat /run/consoletrack/admin-password 2>/dev/null) ||
 		die "no generated admin password (ADMIN_PASSWORD_HASH is set); log in to the dashboard instead"
-	base=http://localhost:${DASHBOARD_PORT:-8080}
-	jar=$(mktemp)
+	api_base=http://localhost:${DASHBOARD_PORT:-8080}
+	api_jar=$(mktemp)
 	jq -n --arg p "$pw" '{username: "admin", password: $p}' |
-		curl -fsS -c "$jar" -o /dev/null -H 'Content-Type: application/json' --data @- \
-			"$base/api/v1/auth/login" || {
-		rm -f "$jar"
-		die "login failed at $base"
+		curl -fsS -c "$api_jar" -o /dev/null -H 'Content-Type: application/json' --data @- \
+			"$api_base/api/v1/auth/login" || {
+		rm -f "$api_jar"
+		die "login failed at $api_base"
 	}
-	for id in $(curl -fsS -b "$jar" "$base/api/v1/incidents?page_size=100" | jq -r '.items[].id'); do
-		curl -fsS -b "$jar" "$base/api/v1/incidents/$id" | jq '{
+}
+
+api() {
+	curl -fsS -b "$api_jar" "$api_base$1"
+}
+
+# Until the dashboard's Incidents page lands: each incident with the agent's analysis and proposal.
+incidents() {
+	local id
+	api_login
+	for id in $(api "/api/v1/incidents?page_size=100" | jq -r '.items[].id'); do
+		api "/api/v1/incidents/$id" | jq '{
 			id, alertname, workload, status, opened_at, resolved_at,
 			root_cause: .analysis.root_cause, confidence: .analysis.confidence,
-			agent_run: (.analysis.agent_run | if . then {model, tool_calls, outcome} else null end),
-			proposal: (.remediation | if . then {kind, status, payload} else null end)
+			agent_run: (.analysis.agent_run | if . then {model, prompt_version, escalated, tool_calls, outcome} else null end),
+			remediation: (.remediation | if . then {
+				kind, status, mode, policy, gate_reason, decided_by, payload, before, after,
+				steps: [.steps[]? | "\(.step) \(if .ok then "ok" else "FAILED" end): \(.detail)"]
+			} else null end)
 		}'
 	done
-	rm -f "$jar"
+	rm -f "$api_jar"
+}
+
+# --- One OOM acceptance run (make local-oom-run, #79) ------------------------------------------
+# oom-prepare (before the database reset): demo-app recreated with the fault off (one rollout
+# revision, so the agent sees no earlier change; and Helm owns every field again); then a wait
+# until the app has served two minutes without errors and Alertmanager holds no
+# DemoAppHighErrorRate, so the run's alert is a new episode that reaches the fresh database.
+# oom-run (after it): the fault on, the incident followed until its fix finishes or needs a human,
+# a summary with PASS or FAIL, and demo-app recreated with the fault off (also when interrupted).
+
+oom_poll=${OOM_RUN_POLL:-20}
+quiet_poll=${OOM_QUIET_POLL:-15}
+quiet_timeout=${OOM_QUIET_TIMEOUT:-900}
+run_timeout=${OOM_RUN_TIMEOUT:-1500}
+diagnose_after=${OOM_DIAGNOSE_AFTER:-480}
+
+oom_prepare() {
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-oom-run\` (HELM_DRIVER=configmap)"
+	for tool in curl jq; do
+		command -v "$tool" >/dev/null || die "$tool is not installed"
+	done
+	echo "local-kind: fault off; demo-app recreated (one revision, every field Helm's)"
+	recreate_demo_app
+	kc -n demo rollout status deployment/demo-app --timeout=3m >/dev/null
+	echo "local-kind: rollout history: $(kc -n demo rollout history deployment/demo-app | grep -cE '^[0-9]+') revision(s)"
+	echo "local-kind: waiting for 2 minutes without errors and no DemoAppHighErrorRate in Alertmanager"
+	start_prometheus
+	trap stop_prometheus EXIT
+	wait_for quiet "$quiet_timeout" "$quiet_poll"
+	stop_prometheus
+	trap - EXIT
+	echo "local-kind: quiet; ready for the run"
+}
+
+quiet() {
+	local errors
+	errors=$(promql_value 'sum(rate(demo_client_requests_total{namespace="demo",result!="ok"}[2m])) or vector(0)')
+	[ "$errors" = 0 ] && ! alert_active
+}
+
+alert_active() {
+	local pod
+	pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
+	kc -n monitoring exec "$pod" -c alertmanager -- \
+		amtool alert query --alertmanager.url=http://localhost:9093 2>/dev/null | grep -qw DemoAppHighErrorRate
+}
+
+# wait_for <check> <timeout s> <poll s>: until the check passes; a line each minute meanwhile.
+wait_for() {
+	local check=$1 timeout=$2 poll=$3 waited=0
+	until "$check"; do
+		[ "$waited" -lt "$timeout" ] || die "still not $check after $((timeout / 60)) minutes"
+		sleep "$poll"
+		waited=$((waited + poll))
+		[ $((waited % 60)) -ge "$poll" ] || echo "local-kind:   still waiting ($((waited / 60)) min)"
+	done
+}
+
+# One line per change: incident status | proposal, its status and gate mode | the last step.
+oom_state='"\(.status) | \(.remediation.kind // "no proposal") \(.remediation.status // "") \(.remediation.mode // "")" +
+	(if (.remediation.steps // []) | length > 0 then " | \(.remediation.steps[-1].step)" else "" end)'
+# The run is over: the fix finished, or there is nothing left the run can wait for.
+# shellcheck disable=SC2016 # $s is jq's, not the shell's
+oom_done='(.remediation.status // "") as $s
+	| ($s == "succeeded" or $s == "failed" or $s == "rejected")
+	or .status == "closed"
+	or (.status == "resolved" and (.remediation == null or $s == "proposed"))
+	or ($s == "proposed" and .remediation.kind != "set_memory_limit")
+	or (.status == "awaiting_review" and .analysis != null and .remediation == null)'
+
+oom_run() {
+	local started elapsed id detail state last="" hinted="" diagnosed="" total
+	[ "${HELM_DRIVER:-}" = configmap ] || die "run this through \`make local-oom-run\` (HELM_DRIVER=configmap)"
+	api_login
+	total=$(api "/api/v1/incidents?page_size=1" | jq '.total')
+	[ "$total" = 0 ] || { rm -f "$api_jar"; die "the database already has incidents; \`make local-oom-run\` resets it first"; }
+	trap oom_cleanup EXIT
+	echo "local-kind: OOM fault on at $(date -u +%H:%M:%SZ); an incident usually opens 4-5 minutes later"
+	sync_demo_app --state-values-set demoFault=oom >/dev/null
+	started=$(date +%s)
+	while :; do
+		sleep "$oom_poll"
+		elapsed=$(($(date +%s) - started))
+		if [ "$elapsed" -ge "$run_timeout" ]; then
+			echo "local-kind: gave up after $((run_timeout / 60)) minutes"
+			break
+		fi
+		id=$(api "/api/v1/incidents?page_size=100" | jq -r '[.items[].id] | min // empty')
+		if [ -z "$id" ]; then
+			if [ "$elapsed" -ge "$diagnose_after" ] && [ -z "$diagnosed" ]; then
+				oom_diagnose
+				diagnosed=1
+			fi
+			continue
+		fi
+		detail=$(api "/api/v1/incidents/$id")
+		state=$(jq -r "$oom_state" <<<"$detail")
+		if [ "$state" != "$last" ]; then
+			printf 'local-kind: %2d:%02d incident %s: %s\n' $((elapsed / 60)) $((elapsed % 60)) "$id" "$state"
+			last=$state
+		fi
+		jq -e "$oom_done" <<<"$detail" >/dev/null && break
+		if [ -z "$hinted" ] && jq -e '.remediation.status == "proposed" and .remediation.mode == "manual"' <<<"$detail" >/dev/null; then
+			echo "local-kind: the gate sent it to a human: $(jq -r '.remediation.gate_reason' <<<"$detail")"
+			echo "local-kind: approve it at $api_base/incidents/$id (admin password: make local printed it); waiting"
+			hinted=1
+		fi
+	done
+	oom_summary
+}
+
+oom_diagnose() {
+	echo "local-kind: no incident after $((diagnose_after / 60)) minutes. Alertmanager holds:"
+	local pod
+	pod=$(kc -n monitoring get pods -l app.kubernetes.io/name=alertmanager -o name | head -n 1)
+	kc -n monitoring exec "$pod" -c alertmanager -- \
+		amtool alert query --alertmanager.url=http://localhost:9093 2>/dev/null | sed 's/^/  /'
+	echo "local-kind: the backend's last webhook requests (202: delivered; 401: token still reloading):"
+	$compose logs backend 2>/dev/null | grep 'alerts/webhook' | tail -n 5 | sed 's/^/  /'
+}
+
+# PASS: exactly one incident, and its set_memory_limit fix succeeded.
+oom_summary() {
+	local list
+	list=$(api "/api/v1/incidents?page_size=100")
+	echo "local-kind: ---- result ----"
+	jq -r '"  incidents: \(.total) (\([.items[].alertname] | join(", ")))"' <<<"$list"
+	[ -n "${detail:-}" ] || { echo "  RESULT: FAIL (no incident)"; return 1; }
+	jq -r '
+		"  triage: \(.analysis.confidence // "-") confidence, prompt \(.analysis.agent_run.prompt_version // "-"), \(.analysis.agent_run.tool_calls // "-") tool calls",
+		"  proposal: \(.remediation.kind // "none") \(.remediation.payload.memory_limit // "")",
+		"  gate: \(.remediation.mode // "-") (\(.remediation.gate_reason // "-"))\(if .remediation.decided_by == "admin" then ", approved by admin" else "" end)",
+		"  remediation: \(.remediation.status // "-")",
+		"  last step: \((.remediation.steps // [])[-1] | if . then "\(.step) \(if .ok then "ok" else "FAILED" end): \(.detail)" else "-" end)"
+	' <<<"$detail"
+	if [ "$(jq '.total' <<<"$list")" = 1 ] && jq -e '.remediation.kind == "set_memory_limit" and .remediation.status == "succeeded"' <<<"$detail" >/dev/null; then
+		echo "  RESULT: PASS"
+	else
+		echo "  RESULT: FAIL"
+		return 1
+	fi
+}
+
+oom_cleanup() {
+	local rc=$?
+	trap - EXIT
+	set +e
+	rm -f "$api_jar"
+	echo "local-kind: fault off; demo-app recreated"
+	recreate_demo_app || {
+		echo "local-kind: recreating demo-app failed; the next make local-oom-run retries it" >&2
+		exit 1
+	}
+	exit "$rc"
 }
 
 case "${1:-}" in
@@ -229,5 +625,8 @@ cluster) cluster_up ;;
 alerts) alerts ;;
 fault) fault "${2:-}" ;;
 incidents) incidents ;;
-*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents" ;;
+measure) measure ;;
+oom-prepare) oom_prepare ;;
+oom-run) oom_run ;;
+*) die "usage: $0 cluster|alerts|fault <oom|badImage|badProbe|off>|incidents|measure|oom-prepare|oom-run" ;;
 esac

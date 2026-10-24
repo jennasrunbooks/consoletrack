@@ -58,6 +58,11 @@ Every role is under `/ct/`, carries the `ct-boundary-<suffix>` boundary, trusts 
   `enableWaf=false`, `enableWafv2=false`, and `enableShield=false`.
 - Service account names must match the table above.
 
+`deploy.yaml` can't read this root's state, so it takes the cluster-specific values from GitHub
+secrets (queue URLs, canary security group, certificate ARN). `make gh-deploy-config` sets them
+from these outputs; run it after `make up`, and again after every `make down` → `make up`, which
+changes them. A human runs it: it refuses to run as the agent's GitHub login.
+
 ## The event pattern
 
 `patterns/changes.json` is the rule's whole pattern. It keeps write calls (`readOnly: false`) to

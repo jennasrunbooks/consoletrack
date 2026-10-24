@@ -12,12 +12,11 @@ check the proposal again before anyone sees it.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.enums import Confidence, Risk
+from app.enums import AnalysisFlag, Confidence, Risk
 
 SCHEMA_VERSION = "1"
 TOOL_NAME = "submit_analysis"
@@ -26,17 +25,6 @@ TOOL_NAME = "submit_analysis"
 K8S_NAME = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
 # A memory quantity in Mi or Gi: the only units the validator compares.
 MEMORY_QUANTITY = r"^[1-9][0-9]{0,5}(Mi|Gi)$"
-
-
-class Flag(StrEnum):
-    stateful_workload = "stateful_workload"
-    migration = "migration"
-    # Logs show an AWS error but CloudTrail had no matching change yet.
-    cloudtrail_delay = "cloudtrail_delay"
-    aws_evidence_unavailable = "aws_evidence_unavailable"
-    # Tool output contained instructions aimed at the agent.
-    possible_prompt_injection = "possible_prompt_injection"
-    insufficient_evidence = "insufficient_evidence"
 
 
 class _Strict(BaseModel):
@@ -115,7 +103,7 @@ class SubmitAnalysis(_Strict):
         Field(max_length=10, description="IDs of ConsoleTrack changes that likely caused this"),
     ]
     proposed_remediation: Proposal | None
-    flags: Annotated[list[Flag], Field(max_length=len(Flag))]
+    flags: Annotated[list[AnalysisFlag], Field(max_length=len(AnalysisFlag))]
     postmortem_md: Annotated[
         str | None, Field(max_length=20_000, description="Incidents: a draft postmortem")
     ] = None
@@ -128,12 +116,28 @@ human reviews. proposed_remediation is only a proposal: a human or the policy ga
 null is the right answer when no narrow, safe fix exists."""
 
 
+# Strict tool use: the API constrains the model's input to the schema, so a call can't leave
+# out a required field. Without it Haiku dropped confidence, risk, or root_cause and needed up to
+# five retries (6x the tokens). Strict schemas take no length, numeric, or maxItems bounds and no
+# oneOf, so those are moved into the description; SubmitAnalysis still enforces them.
+UNSUPPORTED_IN_STRICT = (
+    "minLength",
+    "maxLength",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "maxItems",
+)
+
+
 def tool_definition() -> dict[str, Any]:
-    """The tool as the Messages API takes it, with `$ref`s inlined."""
+    """The tool as the Messages API takes it: `$ref`s inlined and strict."""
     return {
         "name": TOOL_NAME,
         "description": TOOL_DESCRIPTION,
-        "input_schema": _inline(SubmitAnalysis.model_json_schema()),
+        "strict": True,
+        "input_schema": _strict(_inline(SubmitAnalysis.model_json_schema())),
     }
 
 
@@ -156,3 +160,20 @@ def _inline(schema: dict[str, Any]) -> dict[str, Any]:
         return node
 
     return walk(schema)
+
+
+def _strict(node: Any) -> Any:
+    if isinstance(node, list):
+        return [_strict(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    out = {key: _strict(value) for key, value in node.items() if key not in UNSUPPORTED_IN_STRICT}
+    if "oneOf" in out:
+        out["anyOf"] = out.pop("oneOf")
+    bounds = [f"{key} {node[key]}" for key in UNSUPPORTED_IN_STRICT if key in node]
+    if out.get("minItems", 0) > 1:  # strict takes only 0 or 1
+        bounds.insert(0, f"minItems {out.pop('minItems')}")
+    if bounds:
+        note = f"({', '.join(bounds)})"
+        out["description"] = f"{out['description']} {note}" if "description" in out else note
+    return out

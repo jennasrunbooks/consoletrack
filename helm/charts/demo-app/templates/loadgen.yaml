@@ -1,7 +1,9 @@
 {{- if .Values.loadgen.enabled }}
 {{- $lg := .Values.loadgen }}
 # The traffic generator. The image tag and probes ignore .Values.faults on purpose: it has to keep
-# measuring while the app is broken.
+# measuring while the app is broken. faults.oom is the one fault it carries: it asks for large
+# reports, which the app caches until it outgrows its limit, so the app's Deployment never
+# changes.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -57,6 +59,10 @@ spec:
               value: {{ $lg.rps | quote }}
             - name: LOADGEN_TIMEOUT_SECONDS
               value: {{ $lg.timeoutSeconds | quote }}
+            {{- if .Values.faults.oom }}
+            - name: LOADGEN_REPORT
+              value: large
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
