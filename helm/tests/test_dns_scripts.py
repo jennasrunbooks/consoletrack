@@ -457,6 +457,7 @@ def test_wait_fails_when_curl_does_not_get_2xx_or_3xx(stub: Path) -> None:
     out = wait(stub, STUB_CURL_CODE="503")
     assert out.returncode == 1
     assert "step 5. HTTPS" in out.stderr and "503" in out.stderr
+    assert "NOT A FAILED DEPLOY" not in out.stderr
     assert wait(stub, STUB_CURL_CODE="000").returncode == 1
     assert wait(stub, STUB_CURL_CODE="302").returncode == 0
 

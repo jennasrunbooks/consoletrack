@@ -437,9 +437,9 @@ up: env-check-up ## Create the platform, add-ons, and app; safe to rerun (run ma
 	@# next make up prints it from there.
 	@LOGIN_BANNER_FILE="$(LOGIN_BANNER)" scripts/print-logins.sh; rm -f "$(LOGIN_BANNER)"
 
-logins: ## Print the URLs and logins for ConsoleTrack and Grafana (the admin password only if make up just generated it; humans only)
+logins: ## Print the URLs and logins for ConsoleTrack and Grafana (the admin password only until a make up finishes after generating it; humans only)
 	$(check_human)
-	scripts/print-logins.sh
+	LOGIN_BANNER_FILE="$(LOGIN_BANNER)" scripts/print-logins.sh
 
 images: ## Build every image for linux/arm64 and push to GHCR as IMAGE_TAG (humans; run before the first make up)
 	$(check_human)

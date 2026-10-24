@@ -166,6 +166,16 @@ while :; do
 		echo "wait-for-url: gave up after ${timeout}s; step $failed_step is not passing:" >&2
 		# shellcheck disable=SC2001 # indents every line
 		sed 's/^/  /' <<<"$detail" >&2
+		if [[ "$failed_step" == 4.* ]]; then
+			cat >&2 <<NOTE
+
+wait-for-url: NOT A FAILED DEPLOY. The Gateway, the DNS record, and the ALB's targets are all fine;
+Route 53 just hasn't started answering for the new ALB's alias yet, and that can take a while
+(10-25 minutes on a new load balancer). It clears by itself, and nothing needs fixing.
+  Wait a few minutes, then run: make up   (safe to rerun; it only re-checks and reprints your logins)
+  or just the check:            make wait-for-url
+NOTE
+		fi
 		exit 1
 	fi
 	if [[ "$failed_step" != "$last" ]]; then
