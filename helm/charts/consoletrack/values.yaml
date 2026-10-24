@@ -88,7 +88,7 @@ worker:
   command: [python, -m, app.worker]
   # Offer aws-mcp's tools to the triage agent (AWS_MCP_URL). false leaves AWS_MCP_URL empty: the
   # agent runs with k8s-mcp only and is told AWS evidence isn't available. The local (kind)
-  # environment sets false until aws-mcp ships with #9, so every local run is the same.
+  # environment sets false until aws-mcp has a fixtures mode, so every local run is the same.
   awsMcp: true
   # The worker has no HTTP server. It touches this file after every poll (20 s long poll), and
   # both probes fail once it's older than heartbeatMaxAgeSeconds.
@@ -115,13 +115,13 @@ k8sMcp:
     limits: {cpu: 250m, memory: 256Mi}
 
 awsMcp:
-  # Render the aws-mcp Deployment and Service. Helmfile sets this from awsMcpEnabled, false until
-  # aws-mcp ships with an image (#9): a Deployment without one never becomes Ready and fails the
-  # whole release. Keep it in step with worker.awsMcp.
+  # Render the aws-mcp Deployment and Service. Helmfile sets this from awsMcpEnabled (true on eks,
+  # false on kind until fixtures mode exists: AWS_MCP_MODE=fixtures refuses to start). Keep it in
+  # step with worker.awsMcp.
   enabled: true
   replicas: 1
   port: 8080
-  # live, or fixtures (recorded responses for demo-replay; local only).
+  # live, or fixtures (recorded responses for demo-replay; local only, not implemented yet).
   mode: live
   resources:
     requests: {cpu: 25m, memory: 128Mi}

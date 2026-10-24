@@ -632,7 +632,7 @@ The course rubric was revised on Oct 16, 2026: 12 criteria worth 24 points, with
 | Containerization | 2 | 2 | `docker-compose.yaml`: the full system including Postgres, started by `make local` |
 | Deployment | 2 | 2 | EKS via Terraform and Helmfile; a recorded walkthrough of the live EKS deployment, screenshots of it, and the always-on recorded demo site; \`make up\` deploys the same thing into a reviewer's own account |
 | CI/CD | 3 | 2 (3 stretch) | `ci.yaml` tests every PR; `deploy.yaml` deploys `main` to EKS automatically. Stretch: Helmfile `dev` deployed automatically, `prod` behind the `consoletrack-deploy` approval |
-| Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki; a redaction test; `docs/observability.md` |
+| Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki (the local stack from make local; on EKS, Prometheus and Alertmanager today, with Tempo and Loki to follow); a redaction test; `docs/observability.md` |
 | Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (failed-request ratio seen by the demo traffic generator, so it fires even when the app is down) → Alertmanager → the backend's webhook |
 | On-call agent | 2 | 2 | An alert opens an incident, the agent diagnoses an OOM kill, the backend applies the validated memory-limit fix in auto mode, verifies it, and resolves the incident; `docs/remediation-graduation.md` |
 | **Total** | **24** | **23** |  |
@@ -654,12 +654,12 @@ No longer graded but kept, because they make the build reliable: the OpenAPI con
 | **Thin slice:** kind half of `make local`, triage worker, incidents view with evidence | Oct 20 – Oct 21 (done) |
 | On-call auto-fix (OOM), shown on the incident page; CI runs only the jobs a change needs | Oct 20 – Oct 21 (done) |
 | Change detail, postmortem editor | Oct 21 (done) |
-| Observability: OpenTelemetry traces, metrics, and logs with a shared trace ID; Tempo, Loki, Grafana | Oct 21 – Oct 22 (done) |
+| Observability: OpenTelemetry traces, metrics, and logs with a shared trace ID; Tempo, Loki, Grafana (local stack done; the EKS releases go in by Oct 26 if time allows, otherwise Phase 2) | Oct 21 – Oct 22 (done) |
 | **Go/no-go check: three runs of the slice on kind, fault to auto-fix to resolved** | **Oct 22 (passed: GO for Oct 26)** |
 | EKS deploy: `make up`/`down`, `create-secrets.sh`, `deploy.yaml` green, HTTPS ALB at `DOMAIN` | Oct 22 – Oct 23 (done) |
 | OOM fault sized from measurements (158–159 MiB peak on kind and EKS); 3 of 3 runs on kind | Oct 23 (done) |
-| Change intake worker: SQS consumer, CloudTrail parser, canary, intake health | Oct 23 – Oct 24 |
-| Recorded demo site on GitHub Pages; README video and screenshots | Oct 23 – Oct 24 |
+| Change intake worker: SQS consumer, CloudTrail parser, canary, intake health, change analysis (done Oct 23, verified on EKS) | Oct 23 – Oct 24 |
+| Recorded demo site on GitHub Pages (live Oct 23 at consoletrack-demo.jennasrunbooks.com, done); README video and screenshots | Oct 23 – Oct 24 |
 | `make eval-oom` 5 of 5; demo-app Terraform root; security-group scenario on EKS | Oct 24 |
 | `aws-mcp`; the identity scenario if it works by Oct 26, 3 pm | Oct 24 – Oct 26 |
 | README, rubric check, recorded walkthrough of the EKS deployment | Oct 24 – Oct 26 |

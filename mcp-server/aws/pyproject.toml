@@ -1,0 +1,39 @@
+[project]
+name = "aws-mcp"
+version = "0.1.0"
+description = "Read-only AWS MCP server for the ConsoleTrack triage agent"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.40",
+    "fastmcp>=4.1,<5",
+    "opentelemetry-exporter-otlp-proto-http>=1.45,<2",
+    "opentelemetry-sdk>=1.45,<2",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+]
+
+[dependency-groups]
+dev = [
+    "moto[ec2,iam,s3]>=5.1",
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+filterwarnings = [
+    "error",
+]
