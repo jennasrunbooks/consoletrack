@@ -449,7 +449,7 @@ remediation:
       mode: auto              # graduation phase 1 (#34); manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
-      minConfidence: high
+      minConfidence: medium
       rateLimit: {perWorkload: 1, window: 1h}
       verify:
         rolloutTimeout: 3m

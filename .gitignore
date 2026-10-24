@@ -126,3 +126,8 @@ Thumbs.db
 *.swo
 *~
 .devcontainer/.env
+
+# --- Eval results ------------------------------------------------------------
+# `make local-eval-oom` writes a table per run here, to paste into the PR; only the README is tracked.
+eval/results/*
+!eval/results/README.md

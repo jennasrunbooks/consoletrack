@@ -26,7 +26,7 @@ def test_the_chart_ships_only_the_oom_bump_in_auto() -> None:
     oom = config.policy_for(RemediationKind.set_memory_limit, "demo")
     assert oom.name == "oom-memory-bump" and oom.mode is RemediationMode.auto
     assert oom.bounds.max_multiplier == 2 and oom.bounds.ceiling == "512Mi"
-    assert oom.min_confidence is Confidence.high
+    assert oom.min_confidence is Confidence.medium
     assert oom.rate_limit.per_workload == 1 and oom.rate_limit.window == timedelta(hours=1)
     assert oom.verify.rollout_timeout == timedelta(minutes=3)
     assert oom.verify.wait_for_resolved == timedelta(minutes=5)

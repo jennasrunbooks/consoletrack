@@ -135,9 +135,17 @@ def test_no_policies_means_manual(store: FakeStore, make_incident: Any) -> None:
     assert_manual(store, incident, row, "policy default is manual", config=PolicyConfig())
 
 
+def test_medium_confidence_is_approved(store: FakeStore, make_incident: Any) -> None:
+    """The floor is medium (docs/remediation-graduation.md, #60): the agent's high/medium varied
+    between identical eval runs while its proposal was right every time."""
+    incident, _ = triaged(store, make_incident, confidence=Confidence.medium)
+    decision = gate(store).submit_proposal(incident.id, PROPOSAL)
+    assert decision.approved and decision.mode is RemediationMode.auto
+
+
 def test_low_confidence_stays_manual(store: FakeStore, make_incident: Any) -> None:
-    incident, row = triaged(store, make_incident, confidence=Confidence.medium)
-    assert_manual(store, incident, row, "confidence is medium; policy oom-memory-bump needs high")
+    incident, row = triaged(store, make_incident, confidence=Confidence.low)
+    assert_manual(store, incident, row, "confidence is low; policy oom-memory-bump needs medium")
 
 
 def test_validator_refusal_stays_manual(store: FakeStore, make_incident: Any) -> None:
