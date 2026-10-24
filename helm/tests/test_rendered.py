@@ -424,7 +424,7 @@ def test_externaldns_does_not_evaluate_target_health(
 ) -> None:
     """The alias ExternalDNS writes must not be health-evaluated: right after `make up` the ALB's
     targets are unhealthy, and Route 53 then answers NOERROR with no addresses, which resolvers cache."""
-    flag = "--aws-evaluate-target-health=false"
+    flag = "--no-aws-evaluate-target-health"
     values = (HELM_DIR / "values" / "external-dns.yaml.gotmpl").read_text()
     assert flag in values
     # `helmfile template` renders the chart too (not the plain-helm fallback of our own charts).
@@ -437,4 +437,4 @@ def test_externaldns_does_not_evaluate_target_health(
         (deployment,) = deployments
         (container,) = deployment["spec"]["template"]["spec"]["containers"]
         assert flag in container["args"]
-        assert "--aws-evaluate-target-health=true" not in container["args"]
+        assert "--aws-evaluate-target-health" not in container["args"]
