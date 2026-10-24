@@ -790,7 +790,7 @@ def test_eval_oom_doesnt_wait_for_a_human_when_the_gate_says_manual(
 def test_eval_oom_can_stop_at_the_first_fail_and_times_its_phases(
     tmp_path: Path,
 ) -> None:
-    result, calls, files = run_eval(
+    result, calls, _ = run_eval(
         tmp_path, runs=3, details=[ROLLBACK, PASSING], EVAL_OOM_FAIL_FAST="1"
     )
     assert result.returncode == 1
