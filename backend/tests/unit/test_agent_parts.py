@@ -4,6 +4,7 @@ and the MCP client against an in-process FastMCP server (no network)."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -56,6 +57,44 @@ def test_tool_definition_is_self_contained() -> None:
         assert schema["properties"][name]["enum"] == ["low", "medium", "high"]
         assert "One word" in schema["properties"][name]["description"]
     assert SCHEMA_VERSION == "1"
+
+
+def _nodes(node: Any) -> Iterator[dict[str, Any]]:
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _nodes(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _nodes(item)
+
+
+def test_tool_definition_is_strict() -> None:
+    # Strict tool use makes the API enforce the schema, so a call can't drop a required field.
+    definition = tool_definition()
+    assert definition["strict"] is True
+    nodes = list(_nodes(definition["input_schema"]))
+    unsupported = {"oneOf", "minLength", "maxLength", "minimum", "maximum", "maxItems"}
+    assert not [node for node in nodes if unsupported & node.keys()]
+    assert all(node.get("minItems", 0) <= 1 for node in nodes)
+    objects = [node for node in nodes if node.get("type") == "object"]
+    assert objects and all(node["additionalProperties"] is False for node in objects)
+    # The documented per-request limits for strict schemas: 24 optional, 16 union parameters.
+    properties = [
+        (name, prop, node.get("required", []))
+        for node in objects
+        for name, prop in node["properties"].items()
+    ]
+    assert sum(name not in required for name, _, required in properties) <= 24
+    unions = [p for _, p, _ in properties if "anyOf" in p or isinstance(p.get("type"), list)]
+    assert len(unions) <= 16
+
+
+def test_strict_keeps_the_bounds_in_the_description_and_pydantic_enforces_them() -> None:
+    summary = tool_definition()["input_schema"]["properties"]["summary"]
+    assert "maxLength 4000" in summary["description"]
+    with pytest.raises(ValidationError):
+        analysis(summary="x" * 4001)
 
 
 @pytest.mark.parametrize(

@@ -7,7 +7,7 @@ The triage agent loop (#10). It only reads: its tools are the MCP servers' read-
 
 | File | What's there |
 | --- | --- |
-| `schema.py` | The `submit_analysis` tool and its Pydantic model (`SCHEMA_VERSION`), and the three proposal kinds |
+| `schema.py` | The `submit_analysis` tool (sent with `strict: true`, so the API enforces its required fields) and its Pydantic model (`SCHEMA_VERSION`), which still checks the bounds strict mode can't express, and the three proposal kinds |
 | `prompts/` | Versioned prompt sets (`PROMPT_VERSION`, now `v4`; recorded on every `agent_runs` row): `system_vN.md`, `incident_triage_vN.md`, `change_analysis_vN.md` |
 | `model.py` | `ModelClient` protocol, `AnthropicClient`, and the transient/permanent error split |
 | `tools.py` | `ToolProvider`, the MCP client (`McpToolProvider`), `Toolbox`, `open_toolbox` (k8s-mcp required, aws-mcp optional) |
