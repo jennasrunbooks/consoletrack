@@ -14,6 +14,8 @@ ConsoleTrack catches every out-of-band AWS change within minutes, records who ma
 
 No logins are shared and no cluster is kept running for visitors: these four are the ways to see it.
 
+Reviewing for the course? Start with [REVIEWING.md](REVIEWING.md).
+
 | Incident fixed automatically | Change log |
 |---|---|
 | ![Incident detail](docs/screenshots/incident-detail.png) | ![Change log](docs/screenshots/change-log.png) |
@@ -423,22 +425,24 @@ consoletrack/
 
 ## Course rubric mapping
 
+Step-by-step checks for each criterion are in [REVIEWING.md](REVIEWING.md).
+
 Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) final project ([criteria](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md): 12 criteria, 24 points, 10 to pass).
 
 | Criterion | Points | Where to look |
 |---|---|---|
-| Problem description | 2 | The opening of this README |
-| Product specification | 2 | [product-spec.md](product-spec.md) and the public [issue tracker](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue): acceptance criteria on every issue, agent PRs that close them |
-| Agent team specification | 2 | [docs/agent-team.md](docs/agent-team.md) |
-| Context management | 2 | [AGENTS.md](AGENTS.md) and its "Where to read more" index |
-| Application | 2 | [Try it without AWS](#try-it-without-aws): `make local` starts the frontend, backend, and Postgres |
-| Testing | 2 | `make test-all`: unit, contract, integration (Testcontainers), and frontend tests; see [Testing and CI/CD](#testing-and-cicd) |
-| Containerization | 2 | [docker-compose.yaml](docker-compose.yaml), started by `make local` |
-| Deployment | 2 | EKS via [terraform/](terraform/) and [helm/](helm/) ([Deploy to AWS](#deploy-to-aws)); the recorded walkthrough of the live deployment, the EKS screenshots in [docs/screenshots/eks/](docs/screenshots/eks/), and the always-on [demo site](https://consoletrack-demo.jennasrunbooks.com) |
-| CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
-| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana with Tempo and Loki (`make local`; screenshots in [docs/screenshots/](docs/screenshots/)). On EKS, Prometheus, Alertmanager, and the intake dashboard; Tempo and Loki there are in progress |
-| Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `demo-app` chart's alert rules ([helm/charts/demo-app/templates/prometheusrule.yaml](helm/charts/demo-app/templates/prometheusrule.yaml)) |
-| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make local-oom-run` on kind: the alert, the diagnosis, the automatic fix, verified; the recorded incident in the demo site |
+| Problem description | 2 | [README opening](#consoletrack), [product-spec.md → Summary](product-spec.md#summary) · [check](REVIEWING.md#1-problem-description-2) |
+| Product specification | 2 | [product-spec.md](product-spec.md), [issues](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue), e.g. [#34](https://github.com/jennasrunbooks/consoletrack/issues/34) → [PR #63](https://github.com/jennasrunbooks/consoletrack/pull/63) · [check](REVIEWING.md#2-product-specification-2) |
+| Agent team specification | 2 | [docs/agent-team.md](docs/agent-team.md) · [check](REVIEWING.md#3-agent-team-specification-2) |
+| Context management | 2 | [AGENTS.md](AGENTS.md) → "Where to read more" · [check](REVIEWING.md#4-context-management-2) |
+| Application | 2 | [Try it without AWS](#try-it-without-aws) · [check](REVIEWING.md#5-application-2) |
+| Testing | 2 | [Testing and CI/CD](#testing-and-cicd), [measured counts](REVIEWING.md#numbers-measured-not-guessed) · [check](REVIEWING.md#6-testing-2) |
+| Containerization | 2 | [docker-compose.yaml](docker-compose.yaml) · [check](REVIEWING.md#7-containerization-2) |
+| Deployment | 2 | [terraform/](terraform/), [helm/](helm/), [Deploy to AWS](#deploy-to-aws), [EKS screenshot](docs/screenshots/eks/), [demo site](https://consoletrack-demo.jennasrunbooks.com), walkthrough video · [check](REVIEWING.md#8-deployment-2) |
+| CI/CD | 3 | [ci.yaml](.github/workflows/ci.yaml), [deploy.yaml](.github/workflows/deploy.yaml); third point not claimed · [check](REVIEWING.md#9-cicd-3) |
+| Observability | 2 | [docs/observability.md](docs/observability.md), [redaction test](backend/tests/unit/test_telemetry_redaction.py), [screenshots](docs/screenshots/observability-trace.png); Tempo and Loki on `make local` only · [check](REVIEWING.md#10-observability-2) |
+| Alerting on user impact | 1 | [`DemoAppHighErrorRate`](helm/charts/demo-app/templates/prometheusrule.yaml) · [check](REVIEWING.md#11-alerting-on-user-impact-1) |
+| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md), `make local-oom-run`, eval 5/5 on Haiku and on Sonnet ([results](docs/remediation-graduation.md#eval-results-and-the-confidence-floor)) · [check](REVIEWING.md#12-on-call-agent-2) |
 
 ## License
 
