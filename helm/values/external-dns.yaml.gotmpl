@@ -10,6 +10,10 @@ txtOwnerId: {{ .Values.nameSuffix | quote }}
 policy: sync
 extraArgs:
   - --aws-zone-type=public
+  # One record, no failover target: health evaluation can only hide the answer, never route around
+  # a failure. With it on, the authoritative server answers NOERROR with no addresses while a new
+  # ALB's targets are still unhealthy, and resolvers cache that empty answer for the SOA minimum.
+  - --aws-evaluate-target-health=false
 
 serviceAccount:
   create: true
