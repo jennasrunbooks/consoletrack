@@ -21,7 +21,7 @@ memory limit after an OOM kill, is applied automatically, verified, and rolled b
 | `make local`: the full system on kind and Docker Compose, no AWS ([README](README.md#try-it-without-aws)) | Docker, kind, an Anthropic API key | 30 min |
 | `make up`: your own AWS account ([README](README.md#deploy-to-aws)) | AWS account, a domain | 45 min, about $0.20/hour |
 
-**What is in the submission, and what is Phase 2.** The submitted state is the `v1.0-zoomcamp` tag.
+**What is in the submission, and what is Phase 2.** The submitted state is the commit SHA given in the course submission.
 The full table is in [product-spec.md → Scope](product-spec.md#scope).
 
 | In the submission (Phase 1, Oct 26) | Phase 2 (Nov 16) |
@@ -45,10 +45,10 @@ The full table is in [product-spec.md → Scope](product-spec.md#scope).
 
 **No-install tour of the demo site** (a reload resets it):
 
-1. Open the [demo site](https://consoletrack-demo.jennasrunbooks.com). No login.
-2. **Incidents**: open **INC-11**, the OOM incident the agent diagnosed and the policy gate fixed on its own. Read the root cause, the proposal, and the remediation steps (validate, dry run, patch, rollout, verify).
-3. **Change log**: open the change waiting for review. Read the agent's summary and risk, the drift lines, and the evidence.
-4. Open the postmortem editor from an incident.
+1. Open the [demo site](https://consoletrack-demo.jennasrunbooks.com). No login. The "Take the 2-minute tour" banner lists the three stops below.
+2. **INC-11**: an out-of-memory incident the agent diagnosed and the policy gate fixed automatically. Read the evidence and the verified fix.
+3. **INC-14**: a real recorded run where an admin approves the fix by hand. Approve it, then try **Edit postmortem**.
+4. **A console change waiting for review**: SSH opened to the internet. See who made it and what it touched.
 5. Screenshots of all of this, light and dark, are in [docs/screenshots/](docs/screenshots/).
 
 **Local path in detail.** Setup is in [README → Try it without AWS](README.md#try-it-without-aws).
@@ -153,7 +153,7 @@ Points are the rubric's maximum. Where something is partial, it says so.
 
 - **Asks:** an agent wakes on an alert and fixes the issue.
 - **Evidence:**
-  - [docs/remediation-graduation.md](docs/remediation-graduation.md): [criteria](docs/remediation-graduation.md#graduation-criteria), [gate](docs/remediation-graduation.md#the-gates-checks), and [eval results](docs/remediation-graduation.md#eval-results-and-the-confidence-floor) (per-run tables; the result files themselves are gitignored).
+  - [docs/remediation-graduation.md](docs/remediation-graduation.md): [criteria](docs/remediation-graduation.md#graduation-criteria), [gate](docs/remediation-graduation.md#the-gates-checks), and [eval results](docs/remediation-graduation.md#eval-results-and-the-confidence-floor).
   - Eval: 5/5 on Haiku (the default `TRIAGE_MODEL`) and 5/5 on Sonnet, both at `minConfidence: medium`; the proposal was correct in 20 of 20 runs.
   - Code: [policy_gate.py](backend/app/services/policy_gate.py), [remediation_validator.py](backend/app/services/remediation_validator.py).
   - Spec: [product-spec.md → Remediation modes](product-spec.md#remediation-modes). Built in [issue #34](https://github.com/jennasrunbooks/consoletrack/issues/34) / [PR #63](https://github.com/jennasrunbooks/consoletrack/pull/63).

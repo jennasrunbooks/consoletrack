@@ -7,4 +7,4 @@ own commit, and deletes it from here.
 
 ## Proposed now
 
-- `pages.yaml`: publishes the recorded demo site to GitHub Pages (#89). All actions are pinned by SHA.
+None. `pages.yaml` (the recorded demo site on GitHub Pages, #89) was moved to `.github/workflows/`.
