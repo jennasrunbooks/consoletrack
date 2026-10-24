@@ -658,8 +658,8 @@ No longer graded but kept, because they make the build reliable: the OpenAPI con
 | **Go/no-go check: three runs of the slice on kind, fault to auto-fix to resolved** | **Oct 22 (passed: GO for Oct 26)** |
 | EKS deploy: `make up`/`down`, `create-secrets.sh`, `deploy.yaml` green, HTTPS ALB at `DOMAIN` | Oct 22 – Oct 23 (done) |
 | OOM fault sized from measurements (158–159 MiB peak on kind and EKS); 3 of 3 runs on kind | Oct 23 (done) |
-| Change intake worker: SQS consumer, CloudTrail parser, canary, intake health | Oct 23 – Oct 24 |
-| Recorded demo site on GitHub Pages; README video and screenshots | Oct 23 – Oct 24 |
+| Change intake worker: SQS consumer, CloudTrail parser, canary, intake health, change analysis (done Oct 23, verified on EKS) | Oct 23 – Oct 24 |
+| Recorded demo site on GitHub Pages (live Oct 23 at consoletrack-demo.jennasrunbooks.com, done); README video and screenshots | Oct 23 – Oct 24 |
 | `make eval-oom` 5 of 5; demo-app Terraform root; security-group scenario on EKS | Oct 24 |
 | `aws-mcp`; the identity scenario if it works by Oct 26, 3 pm | Oct 24 – Oct 26 |
 | README, rubric check, recorded walkthrough of the EKS deployment | Oct 24 – Oct 26 |
