@@ -229,3 +229,26 @@ export function readableResult(excerpt: string): string {
     return excerpt; // not JSON, or cut off at the 8,000-character excerpt limit
   }
 }
+
+/**
+ * A source IP for the screen: IPv4 keeps its /24 (`198.51.100.x`), IPv6 its first four groups
+ * (`2001:db8:1:2::/64`). Anything else (`AWS Internal`, a service name) is shown as it is. The
+ * full address stays in the API for admins; this keeps it out of screenshots and recordings.
+ */
+export function maskSourceIp(ip: string): string {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (v4) return `${v4[1]}.${v4[2]}.${v4[3]}.x`;
+  if (ip.includes(":") && /^[0-9a-fA-F:]+$/.test(ip)) {
+    const [head] = ip.split("::");
+    const groups = head.split(":").filter(Boolean).slice(0, 4);
+    return `${groups.join(":")}::/64`;
+  }
+  return ip;
+}
+
+/** `text` with every occurrence of `ip` replaced by its masked form (for request parameters). */
+export function maskIpIn(text: string, ip: string | null | undefined): string {
+  if (!ip) return text;
+  const masked = maskSourceIp(ip);
+  return masked === ip ? text : text.split(ip).join(masked);
+}

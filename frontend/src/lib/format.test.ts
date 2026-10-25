@@ -1,4 +1,6 @@
 import {
+  maskIpIn,
+  maskSourceIp,
   changeLabel,
   duration,
   incidentTitle,
@@ -89,4 +91,15 @@ describe("change detail helpers", () => {
     expect(utcTime("2026-10-14T14:52:07Z")).toBe("Oct 14, 2026 14:52:07 UTC");
     expect(utcTime("garbage")).toBe("garbage");
   });
+});
+
+describe("maskSourceIp", () => {
+  it("keeps an IPv4 address's /24", () => expect(maskSourceIp("198.51.100.7")).toBe("198.51.100.x"));
+  it("keeps an IPv6 address's /64", () => expect(maskSourceIp("2001:db8:1:2:3:4:5:6")).toBe("2001:db8:1:2::/64"));
+  it("leaves non-addresses alone", () => {
+    expect(maskSourceIp("AWS Internal")).toBe("AWS Internal");
+    expect(maskSourceIp("ec2.amazonaws.com")).toBe("ec2.amazonaws.com");
+  });
+  it("masks the address inside request parameters", () =>
+    expect(maskIpIn('{"cidrIp": "198.51.100.7/32"}', "198.51.100.7")).toBe('{"cidrIp": "198.51.100.x/32"}'));
 });

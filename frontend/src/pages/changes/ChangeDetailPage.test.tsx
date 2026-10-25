@@ -54,7 +54,8 @@ describe("change detail", () => {
     expect(facts.getByText("assumed-role/ct-demo-developer/jdev")).toBeInTheDocument();
     expect(facts.getByText("AWS console")).toBeInTheDocument();
     expect(facts.getByText("AuthorizeSecurityGroupIngress")).toBeInTheDocument();
-    expect(facts.getByText("203.0.113.24")).toBeInTheDocument();
+    expect(facts.getByText("203.0.113.x", { exact: false })).toBeInTheDocument();
+    expect(facts.queryByText(/203\.0\.113\.24/)).not.toBeInTheDocument();
     expect(facts.getByText("sg-0a1b2c3d4e5f60718 (demo-app-sg)")).toBeInTheDocument();
     expect(facts.getByText("terraform/demo-app/us-east-1 · aws_security_group.demo_app")).toBeInTheDocument();
     expect(facts.getByText("7f3e2a10-9c4b-4d8e-b1a6-2c5d0e8f9a31")).toBeInTheDocument();
@@ -227,6 +228,21 @@ describe("change detail", () => {
     expect(decision.getByText("FinOps tagging; codify the tag in the next demo-app pull request.")).toBeInTheDocument();
     expect(decision.queryByRole("button")).toBeNull();
     expect(within(card("Terraform expects vs. live")).getByText(/No drift recorded yet/)).toBeInTheDocument();
+  });
+
+  it("masks the source IP until an admin clicks Show", async () => {
+    const { user } = await renderChange(42);
+    const facts = within(card("What happened"));
+    expect(facts.queryByText(/203\.0\.113\.24/)).not.toBeInTheDocument();
+    await user.click(facts.getByRole("button", { name: "Show the full source IP" }));
+    expect(facts.getByText("203.0.113.24")).toBeInTheDocument();
+  });
+
+  it("never offers viewers the full source IP", async () => {
+    await renderChange(42, "viewer");
+    const facts = within(card("What happened"));
+    expect(facts.getByText("203.0.113.x")).toBeInTheDocument();
+    expect(facts.queryByRole("button", { name: "Show the full source IP" })).not.toBeInTheDocument();
   });
 
   it("gives viewers every action disabled with 'Admin only'", async () => {
