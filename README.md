@@ -107,9 +107,20 @@ cp .env.example .env
 export ANTHROPIC_API_KEY=...   # or keep it in a password manager: op run --env-file=.env -- make local
 make local                     # a kind cluster with Prometheus and the demo app, then Docker Compose
 # open http://localhost:8080 (DASHBOARD_PORT) and log in as admin with the password make local prints
+make local-replay-fixtures     # load recorded AWS console/CLI changes into the change log (see below)
 ```
 
-The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, the replayed CloudTrail change flow, is still a stub (#15).
+**The change log starts empty.** There is no AWS account locally, so nothing reaches the change queue until you load
+the recorded CloudTrail events: `make local-replay-fixtures` sends them to the local SQS-compatible queue (ElasticMQ),
+and within about a minute the change log shows them: a console security-group change, a CLI `PutRolePolicy`, a
+`terraform apply` from a laptop, and more, each with who, how, and risk. The agent analyzes each one (it uses your
+API key; a few cents). Run it again any time: duplicates are ignored. Read-only and pipeline events in the fixtures are
+filtered out on purpose, and the canary event updates intake health instead of adding a change.
+
+The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". In replay mode the
+agent's AWS lookups aren't available (`aws-mcp` runs on EKS), so its summaries say AWS evidence was unavailable.
+`make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, which
+will do all of this in one command, is Phase 2 (#15).
 
 **Run a fault scenario.** This is the on-call loop end to end on kind. A fault breaks the demo app, and the traffic generator's requests start failing. `DemoAppHighErrorRate` fires and Alertmanager posts it to the backend, which opens an incident. The triage worker then investigates through `k8s-mcp` and the Claude API, and proposes a fix for a human to approve.
 

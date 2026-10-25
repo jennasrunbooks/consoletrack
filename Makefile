@@ -169,7 +169,7 @@ todo = @echo "make $@: Phase 2, not built yet (planned for Nov 16). $(1)." >&2; 
 	preflight bootstrap up down down-all verify-clean dns-clean wait-for-url logins addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom local-replay-fixtures measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -676,11 +676,14 @@ local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` 
 	fi
 	rm -f kind-internal.kubeconfig kind-remediator.kubeconfig kind-remediation-policies.yaml
 
-replay-fixtures: ## Send the recorded CloudTrail fixtures to Compose's ElasticMQ (the worker records them)
+local-replay-fixtures: ## Load the recorded CloudTrail changes into make local's change log (the worker records them, the agent analyzes them)
 	$(BACKEND_RUN) python ../scripts/replay-fixtures.py
 
+# The earlier name, kept so existing notes and muscle memory still work.
+replay-fixtures: local-replay-fixtures
+
 demo-replay: ## [Phase 2] Local stack with recorded CloudTrail events, no AWS
-	$(call todo,Tracked in #15; today make replay-fixtures loads the recorded events into ElasticMQ)
+	$(call todo,Tracked in #15; today make local-replay-fixtures loads the recorded events into ElasticMQ)
 
 demo: ## [Phase 2] Run the three cluster fault scenarios
 	$(call todo,Today make local-fault (kind) and make fault (EKS) run one fault at a time)
