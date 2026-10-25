@@ -1,6 +1,8 @@
-# Reviewing ConsoleTrack for the course
+# Reviewing ConsoleTrack for the AI Dev Tools Zoomcamp
 
-A guide for peers grading this project against the
+ConsoleTrack is a final project for the DataTalksClub
+[AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) course. This guide is
+for peers grading it against the
 [course rubric](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md)
 (12 criteria, 24 points, 10 to pass). Each criterion below has the evidence and the shortest check.
 You don't need AWS for any of it.

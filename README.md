@@ -14,7 +14,7 @@ ConsoleTrack catches every out-of-band AWS change within minutes, records who ma
 
 No logins are shared and no cluster is kept running for visitors: these four are the ways to see it.
 
-Reviewing for the course? Start with [REVIEWING.md](REVIEWING.md).
+Reviewing for the [AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) course? Start with [REVIEWING.md](REVIEWING.md).
 
 | Incident fixed automatically | Change log |
 |---|---|
