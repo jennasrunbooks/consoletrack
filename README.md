@@ -1,6 +1,7 @@
 # ConsoleTrack
 
-<!-- TODO badges: CI | License -->
+[![CI](https://github.com/jennasrunbooks/consoletrack/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/jennasrunbooks/consoletrack/actions/workflows/ci.yaml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Someone opens the AWS console (or the CLI, CloudShell, an SDK script, or a local `terraform apply`), changes a security group, and moves on. Nobody records why. A week later a pod gets `AccessDenied` and the on-call engineer starts from scratch.
 
@@ -9,10 +10,12 @@ ConsoleTrack catches every out-of-band AWS change within minutes, records who ma
 ## See it in 2 minutes
 
 - **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and the policy gate fixed on its own, a real recorded OOM run where you approve the fix by hand, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it.
-- **Recorded walkthrough of the live deployment:** <!-- TODO: YouTube link once recorded --> the system running on EKS, clicked through as admin, on the Jenna's Runbooks YouTube channel.
+- **Recorded walkthrough of the live deployment ([3:30 on YouTube](https://youtu.be/dhfp_0nMhyo)):** the system running on EKS, clicked through as admin, on the Jenna's Runbooks YouTube channel.
 - **Run it yourself:** `make local` on your machine with kind and Docker ([Try it without AWS](#try-it-without-aws)), or `make up` in your own AWS account ([Deploy to AWS](#deploy-to-aws)).
 
 No logins are shared and no cluster is kept running for visitors: these four are the ways to see it.
+
+Reviewing for the [AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) course? Start with [REVIEWING.md](REVIEWING.md).
 
 | Incident fixed automatically | Change log |
 |---|---|
@@ -21,8 +24,6 @@ No logins are shared and no cluster is kept running for visitors: these four are
 | ![Change detail](docs/screenshots/change-details.png) | ![Incidents](docs/screenshots/incidents.png) |
 
 <sub>Dark-theme versions are in [docs/screenshots/](docs/screenshots/).</sub>
-
-**Reviewing this project for the course?** The [rubric table](#course-rubric-mapping) at the end maps every criterion to where its evidence is. The demo site is the quickest look; `make local` is the full system on your laptop.
 
 <sub>The EKS screenshot of a real console change, with the agent's summary, is [docs/screenshots/eks/](docs/screenshots/eks/); the account ID and source IP are blacked out.</sub>
 
@@ -438,29 +439,30 @@ consoletrack/
 
 ## Roadmap
 
-- **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; the security-group cloud scenario (and the demo role permission scenario if it's working by Oct 26) and three cluster faults; the recorded demo site; automatic fix for the OOM fault (the first remediation kind to graduate); OpenTelemetry traces, metrics, and logs in Grafana, with an alert on user impact; the dashboard; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team and extension pack.
-- **Phase 2 (Nov 16):** the gated Revert workflow; Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); the eval harness (`make eval`: each scenario N times, reporting attribution accuracy, time to triage, and cost per triage); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); the next remediation kinds to graduate (rollback of a bad image, probe fixes).
-- **Later:** Slack notifications and analytics; network-path incidents; the production hardening path.
-- **Later:** a NAT gateway per AZ, or fck-nat as a raw NAT instance under `/ct/` to cut the NAT cost; Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
+- **Phase 1 (Oct 26, submitted):** CloudTrail change intake with intake health and a canary; change records, the agent's analysis through the read-only `aws-mcp`, and Accept; Alertmanager incidents triaged through the read-only `k8s-mcp`; the security-group scenario (made by hand in the console) and three cluster faults; the automatic, verified fix for the OOM fault (the first remediation kind to graduate, eval 5/5 on Haiku and on Sonnet); OpenTelemetry traces, metrics, and logs in Grafana with Tempo and Loki, on EKS and with `make local`, plus an alert on user impact; the dashboard and the recorded demo site; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team, context docs, and the guard hooks.
+- **Phase 2 (Nov 16):** the gated Revert workflow; Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); the eval harness (`make eval` for every scenario); the IAM scenarios (demo app role permission removed; Pod Identity association, trust policy, KMS key policy) on the demo-app Terraform root; attribute-level drift from `terraform plan -refresh-only`; the Phase 1 stubs (`make demo-replay` with `aws-mcp`'s fixtures mode, `make demo-drift`, `make demo-identity`, the domain targets); a link from each incident and change to its Grafana trace; an evidence-based policy gate instead of self-reported confidence; the agent extension pack's skills and reviewer subagent; dev auto-deploy with production deploys behind approval; the next remediation kinds to graduate (rollback of a bad image, probe fixes).
+- **Later:** Slack notifications and analytics; network-path incidents; the production hardening path (a NAT gateway per AZ or fck-nat, Claude through Bedrock over PrivateLink, ECR pull-through cache, a private API endpoint with Argo CD, Argo CD out-of-sync events as a change source); multi-region and multi-account watching (hub and spoke).
 
 ## Course rubric mapping
+
+Step-by-step checks for each criterion are in [REVIEWING.md](REVIEWING.md).
 
 Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp) final project ([criteria](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md): 12 criteria, 24 points, 10 to pass).
 
 | Criterion | Points | Where to look |
 |---|---|---|
-| Problem description | 2 | The opening of this README |
-| Product specification | 2 | [product-spec.md](product-spec.md) and the public [issue tracker](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue): acceptance criteria on every issue, agent PRs that close them |
-| Agent team specification | 2 | [docs/agent-team.md](docs/agent-team.md) |
-| Context management | 2 | [AGENTS.md](AGENTS.md) and its "Where to read more" index |
-| Application | 2 | [Try it without AWS](#try-it-without-aws): `make local` starts the frontend, backend, and Postgres |
-| Testing | 2 | `make test-all`: unit, contract, integration (Testcontainers), and frontend tests; see [Testing and CI/CD](#testing-and-cicd) |
-| Containerization | 2 | [docker-compose.yaml](docker-compose.yaml), started by `make local` |
-| Deployment | 2 | EKS via [terraform/](terraform/) and [helm/](helm/) ([Deploy to AWS](#deploy-to-aws)); the recorded walkthrough of the live deployment, the EKS screenshots in [docs/screenshots/eks/](docs/screenshots/eks/), and the always-on [demo site](https://consoletrack-demo.jennasrunbooks.com) |
-| CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
-| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana with Tempo and Loki on EKS and with `make local`, with EKS screenshots ([docs/observability.md → Screenshots](docs/observability.md#screenshots)). On EKS, also Alertmanager and the Intake health dashboard |
-| Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `demo-app` chart's alert rules ([helm/charts/demo-app/templates/prometheusrule.yaml](helm/charts/demo-app/templates/prometheusrule.yaml)) |
-| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make local-oom-run` on kind: the alert, the diagnosis, the automatic fix, verified; the recorded incident in the demo site |
+| Problem description | 2 | [README opening](#consoletrack), [product-spec.md → Summary](product-spec.md#summary) · [check](REVIEWING.md#1-problem-description-2) |
+| Product specification | 2 | [product-spec.md](product-spec.md), [issues](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue), e.g. [#34](https://github.com/jennasrunbooks/consoletrack/issues/34) → [PR #63](https://github.com/jennasrunbooks/consoletrack/pull/63) · [check](REVIEWING.md#2-product-specification-2) |
+| Agent team specification | 2 | [docs/agent-team.md](docs/agent-team.md) · [check](REVIEWING.md#3-agent-team-specification-2) |
+| Context management | 2 | [AGENTS.md](AGENTS.md) → "Where to read more" · [check](REVIEWING.md#4-context-management-2) |
+| Application | 2 | [Try it without AWS](#try-it-without-aws) · [check](REVIEWING.md#5-application-2) |
+| Testing | 2 | [Testing and CI/CD](#testing-and-cicd), [measured counts](REVIEWING.md#numbers-measured-not-guessed) · [check](REVIEWING.md#6-testing-2) |
+| Containerization | 2 | [docker-compose.yaml](docker-compose.yaml) · [check](REVIEWING.md#7-containerization-2) |
+| Deployment | 2 | [terraform/](terraform/), [helm/](helm/), [Deploy to AWS](#deploy-to-aws), [EKS screenshot](docs/screenshots/eks/), [demo site](https://consoletrack-demo.jennasrunbooks.com), walkthrough video · [check](REVIEWING.md#8-deployment-2) |
+| CI/CD | 3 | [ci.yaml](.github/workflows/ci.yaml), [deploy.yaml](.github/workflows/deploy.yaml) · [check](REVIEWING.md#9-cicd-3) |
+| Observability | 2 | [docs/observability.md](docs/observability.md), [redaction test](backend/tests/unit/test_telemetry_redaction.py), [screenshots](docs/observability.md#screenshots); Tempo and Loki on EKS and with `make local` · [check](REVIEWING.md#10-observability-2) |
+| Alerting on user impact | 1 | [`DemoAppHighErrorRate`](helm/charts/demo-app/templates/prometheusrule.yaml) · [check](REVIEWING.md#11-alerting-on-user-impact-1) |
+| On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md), `make local-oom-run`, eval 5/5 on Haiku and on Sonnet ([results](docs/remediation-graduation.md#eval-results-and-the-confidence-floor)) · [check](REVIEWING.md#12-on-call-agent-2) |
 
 ## License
 

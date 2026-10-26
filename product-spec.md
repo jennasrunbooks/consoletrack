@@ -1,6 +1,6 @@
 # ConsoleTrack: Product Spec
 
-Last updated Oct 23, 2026
+Last updated Oct 26, 2026
 
 ## Summary
 
@@ -46,18 +46,20 @@ Phase 1 targets the Monday, Oct 26 submission (6 pm local time): every criterion
 | 1 (Oct 26) | Alertmanager webhook → incident; triage agent with read-only `k8s-mcp` | Symptom-driven trigger; core AI capability |
 | 1 (Oct 26) | CloudTrail trail + EventBridge rule + SQS → change records for out-of-band writes, plus intake health endpoint, header indicator, and canary | Change-driven trigger; the main differentiator |
 | 1 (Oct 26) | Read-only `aws-mcp`: CloudTrail lookup, IAM read and policy simulation, security group read, Terraform state lookup | Lets the agent connect a pod symptom to an AWS change |
-| 1 (Oct 26) | Scenarios: security group opened (no outage); demo app role permission removed (outage), which needs aws-mcp and the demo-app root and moves to Nov 16 if not working on Oct 26 | One demo per trigger |
-| 2 (Nov 16) | Revert through a gated GitHub workflow that re-applies the `terraform/demo-app/us-east-1` root | Fixes cloud drift without giving the app AWS write access |
+| 1 (Oct 26) | Scenario: security group opened to the internet (no outage), made by hand in the console | One demo per trigger |
 | 1 (Oct 26) | Dashboard: incidents, change log, evidence, approve/reject, postmortem editor; the same UI as an always-on recorded demo on GitHub Pages (sample data, no AWS) | Frontend criterion; makes changes documented |
 | 1 (Oct 26) | Cluster-side remediation (patch, rollout undo) through the policy gate: `manual` for every kind except `set_memory_limit` (see the OOM row) | Baseline faults and the auto-remediation path |
 | 1 (Oct 26) | Terraform + Helm on EKS, CI/CD, local run with one command, reviewer deploy, agent team and context docs | Graded criteria |
 | 1 (Oct 26) | Auto-remediation for the cluster OOM scenario: the first remediation kind to graduate to auto mode (memory-limit patch in the demo namespace, validated, verified, rolled back on failure). The scenario is the app outgrowing an unchanged 128Mi limit: the fault changes only the traffic generator, whose requests make the app's report cache grow to 140 MiB, so raising the limit to 256Mi is the right fix (measured on kind and EKS: a steady peak of 158–159 MiB, the 140 MiB cache plus about 19 MiB of app). An OOM that follows a revision which lowered the limit is fixed by a rollback instead, which stays manual. The backend labels the revisions it creates (consoletrack.io/remediation and consoletrack.io/action), so triage never reads its own fix as a human change or a rollback target | The on-call agent fixes an alert end to end; moved up from Phase 2 for the course rubric |
-| 1 (Oct 26) | Observability: OpenTelemetry traces, metrics, and structured logs sharing a trace ID across the incident journey, in Grafana (Tempo, Loki, Prometheus); an alert on user impact (demo app error rate); only alerts labeled consoletrack\_incident="true" open incidents, grouped by namespace and workload | Makes the on-call loop visible as one trace; course rubric |
+| 1 (Oct 26) | Observability: OpenTelemetry traces, metrics, and structured logs sharing a trace ID across the incident journey, in Grafana (Tempo, Loki, Prometheus; the collector sends metrics to Prometheus by remote write), on EKS and with make local; an alert on user impact (demo app error rate); only alerts labeled consoletrack\_incident="true" open incidents, grouped by namespace and workload | Makes the on-call loop visible as one trace; course rubric |
+| 2 (Nov 16) | Revert through a gated GitHub workflow that re-applies the `terraform/demo-app/us-east-1` root | Fixes cloud drift without giving the app AWS write access |
 | 2 (Nov 16) | Codify: agent drafts an HCL pull request adopting the change; CI plan must show no diff | Turns a good console change into code |
 | 2 (Nov 16) | Drift confirmation with a targeted `terraform plan -refresh-only` job | Exact attribute-level diff instead of request parameters |
-| 2 (Nov 16) | Scenarios: demo app's Pod Identity association or role trust policy changed; KMS key policy edited | Harder identity failures |
-| Later | Slack notifications; analytics (changes by principal, time to document, drift reverted vs codified) | Team visibility; moved behind Codify and the eval harness, which show more |
+| 2 (Nov 16) | Scenarios: demo app role permission removed (outage; needs the demo-app root); demo app's Pod Identity association or role trust policy changed; KMS key policy edited | Harder identity failures |
 | 2 (Nov 16) | Eval harness: `make eval` runs each scenario N times and reports attribution accuracy, time to triage, and cost per triage | Turns a demo of the agent into a measured agent; moved up from Later |
+| 2 (Nov 16) | A link from each incident and change in the dashboard to its trace and logs in Grafana (the EKS observability stack itself shipped Oct 26) | One click from an incident to the trace that shows what the agent and the backend did |
+| 2 (Nov 16) | Finish what Phase 1 stubbed: make demo-replay with aws-mcp's fixtures mode, the scripted make demo-drift and make demo-identity, the domain targets, and the agent extension pack's skills and reviewer subagent; an evidence-based policy gate (OOMKilled from k8s-mcp) in place of the model's self-reported confidence | One-command demos for reviewers; a gate that doesn't depend on the model rating itself |
+| Later | Slack notifications; analytics (changes by principal, time to document, drift reverted vs codified) | Team visibility; moved behind Codify and the eval harness, which show more |
 | Later | Network-path incidents (security groups, ALB target health, DNS, IP exhaustion) | Next domain, built on the same change intake |
 | Later | Production hardening path (a NAT gateway per AZ, fck-nat as a cheaper NAT instance under /ct/, Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD); watching more regions through EventBridge forwarding; Argo CD out-of-sync events as a change source; multi-account via an organization trail; headless Claude Code runner; commit tracing; security criterion artifacts | Beyond the course |
 
@@ -132,7 +134,7 @@ The triage worker sees Kubernetes only through `k8s-mcp` and AWS only through `a
 
 ## AWS design and cost
 
-The cluster runs only when needed, with private nodes and nothing public by default: about $0.20 an hour while up (about $0.23 with the optional ALB). At that rate, about 60 hours of building and testing cost roughly $12, while leaving it on for a whole month (730 hours) would cost about $145. Nothing stays up for reviewers: they see the recorded demo site and the walkthrough, or run \`make local\` or \`make up\` themselves. With on-demand nodes and the ALB, a recording session costs about $0.26 an hour, plus NAT data at $0.045/GB. The EKS control plane is the biggest line, so the main lever is still `terraform destroy` when idle.
+The cluster runs only when needed, with private nodes and nothing public by default: about $0.20 an hour while up (about $0.23 with the optional ALB). At that rate, about 60 hours of building and testing cost roughly $12, while leaving it on for a whole month (730 hours) would cost about $145. Nothing stays up for reviewers: they see the recorded demo site and the walkthrough, or run `make local` or `make up` themselves. With on-demand nodes and the ALB, a recording session costs about $0.26 an hour, plus NAT data at $0.045/GB. The EKS control plane is the biggest line, so the main lever is still `terraform destroy` when idle.
 
 **Terraform layout.** Code is organized by AWS account first, then by scope (global or a region), one root per folder, with one file per concern (`eks.tf`, `vpc.tf`, `iam.tf`, and so on) inside each root. Each top-level directory under terraform/ is named for the AWS account it targets. For the course, everything runs in one account, the ConsoleTrack hub, with one shared demo setup.
 
@@ -449,7 +451,7 @@ remediation:
       mode: auto              # graduation phase 1 (#34); manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
-      minConfidence: medium
+      minConfidence: medium   # Phase 1 eval: Haiku and Sonnet 5/5 at medium; Haiku 0/5 at high
       rateLimit: {perWorkload: 1, window: 1h}
       verify:
         rolloutTimeout: 3m
@@ -467,13 +469,13 @@ remediation:
 
 **What `auto` adds on top of the manual flow.**
 
-1. The gate checks, in order: the policy is `auto`; the kind isn't AWS-side; both kill switches are on; the incident is `awaiting_review`; confidence is high; no earlier auto fix failed on this workload; the rate limit; and the validator's checks that need no cluster. The first failure sends the proposal to a human, with the reason recorded in `gate_reason`.
+1. The gate checks, in order: the policy is `auto`; the kind isn't AWS-side; both kill switches are on; the incident is `awaiting_review`; confidence meets the policy's floor (medium for oom-memory-bump; see the graduation doc's eval results); no earlier auto fix failed verify on this workload (a run a backend restart interrupted doesn't count); the rate limit; and the validator's checks that need no cluster. The first failure sends the proposal to a human, with the reason recorded in `gate_reason`.
 2. The backend re-validates against the live Deployment, then runs a server-side dry run (`dryRun=All`). A refusal here downgrades the fix to manual.
 3. The backend applies a strategic-merge patch and waits up to 3 minutes for the rollout.
 4. Verify, within 5 minutes: no new OOM kill in the pods running the new limit, and either the `resolved` webhook arrived or the error ratio fell below 0.05. On failure the backend rolls back with the inverse patch, returns the incident to `awaiting_review`, and turns auto off for that workload.
 5. The remediation row records `decided_by = policy:oom-memory-bump`, the mode, the gate reason, the before and after values, and every step, and the dashboard shows it as auto-applied.
 
-**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for \`oom-memory-bump\`: three runs on kind (Oct 21), with \`make local-eval-oom\` (five runs on kind, results in eval/results/) as the evidence; if it doesn't pass 5/5, the policy goes back to \`manual\`. AWS-side kinds (\`revert\_workflow\`, \`codify\_pr\`) can never be \`auto\`: the backend and worker refuse to start with such a policy, and the chart fails to render.
+**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for `oom-memory-bump`: three runs on kind (Oct 21), then `make local-eval-oom` on Oct 24: 5 of 5 on Haiku (the default `TRIAGE_MODEL`, and what EKS runs) and 5 of 5 on Sonnet, with the proposal `set_memory_limit` → 256Mi for `demo/demo-app/demo-app` correct in 20 of 20 runs across the four evaluations. The policy's `minConfidence` is `medium`: at `high` the gate sent Haiku's runs to a human (0 of 5) and Sonnet's mostly so (1 of 5), because the agent's self-reported confidence varies between identical runs. What makes the fix safe is the kind allowlist, the namespace scope, the 2× and 512Mi bounds, verification, automatic rollback, and the one-per-hour limit. The per-run tables and the reasoning are in `docs/remediation-graduation.md`; Phase 2 replaces the confidence check with an evidence-based gate (`OOMKilled` from `k8s-mcp`). If a later change makes the eval fail, the policy goes back to `manual`. AWS-side kinds (`revert_workflow` and `codify_pr`) can never be `auto`: the backend and worker refuse to start with such a policy, and the chart fails to render.
 
 **Headless Claude Code runner (P2).** An alternative agent backend runs `claude -p` in a Kubernetes Job with only the `k8s-mcp` tools allowed and JSON output. It must return the same `submit_analysis` schema, so it passes through the same policy gate and needs no extra cluster permissions.
 
@@ -509,7 +511,7 @@ CI never calls the real Claude API or needs a running EKS cluster: the agent is 
 | Contract | pytest | FastAPI schema matches `openapi.yaml` | `make test-contract` |
 | Integration | pytest + Testcontainers Postgres | Webhook → incident → fake agent → approve → patch sent to a fake K8s client, all over HTTP | `make test-integration` |
 | Cluster integration | pytest + kind in Actions | `k8s-mcp` tools against a real API server with the real RBAC | `make test-k8s` |
-| Agent eval (manual) | script against kind | Three fault scenarios with the real model (Phase 2); today `make local-eval-oom` covers the OOM scenario, with results in `eval/results/` | `make eval` |
+| Agent eval (manual) | script against kind | Three fault scenarios with the real model (Phase 2); today `make local-eval-oom` covers the OOM scenario (5 of 5 on Haiku and on Sonnet; per-run tables in `docs/remediation-graduation.md`) | `make eval` |
 
 Integration tests live in `backend/tests/integration/` behind a pytest marker so the unit suite stays fast.
 
@@ -527,7 +529,7 @@ A fourth workflow, `revert.yaml`, is dispatched only by the backend. It runs in 
 
 **Which account each workflow deploys to.** Each account has its own directory, `terraform/<account>/...`, and its own GitHub environments (`<account>-plan`, `<account>-apply`, `<account>-revert`). Each environment stores that account's role ARN as an environment secret. The ARN isn't a credential, since OIDC stores no keys, but keeping it secret means the public repo and the workflow logs never show the account ID. Terraform never hardcodes account IDs; it reads them from aws\_caller\_identity. After authenticating, each job masks the bare account ID (from aws sts get-caller-identity), so logs hide it inside every ARN in the plan, not only the full role ARN. The plan comment on PRs replaces the account ID with a placeholder before it is posted, because masking doesn't apply to comments. This is best-effort hygiene, not a security boundary. The recorded CloudTrail fixtures for demo-replay use the placeholder 123456789012. `terraform.yaml` builds a matrix from the account directories a change touches, and each matrix job runs with its account's environments. For the course there is one entry, `consoletrack`, and `terraform/demo-app/us-east-1` uses the hub's roles: `ct-gh-plan-<suffix>`, `ct-gh-apply-<suffix>`, and `ct-gh-revert-<suffix>` (plus `ct-gh-deploy-<suffix>` for app deploys). Each role trusts only this repo, and the apply and revert roles trust only their environment. The trust matches GitHub's immutable-ID subject, `repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>` (from `GITHUB_OWNER_ID` and `GITHUB_REPO_ID`), so a deleted or renamed repo can't be re-created to inherit it; a fork whose tokens use the classic `repo:<owner>/<repo>:…` subject leaves both IDs empty. When `demo-app` becomes its own account, a new `terraform/demo-app/global/` root creates its GitHub OIDC provider and its `demo-app-gh-plan`, `demo-app-gh-apply`, and `demo-app-gh-revert` roles. The demo-app environments then get their own values, and it becomes a second matrix entry with no workflow changes. Each account trusting GitHub directly is preferred over going through the hub. A compromised hub role can't reach the spoke, and each account's CloudTrail shows which workflow run made each change.
 
-**Proof of deployment.** The deployment is shown, not kept running: a recorded walkthrough of the live EKS deployment, and \`make up\` for anyone with their own AWS account. Screenshots of the dashboard, Grafana, and a green deploy run stay valid after teardown. A short demo video on YouTube (alert fires → incident → auto-fix → resolved; console change → change record → Accept) is linked from the README and the demo site's banner; the recorded demo site stays up after teardown.
+**Proof of deployment.** The deployment is shown, not kept running: a recorded walkthrough of the live EKS deployment, and `make up` for anyone with their own AWS account. Screenshots of the dashboard, Grafana, and a green deploy run stay valid after teardown. The walkthrough video on YouTube (console change → change record → Accept; alert fires → incident → auto-fix → resolved; the incident's trace in Grafana) is linked from the README, `REVIEWING.md`, and the demo site's banner; the recorded demo site stays up after teardown.
 
 ## Repository layout
 
@@ -598,7 +600,7 @@ A peer reviewer with their own AWS account and Anthropic API key stands up the w
 4. `make demo` applies the three fault scenarios one at a time, waits for each incident to reach `awaiting_review`, and prints its link.
 5. `make down` runs `helmfile destroy` first (app releases, Gateway, then add-ons), then destroys `terraform/demo-app/us-east-1` and `terraform/consoletrack/us-east-1`, leaving `terraform/consoletrack/global` (roles, zone, optional budget) and the state bucket for next time. `make down-all` also destroys `global` and the state bucket for a fully clean account. `make verify-clean` lists any project-tagged load balancers, ENIs, EBS volumes, or public IPs still present and exits non-zero if it finds one.
 
-**No-AWS option.** `make local` runs the same stack on kind with Docker Compose, covering every criterion except cloud deployment, for which the README has the always-on recorded demo site, the recorded walkthrough of the EKS deployment, and screenshots of it. `make demo-replay` (Phase 2; `make replay-fixtures` already loads the fixtures into ElasticMQ) will fill in the cloud side without an AWS account: it replays the recorded CloudTrail events used by the change-flow integration tests into a local SQS-compatible queue (ElasticMQ), so the change log, change detail, agent analysis, and linked incident all appear as they would on EKS. The agent runs for real against the Claude API; its AWS lookups are answered from the same recorded fixtures through a `fixtures` mode of `aws-mcp` (also Phase 2). Revert and Codify are disabled in this mode and labeled "AWS required" in the UI, and the cluster-side faults (OOM, bad image, bad probe) work normally on kind.
+**No-AWS option.** `make local` runs the same stack on kind with Docker Compose, covering every criterion except cloud deployment, for which the README has the always-on recorded demo site, the recorded walkthrough of the EKS deployment, and screenshots of it. `make demo-replay` (Phase 2; `make local-replay-fixtures` already loads the fixtures into ElasticMQ) will fill in the cloud side without an AWS account: it replays the recorded CloudTrail events used by the change-flow integration tests into a local SQS-compatible queue (ElasticMQ), so the change log, change detail, agent analysis, and linked incident all appear as they would on EKS. The agent runs for real against the Claude API; its AWS lookups are answered from the same recorded fixtures through a `fixtures` mode of `aws-mcp` (also Phase 2). Revert and Codify are disabled in this mode and labeled "AWS required" in the UI, and the cluster-side faults (OOM, bad image, bad probe) work normally on kind.
 
 | Works on kind | Needs AWS |
 | --- | --- |
@@ -621,21 +623,23 @@ Reviewers who don't set up GitHub OIDC on their fork will still get a working Re
 
 The course rubric was revised on Oct 16, 2026: 12 criteria worth 24 points, with 10 needed to pass ([project README](https://github.com/DataTalksClub/ai-dev-tools-zoomcamp/blob/main/project/README.md)). Reviewing three other projects is also required to pass. ConsoleTrack targets 23 of 24; the third CI/CD point (automatic deploy to dev, manual deploy to production) is a stretch.
 
-| Criterion | Max | Target | Evidence a reviewer will find |
-| --- | --- | --- | --- |
-| Problem description | 2 | 2 | README opening: the problem, what the system does, the expected demo behavior |
-| Product specification | 2 | 2 | This spec, plus the public [issue tracker](https://github.com/jennasrunbooks/consoletrack/issues?q=is%3Aissue): every issue has acceptance criteria, and agent PRs close them (`Closes #N`) |
-| Agent team specification | 2 | 2 | `docs/agent-team.md`: roles, how an issue becomes a merged PR, rules for parallel agents, access by role |
-| Context management | 2 | 2 | `AGENTS.md`, with a "Where to read more" index to the modular docs (agent team, architecture, permissions, observability, remediation graduation) |
-| Application | 2 | 2 | `make local`: frontend → backend → Postgres, started with one command |
-| Testing | 2 | 2 | `make test-all`: backend unit and contract tests, integration tests on Testcontainers Postgres, frontend tests; one command, all passing |
-| Containerization | 2 | 2 | `docker-compose.yaml`: the full system including Postgres, started by `make local` |
-| Deployment | 2 | 2 | EKS via Terraform and Helmfile; a recorded walkthrough of the live EKS deployment, screenshots of it, and the always-on recorded demo site; \`make up\` deploys the same thing into a reviewer's own account |
-| CI/CD | 3 | 2 (3 stretch) | `ci.yaml` tests every PR; `deploy.yaml` deploys `main` to EKS automatically. Stretch: Helmfile `dev` deployed automatically, `prod` behind the `consoletrack-deploy` approval |
-| Observability | 2 | 2 | OpenTelemetry traces, metrics, and JSON logs sharing a trace ID across the incident journey, in Grafana with Tempo and Loki (the local stack from make local; on EKS, Prometheus and Alertmanager today, with Tempo and Loki to follow); a redaction test; `docs/observability.md` |
-| Alerting on user impact | 1 | 1 | `DemoAppHighErrorRate` (failed-request ratio seen by the demo traffic generator, so it fires even when the app is down) → Alertmanager → the backend's webhook |
-| On-call agent | 2 | 2 | An alert opens an incident, the agent diagnoses an OOM kill, the backend applies the validated memory-limit fix in auto mode, verifies it, and resolves the incident; `docs/remediation-graduation.md` |
-| **Total** | **24** | **23** |  |
+| Criterion | Max | Target |
+| --- | --- | --- |
+| Problem description | 2 | 2 |
+| Product specification | 2 | 2 |
+| Agent team specification | 2 | 2 |
+| Context management | 2 | 2 |
+| Application | 2 | 2 |
+| Testing | 2 | 2 |
+| Containerization | 2 | 2 |
+| Deployment | 2 | 2 |
+| CI/CD | 3 | 2 |
+| Observability | 2 | 2 |
+| Alerting on user impact | 1 | 1 |
+| On-call agent | 2 | 2 |
+| **Total** | **24** | **23** |
+
+The evidence for each criterion, and how a reviewer checks it, is in one place: `REVIEWING.md` at the repo root (the README links it). This spec keeps only the targets, so the two can't drift apart.
 
 No longer graded but kept, because they make the build reliable: the OpenAPI contract (it keeps the backend and frontend agents consistent), the agent extension pack (the coding agents' guardrails), and the security and permissions notes.
 
@@ -654,7 +658,7 @@ No longer graded but kept, because they make the build reliable: the OpenAPI con
 | **Thin slice:** kind half of `make local`, triage worker, incidents view with evidence | Oct 20 – Oct 21 (done) |
 | On-call auto-fix (OOM), shown on the incident page; CI runs only the jobs a change needs | Oct 20 – Oct 21 (done) |
 | Change detail, postmortem editor | Oct 21 (done) |
-| Observability: OpenTelemetry traces, metrics, and logs with a shared trace ID; Tempo, Loki, Grafana (local stack done; the EKS releases go in by Oct 26 if time allows, otherwise Phase 2) | Oct 21 – Oct 22 (done) |
+| Observability: OpenTelemetry traces, metrics, and logs with a shared trace ID; Tempo, Loki, Grafana (local stack done Oct 21; EKS done Oct 26) | Oct 21 – Oct 26 (done) |
 | **Go/no-go check: three runs of the slice on kind, fault to auto-fix to resolved** | **Oct 22 (passed: GO for Oct 26)** |
 | EKS deploy: `make up`/`down`, `create-secrets.sh`, `deploy.yaml` green, HTTPS ALB at `DOMAIN` | Oct 22 – Oct 23 (done) |
 | OOM fault sized from measurements (158–159 MiB peak on kind and EKS); 3 of 3 runs on kind | Oct 23 (done) |
