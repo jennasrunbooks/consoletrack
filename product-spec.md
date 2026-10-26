@@ -451,7 +451,7 @@ remediation:
       mode: auto              # graduation phase 1 (#34); manual | auto
       allowedChanges: [resources.limits.memory, resources.requests.memory]
       bounds: {maxMultiplier: 2, ceiling: 512Mi}
-      minConfidence: high
+      minConfidence: medium   # Phase 1 eval: Haiku and Sonnet 5/5 at medium; Haiku 0/5 at high
       rateLimit: {perWorkload: 1, window: 1h}
       verify:
         rolloutTimeout: 3m
@@ -475,7 +475,7 @@ remediation:
 4. Verify, within 5 minutes: no new OOM kill in the pods running the new limit, and either the `resolved` webhook arrived or the error ratio fell below 0.05. On failure the backend rolls back with the inverse patch, returns the incident to `awaiting_review`, and turns auto off for that workload.
 5. The remediation row records `decided_by = policy:oom-memory-bump`, the mode, the gate reason, the before and after values, and every step, and the dashboard shows it as auto-applied.
 
-**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for \`oom-memory-bump\`: three runs on kind (Oct 21), with \`make local-eval-oom\` (five runs on kind, results in eval/results/) as the evidence; if it doesn't pass 5/5, the policy goes back to \`manual\`. AWS-side kinds (\`revert\_workflow\`, \`codify\_pr\`) can never be \`auto\`: the backend and worker refuse to start with such a policy, and the chart fails to render.
+**Graduating a scenario to `auto`.** The scenario has a fault toggle in the `demo-app` chart, has passed `make eval` five runs in a row with the correct root cause and patch, and the policy change is merged by PR with the eval output attached. This mirrors the headless auto-response pattern from the 04-devops module, but opted in per alert rather than globally. Phase 1 evidence for `oom-memory-bump`: three runs on kind (Oct 21), then `make local-eval-oom` on Oct 24: 5 of 5 on Haiku (the default `TRIAGE_MODEL`, and what EKS runs) and 5 of 5 on Sonnet, with the proposal `set_memory_limit` → 256Mi for `demo/demo-app/demo-app` correct in 20 of 20 runs across the four evaluations. The policy's `minConfidence` is `medium`: at `high` the gate sent Haiku's runs to a human (0 of 5) and Sonnet's mostly so (1 of 5), because the agent's self-reported confidence varies between identical runs. What makes the fix safe is the kind allowlist, the namespace scope, the 2× and 512Mi bounds, verification, automatic rollback, and the one-per-hour limit. The per-run tables and the reasoning are in `docs/remediation-graduation.md`; Phase 2 replaces the confidence check with an evidence-based gate (`OOMKilled` from `k8s-mcp`). If a later change makes the eval fail, the policy goes back to `manual`. AWS-side kinds (\`revert\_workflow\`, \`codify\_pr\`) can never be \`auto\`: the backend and worker refuse to start with such a policy, and the chart fails to render.
 
 **Headless Claude Code runner (P2).** An alternative agent backend runs `claude -p` in a Kubernetes Job with only the `k8s-mcp` tools allowed and JSON output. It must return the same `submit_analysis` schema, so it passes through the same policy gate and needs no extra cluster permissions.
 
@@ -511,7 +511,7 @@ CI never calls the real Claude API or needs a running EKS cluster: the agent is 
 | Contract | pytest | FastAPI schema matches `openapi.yaml` | `make test-contract` |
 | Integration | pytest + Testcontainers Postgres | Webhook → incident → fake agent → approve → patch sent to a fake K8s client, all over HTTP | `make test-integration` |
 | Cluster integration | pytest + kind in Actions | `k8s-mcp` tools against a real API server with the real RBAC | `make test-k8s` |
-| Agent eval (manual) | script against kind | Three fault scenarios with the real model (Phase 2); today `make local-eval-oom` covers the OOM scenario, with results in `eval/results/` | `make eval` |
+| Agent eval (manual) | script against kind |  Three fault scenarios with the real model (Phase 2); today `make local-eval-oom` covers the OOM scenario (5 of 5 on Haiku and on Sonnet; per-run tables in `docs/remediation-graduation.md`) | `make eval` |
 
 Integration tests live in `backend/tests/integration/` behind a pytest marker so the unit suite stays fast.
 
