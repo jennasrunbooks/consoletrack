@@ -230,12 +230,12 @@ describe("change detail", () => {
     expect(within(card("Terraform expects vs. live")).getByText(/No drift recorded yet/)).toBeInTheDocument();
   });
 
-  it("masks the source IP until an admin clicks Show", async () => {
-    const { user } = await renderChange(42);
+  it("redacts the source IP for display, with nothing to reveal", async () => {
+    await renderChange(42);
     const facts = within(card("What happened"));
+    expect(facts.getByText("203.0.x.x")).toBeInTheDocument();
     expect(facts.queryByText(/203\.0\.113\.24/)).not.toBeInTheDocument();
-    await user.click(facts.getByRole("button", { name: "Show the full source IP" }));
-    expect(facts.getByText("203.0.113.24")).toBeInTheDocument();
+    expect(facts.queryByRole("button", { name: "Show the full source IP" })).not.toBeInTheDocument();
   });
 
   it("never offers viewers the full source IP", async () => {
