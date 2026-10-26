@@ -133,20 +133,22 @@ You can also search in **Explore → Tempo** with TraceQL, e.g. `{ name = "alert
 
 ### Screenshots
 
-From a `make local` run with `FAULT=oom` on kind, where the auto fix succeeded (#33).
+From EKS (#99): `make fault FAULT=oom` on the cluster, with Tempo, Loki, and the collector from [On EKS](#on-eks). This is incident 3, the second OOM within an hour. The gate sent it to a human because of `oom-memory-bump`'s rate limit (one auto fix per workload per hour), and an admin approved the fix.
 
-The whole journey in one trace, with the tool calls collapsed. The apply loop's spans (`consoletrack-api`) continue the worker's trace from the remediation row, and `incident.resolve` arrives with the resolved notification about three minutes later:
+The whole journey in one trace. `triage.run` ends about 22 seconds in with `remediation.gate`. The apply loop's `remediation.validate` / `apply` / `verify` (`consoletrack-api`) start once the admin approves, about seven minutes later, and continue the trace from the remediation row. `alert.receive` → `incident.resolve` arrives with the resolved notification at the end:
 
-![The incident's trace from alert.receive to incident.resolve](screenshots/observability-trace-resolve.png)
+![The incident's trace on EKS from alert.receive to incident.resolve](screenshots/eks-observability-trace-resolve.png)
 
-The triage expanded: each `mcp.call` with FastMCP's client span and k8s-mcp's server span below it, and the Anthropic SDK's `anthropic.messages.create` spans between them:
+The triage reaching k8s-mcp: an `mcp.call` expanded to FastMCP's `tools/call get_pods` client span and k8s-mcp's server span below it, with the client span's attributes open:
 
-![triage.run with its mcp.call spans reaching k8s-mcp](screenshots/observability-trace.png)
+![triage.run's mcp.call reaching k8s-mcp's tools/call get_pods](screenshots/eks-observability-trace.png)
 
-**Related logs** on `triage.run`: Loki's lines for the trace, including the apply loop's. The span's attributes are only the allowlisted ones:
+**Related logs** on `triage.run`. The span's attributes are only the allowlisted ones (`incident.id`, `triage.model`, `triage.outcome`, `triage.tool_calls`, `triage.escalated`). Loki shows the worker's lines for the trace, from `triage started` to the gate's decision, `mode=manual reason=rate limit: 1 auto fix(es) of demo/demo-app in the last 1:00:00`. The apply loop's lines come later than the window **Related logs** searches (5 minutes around the span), because the fix waited for a human:
 
-![Trace to logs: triage.run and its Loki lines side by side](screenshots/observability-trace-to-logs.png)
+![Trace to logs on EKS: triage.run and its Loki lines side by side](screenshots/eks-observability-trace-to-logs.png)
 
-The **Incident journey** dashboard after that run:
+The **Incident journey** dashboard on EKS after those runs. Its counters are totals since the backend and worker last started (here, the `make deploy` that turned observability on):
 
-![The Incident journey dashboard](screenshots/observability-dashboard.png)
+![The Incident journey dashboard on EKS](screenshots/eks-observability-dashboard.png)
+
+The same views from a `make local` run on kind (#33), where the fix went auto: [trace](screenshots/observability-trace-resolve.png), [triage](screenshots/observability-trace.png), [trace to logs](screenshots/observability-trace-to-logs.png), [dashboard](screenshots/observability-dashboard.png).

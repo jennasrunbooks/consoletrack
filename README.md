@@ -436,7 +436,7 @@ Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalks
 | Containerization | 2 | [docker-compose.yaml](docker-compose.yaml), started by `make local` |
 | Deployment | 2 | EKS via [terraform/](terraform/) and [helm/](helm/) ([Deploy to AWS](#deploy-to-aws)); the recorded walkthrough of the live deployment, the EKS screenshots in [docs/screenshots/eks/](docs/screenshots/eks/), and the always-on [demo site](https://consoletrack-demo.jennasrunbooks.com) |
 | CI/CD | 3 | [.github/workflows/](.github/workflows/): `ci.yaml` on every PR, `deploy.yaml` on `main` |
-| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana with Tempo and Loki (`make local`; screenshots in [docs/screenshots/](docs/screenshots/)). On EKS, Prometheus, Alertmanager, and the intake dashboard; Tempo and Loki there are in progress |
+| Observability | 2 | [docs/observability.md](docs/observability.md): one trace from alert to resolution, with metrics and logs, in Grafana with Tempo and Loki on EKS and with `make local`, with EKS screenshots ([docs/observability.md → Screenshots](docs/observability.md#screenshots)). On EKS, also Alertmanager and the Intake health dashboard |
 | Alerting on user impact | 1 | `DemoAppHighErrorRate` in the `demo-app` chart's alert rules ([helm/charts/demo-app/templates/prometheusrule.yaml](helm/charts/demo-app/templates/prometheusrule.yaml)) |
 | On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md); `make local-oom-run` on kind: the alert, the diagnosis, the automatic fix, verified; the recorded incident in the demo site |
 
