@@ -1,0 +1,13 @@
+# Dashboards for the Grafana sidecar in kube-prometheus-stack, which watches every namespace for
+# ConfigMaps labelled grafana_dashboard (helm/values/kube-prometheus-stack.yaml). A tier=addons
+# release, installed on eks only (`make local` mounts the same JSON into its Compose Grafana).
+#
+# helm/helmfile.yaml.gotmpl fills `dashboards` from observability/grafana/dashboards/, so the
+# JSON has one copy. Key: file name (ends in .json); value: the dashboard's JSON text. The chart's
+# own files/*.json (README.md) are added to these.
+dashboards: {}
+
+# The label and value the sidecar selects on (kube-prometheus-stack: grafana.sidecar.dashboards).
+sidecar:
+  label: grafana_dashboard
+  labelValue: "1"

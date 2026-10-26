@@ -36,6 +36,7 @@ Every key the Helmfile reads. `eks.yaml` and `local.yaml` set each one (most emp
 | `imageTag` | the commit SHA in `deploy.yaml` (`--state-values-set imageTag=<sha>`); `local` on kind | consoletrack and demo-app images |
 | `demoFault` | empty; `--state-values-set demoFault=oom` (or `badImage`, `badProbe`) for one run | demo-app's `faults.*`, and turns off wait and atomic for that sync |
 | `awsMcpEnabled` | `true` on eks, `false` on local until aws-mcp has a fixtures mode | the aws-mcp Deployment and the worker's `AWS_MCP_URL` |
+| `observability` | `true` on eks, `false` on local (Compose runs the stack) | the tempo, loki, otel-collector, and grafana-dashboards releases, and the consoletrack chart's `observability.enabled` (`TELEMETRY_EXPORTER`, `OTEL_EXPORTER_OTLP_ENDPOINT`) |
 | `intakeMode` | `live` on eks, `replay` on local | worker, backend |
 | `storageClass` | `gp3` on eks (cluster-defaults), `standard` on kind | Postgres volume |
 

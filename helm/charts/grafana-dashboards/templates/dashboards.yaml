@@ -1,0 +1,21 @@
+{{- /* files/*.json (upstream dashboards kept from kube-prometheus-stack, see the README) and the
+.Values.dashboards the Helmfile passes (ours, from observability/grafana/dashboards/). */}}
+{{- $all := dict }}
+{{- range $path, $_ := .Files.Glob "files/*.json" }}
+{{- $_ := set $all (base $path) ($.Files.Get $path) }}
+{{- end }}
+{{- $all = merge $all .Values.dashboards }}
+{{- range $file, $json := $all }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "grafana-dashboard-%s" (trimSuffix ".json" $file) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "grafana-dashboards.labels" $ | nindent 4 }}
+    {{ $.Values.sidecar.label }}: {{ $.Values.sidecar.labelValue | quote }}
+data:
+  {{ $file }}: |-
+    {{- $json | nindent 4 }}
+{{- end }}

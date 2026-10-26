@@ -11,6 +11,7 @@ helm/
     demo-app/             # the demo workload (demo namespace)
     gateway-api-crds/     # pinned upstream Gateway API CRDs wrapped as a chart
     cluster-defaults/     # cluster-scoped objects no other chart creates (gp3 StorageClass, ALB GatewayClass)
+    grafana-dashboards/   # dashboards for kube-prometheus-stack's Grafana sidecar (Incident journey and three kept defaults)
   values/                 # values for third-party releases
   environments/           # eks.yaml (default), local.yaml (kind); values.generated.yaml from .env (gitignored)
   tests/                  # checks over the rendered manifests; placeholder values for `make helm-lint`
@@ -23,6 +24,10 @@ helm/
 | `gateway-api-crds` | kube-system | `./charts/gateway-api-crds` (Gateway API v1.6.2) | addons | always | |
 | `cluster-defaults` | kube-system | `./charts/cluster-defaults` | addons | always (StorageClass on `eks`, GatewayClass with `alb`) | gateway-api-crds |
 | `kube-prometheus-stack` | monitoring | `prometheus-community/kube-prometheus-stack` 91.9.0 | addons | always | |
+| `tempo` | monitoring | `grafana-community/tempo` 3.1.0 | addons | `eks` (`observability`) | kube-prometheus-stack |
+| `loki` | monitoring | `grafana-community/loki` 18.15.1 | addons | `eks` (`observability`) | kube-prometheus-stack |
+| `otel-collector` | monitoring | `open-telemetry/opentelemetry-collector` 0.175.1 | addons | `eks` (`observability`) | kube-prometheus-stack, tempo, loki |
+| `grafana-dashboards` | monitoring | `./charts/grafana-dashboards` | addons | `eks` (`observability`) | kube-prometheus-stack |
 | `cloudnative-pg` | cnpg-system | `cnpg/cloudnative-pg` 0.29.1 | addons | always | |
 | `aws-load-balancer-controller` | kube-system | `eks/aws-load-balancer-controller` 3.5.0 | addons | `exposure == "alb"` | gateway-api-crds, cluster-defaults |
 | `external-dns` | kube-system | `external-dns/external-dns` 1.23.0 | addons | `domain != ""` | gateway-api-crds |
@@ -38,6 +43,8 @@ helm/
   all namespaced. CI's deploy role can't apply anything else (`docs/permissions.md`).
 - `consoletrack` needs `demo-app` because its Roles for `k8s-mcp`, the remediator, and the
   deployers go into the `demo` namespace, which the `demo-app` release creates.
+- Tempo, Loki, the collector, and `grafana-dashboards` are the EKS half of the observability
+  stack (`docs/observability.md` → On EKS); on kind, `make local` runs them in Compose.
 - Every release waits for readiness and rolls back a failed upgrade (`helmDefaults`).
 - Third-party chart versions are pinned in `helmfile.yaml.gotmpl` and bumped by hand: Dependabot
   only updates the local charts' `Chart.yaml` dependencies. Pick a release at least two weeks
@@ -108,5 +115,7 @@ configurations: `eks` and `eks-alb` with the placeholder Terraform outputs in `t
 and `local`. `helm/tests/test_rendered.py` then checks every container of ours for requests and
 limits, probes, `runAsNonRoot`, a read-only root filesystem, no privilege escalation, and dropped
 capabilities; that Secrets are referenced by name only; that the app charts are namespaced only;
-that `k8s-mcp`'s Roles are read-only without Secrets or ConfigMaps; that the remediator can only
+that Tempo, Loki, and the collector are hardened the same way (with requests and a memory limit),
+pinned by digest, use emptyDirs (no PVCs), and get no cluster-wide RBAC; that the Incident journey
+dashboard ConfigMap equals its source JSON; that `k8s-mcp`'s Roles are read-only without Secrets or ConfigMaps; that the remediator can only
 get and patch Deployments; and that the ALB only serves HTTPS to `ALLOWED_CIDRS`.

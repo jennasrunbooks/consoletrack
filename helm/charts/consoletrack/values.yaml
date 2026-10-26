@@ -61,6 +61,14 @@ secrets:
 # Role each. They must already exist; the demo-app release creates `demo`.
 allowedNamespaces: [demo]
 
+# Traces, metrics, and logs from the backend, worker, and k8s-mcp to the OpenTelemetry Collector
+# (docs/observability.md). Helmfile turns it on with the `observability` environment value (eks);
+# off, the processes export nothing. The collector, Tempo, and Loki are tier=addons releases.
+observability:
+  enabled: false
+  # OTLP/HTTP, the collector release's Service in the monitoring namespace.
+  endpoint: http://otel-collector.monitoring.svc.cluster.local:4318
+
 # Settings shared by the backend and the worker.
 app:
   # live, or replay (recorded CloudTrail fixtures; local only).

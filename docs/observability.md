@@ -1,6 +1,6 @@
 # Observability
 
-ConsoleTrack instruments one journey end to end, the on-call loop: an alert arrives, an incident opens, the agent triages, a fix is applied or proposed, and the incident resolves. Each incident is **one trace**, and its metrics and JSON logs share the trace ID. Locally, `make local` collects all three and shows them in Grafana (#33). On EKS, Prometheus, Alertmanager, the alert rules, and the Intake health dashboard run today; the collector, Tempo, Loki, and the Incident journey dashboard there are the next step (Phase 2 if they aren't ready by Oct 26).
+ConsoleTrack instruments one journey end to end, the on-call loop: an alert arrives, an incident opens, the agent triages, a fix is applied or proposed, and the incident resolves. Each incident is **one trace**, and its metrics and JSON logs share the trace ID. Locally, `make local` collects all three and shows them in Grafana (#33). On EKS the same collector pipeline, Tempo, Loki, and the Incident journey dashboard run in the cluster next to kube-prometheus-stack (#99, [On EKS](#on-eks)).
 
 Read this before you add a span, a metric, a log field, or an alert.
 
@@ -60,7 +60,7 @@ Every process logs one JSON object per line to stdout: `ts`, `level`, `logger`, 
 
 ## The user-impact alert
 
-`DemoAppHighErrorRate` lives in the demo-app chart ([helm/charts/demo-app/templates/prometheusrule.yaml](../helm/charts/demo-app/templates/prometheusrule.yaml), #59). It fires when more than 5% of the traffic generator's requests fail over 2 minutes, for 1 minute, with severity `critical`. It's measured on the client's side: an OOMKilled pod exports nothing, so a rule on the app's own counters would never fire. It carries `consoletrack_incident: "true"`, the label the consoletrack AlertmanagerConfig routes on, so Alertmanager posts it to `POST /api/v1/alerts/webhook`, which is where the journey starts. Symptom alerts such as `KubePodCrashLooping` don't carry it: they stay in Alertmanager and Grafana, where the agent can query them, instead of opening a second incident (#79). Don't add a second copy. `ConsoleTrackApiErrors`, an alert on the API's own 5xx rate, comes with the EKS PR as a `PrometheusRule` in the consoletrack chart.
+`DemoAppHighErrorRate` lives in the demo-app chart ([helm/charts/demo-app/templates/prometheusrule.yaml](../helm/charts/demo-app/templates/prometheusrule.yaml), #59). It fires when more than 5% of the traffic generator's requests fail over 2 minutes, for 1 minute, with severity `critical`. It's measured on the client's side: an OOMKilled pod exports nothing, so a rule on the app's own counters would never fire. It carries `consoletrack_incident: "true"`, the label the consoletrack AlertmanagerConfig routes on, so Alertmanager posts it to `POST /api/v1/alerts/webhook`, which is where the journey starts. Symptom alerts such as `KubePodCrashLooping` don't carry it: they stay in Alertmanager and Grafana, where the agent can query them, instead of opening a second incident (#79). Don't add a second copy. `ConsoleTrackApiErrors`, an alert on the API's own 5xx rate, isn't built yet; it would be a `PrometheusRule` in the consoletrack chart.
 
 ## Privacy
 
@@ -103,6 +103,24 @@ Images are pinned by tag and digest (Docker Hub, multi-arch). The configs follow
 The dashboard's journey panels (incidents opened and resolved, remediations, triage and time-to-resolve percentiles) read cumulative values since each process started. That way they show data after a single scenario run, where `rate()` over a series with one sample would show nothing. They reset when the backend or worker restarts. The request panels use `rate()`.
 
 `TELEMETRY_EXPORTER=none make local` runs the app without exporting anything; the stack still starts.
+
+## On EKS
+
+`make addons` installs four `tier=addons` releases in `monitoring` next to kube-prometheus-stack (`helm/helmfile.yaml.gotmpl`, `eks` environment only; on kind, `make local` keeps using Compose):
+
+| Release | Chart | Image | Storage | Memory request / limit |
+|---|---|---|---|---|
+| `otel-collector` | `open-telemetry/opentelemetry-collector` 0.175.1, Deployment | `otel/opentelemetry-collector-contrib:0.163.2` (same digest as Compose) | none | 64Mi / 192Mi (`memory_limiter` at 160 MiB) |
+| `tempo` | `grafana-community/tempo` 3.1.0, single binary | `grafana/tempo:3.1.1` | emptyDir, 24 h retention | 128Mi / 384Mi |
+| `loki` | `grafana-community/loki` 18.15.1, `deploymentMode: Monolithic` (single binary) | `grafana/loki:3.7.9` | emptyDir (filesystem), 24 h retention | 128Mi / 384Mi |
+| `grafana-dashboards` | `./charts/grafana-dashboards` | — | — | — |
+
+- **Collector config is not forked.** `helm/values/otel-collector.yaml.gotmpl` reads `observability/otel-collector/config.yaml` and merges `kind.yaml` over it, exactly as Compose does with kind, then changes only the three exporter endpoints to the in-cluster Services. Traces → `tempo:4318`, logs → `loki:3100/otlp`, metrics → kube-prometheus-stack's Prometheus by remote write (`enableRemoteWriteReceiver`, in `helm/values/kube-prometheus-stack-eks.yaml`). Metrics go by remote write, as with kind, because the apps export `ct_*` only over OTLP; they have no `/metrics` endpoint for those.
+- **Apps.** With the `observability` environment value (true on `eks`), the consoletrack chart sets `TELEMETRY_EXPORTER=otlp` and `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.monitoring.svc.cluster.local:4318` on the backend, the worker, and k8s-mcp. Without it they export nothing.
+- **Grafana.** `kube-prometheus-stack-eks.yaml` adds the Tempo and Loki datasources with the same UIDs and links as `observability/grafana/provisioning/datasources/datasources.yaml`, and opens on the Incident journey dashboard. `defaultDashboardsEnabled: false` drops the stack's ~30 default dashboards. The `grafana-dashboards` release ships the Incident journey dashboard, read from `observability/grafana/dashboards/incident-journey.json` at render time (one copy), plus the three defaults worth keeping: **Node Exporter / Nodes**, **Kubernetes / Compute Resources / Pod**, and **Alertmanager / Overview** ([its README](../helm/charts/grafana-dashboards/README.md)). Intake health stays in the consoletrack chart.
+- **Nothing persists.** Tempo and Loki keep data on emptyDirs, so a pod restart empties them and `make down` has no PVC to remove. None of the three mounts a service account token or gets cluster-wide RBAC.
+
+To open a trace on EKS, run `make fault FAULT=oom`. Then port-forward Grafana and log in with the command and password `make logins` prints (`kubectl … -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80`), and follow the steps below from step 3. `make down` destroys these releases with the other add-ons (`scripts/down-cluster.sh`).
 
 ## Opening the trace in Grafana
 
