@@ -16,7 +16,7 @@ export function DemoBanner() {
         {video && (
           <li>
             <a href={video} target="_blank" rel="noopener noreferrer">
-              Watch the 3:30 video
+              Watch the 3-min video
             </a>
           </li>
         )}
