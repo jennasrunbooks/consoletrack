@@ -86,11 +86,22 @@ flowchart TB
 The agent only reads; every fix goes through the policy gate (thick arrows).
 
 1. **Intake.** A CloudTrail trail feeds an EventBridge rule that keeps write events from people and scripts and drops pipeline sessions (`gh-<run id>`), AWS services acting on your behalf, and ConsoleTrack's own controllers. Matches land in an SQS queue with a dead-letter queue.
-2. **Change records.** The worker parses each event (who, `via` = console, CLI, CloudShell, SDK, or Terraform outside the pipeline, source IP, resource), dedupes it, looks up the resource's Terraform address, and stores a change record in Postgres.
+2. **Change records.** The worker parses each event (who, `via` = console, CLI, CloudShell, SDK, or Terraform outside the pipeline, source IP, resource), dedupes it, and stores a change record in Postgres. (Looking up the resource's Terraform address at intake is Phase 2; the agent can look it up today.)
 3. **Analysis.** The triage agent (Claude) reads the change and related CloudTrail activity through the read-only `aws-mcp` server and writes a summary, a risk rating, and options.
 4. **Incidents.** Alertmanager posts alerts to the backend, which opens an incident. The agent gathers pod evidence through the read-only `k8s-mcp` server; if logs show an AWS error such as `AccessDenied`, it links the incident to the recent change that caused it.
 5. **Review.** Revert, Codify (Phase 2), or Accept for changes; approve or reject the proposed fix for incidents. AWS-side fixes always need a human; the OOM memory-limit fix is the one cluster fix that runs automatically.
 6. **Intake health.** A canary CronJob makes a known, harmless change every 15 minutes, so the header indicator can tell "nothing changed" from "intake is broken": Live, Delayed, Down, or Replay.
+
+**Who does what.** There is one AI agent, the triage agent (Claude), run by the worker. The two MCP servers are its
+tools, not agents: they can only read. Fixes are applied by the backend, under its own narrowly scoped identity, and
+only after the policy gate allows them.
+
+| | Started by | The agent reads through | Fix applied by |
+|---|---|---|---|
+| **Change** (an out-of-band AWS write) | A CloudTrail event reaching the SQS queue (EventBridge rule) | `aws-mcp`: CloudTrail lookups, the security group's live rules, IAM role and policy reads and simulation, the Terraform state | Nobody automatically. A person Accepts it (Revert and Codify are Phase 2) |
+| **Incident** (a user-facing failure) | A Prometheus alert, e.g. `DemoAppHighErrorRate`: more than 5% of the traffic generator's requests failing for a minute | `k8s-mcp`: pods, restarts and termination reasons, events, logs, rollout history, metrics; plus `aws-mcp` when the logs show an AWS error such as `AccessDenied` | The backend's `remediator` identity (patch one Deployment in the `demo` namespace), automatically for the memory-limit fix within its bounds, after a person's Approve for everything else |
+
+`aws-mcp` runs on EKS only; under `make local` the agent works without it and says so in its summary.
 
 Full design: [product-spec.md](product-spec.md) · API: [openapi.yaml](openapi.yaml)
 
@@ -107,9 +118,20 @@ cp .env.example .env
 export ANTHROPIC_API_KEY=...   # or keep it in a password manager: op run --env-file=.env -- make local
 make local                     # a kind cluster with Prometheus and the demo app, then Docker Compose
 # open http://localhost:8080 (DASHBOARD_PORT) and log in as admin with the password make local prints
+make local-replay-fixtures     # load recorded AWS console/CLI changes into the change log (see below)
 ```
 
-The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, the replayed CloudTrail change flow, is still a stub (#15).
+**The change log starts empty.** There is no AWS account locally, so nothing reaches the change queue until you load
+the recorded CloudTrail events: `make local-replay-fixtures` sends them to the local SQS-compatible queue (ElasticMQ),
+and within about a minute the change log shows them: a console security-group change, a CLI `PutRolePolicy`, a
+`terraform apply` from a laptop, and more, each with who, how, and risk. The agent analyzes each one (it uses your
+API key; a few cents). Run it again any time: duplicates are ignored. Read-only and pipeline events in the fixtures are
+filtered out on purpose, and the canary event updates intake health instead of adding a change.
+
+The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". In replay mode the
+agent's AWS lookups aren't available (`aws-mcp` runs on EKS), so its summaries say AWS evidence was unavailable.
+`make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, which
+will do all of this in one command, is Phase 2 (#15).
 
 **Run a fault scenario.** This is the on-call loop end to end on kind. A fault breaks the demo app, and the traffic generator's requests start failing. `DemoAppHighErrorRate` fires and Alertmanager posts it to the backend, which opens an incident. The triage worker then investigates through `k8s-mcp` and the Claude API, and proposes a fix for a human to approve.
 

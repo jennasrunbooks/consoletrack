@@ -10,7 +10,7 @@ run by `deploy.yaml`), `down-cluster.sh` (the Helmfile half of `make down`),
 `print-logins.sh` (`make logins`, and the last block of `make up`: URLs and logins),
 `wait-for-url.sh` (`make wait-for-url`, the last step of `make up` with `EXPOSURE=alb`),
 `delete-leftover-enis.sh` (`make clean-enis`, and inside `make down`: the VPC CNI's leftover ENIs),
-`delete-state-bucket.sh` (`make down-all`), `replay-fixtures.py` (`make replay-fixtures`: the recorded CloudTrail fixtures to ElasticMQ for `INTAKE_MODE=replay`), `gh-deploy-config.sh` (`make gh-deploy-config`: deploy.yaml's repo variables and secrets), `gh-env-secrets.sh` (sets each GitHub environment's
+`delete-state-bucket.sh` (`make down-all`), `replay-fixtures.py` (`make local-replay-fixtures`: the recorded CloudTrail fixtures to ElasticMQ for `INTAKE_MODE=replay`), `gh-deploy-config.sh` (`make gh-deploy-config`: deploy.yaml's repo variables and secrets), `gh-env-secrets.sh` (sets each GitHub environment's
 `AWS_ROLE_ARN` from Terraform outputs; run by a human, never the agent), `test-k8s.sh`
 (`make test-k8s`: k8s-mcp against a throwaway kind cluster, in CI), `local-kind.sh` (the kind
 half of `make local`: the `consoletrack` cluster, kube-prometheus-stack, demo-app, k8s-mcp's
