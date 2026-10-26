@@ -39,7 +39,7 @@ The full table is in [product-spec.md → Scope](product-spec.md#scope).
 | Dashboard: incidents, change log, evidence, Accept, postmortem editor | Attribute-level drift from `terraform plan -refresh-only` |
 | Automatic OOM fix behind the policy gate | More remediation kinds (rollback, probe fixes) |
 | OpenTelemetry in Grafana (collector, Tempo, Loki, the Incident journey dashboard) on EKS and with `make local`; metrics reach Prometheus | A link from each incident and change to its Grafana trace |
-| Terraform + Helmfile on EKS, `make local`, CI/CD, agent team and extension pack | `make demo-replay` (still a stub) |
+| Terraform + Helmfile on EKS, `make local`, CI/CD, agent team and extension pack | `make demo-replay` (still a stub); dev auto-deploy with production behind approval |
 
 ## Three review paths
 
@@ -124,7 +124,7 @@ Points are the rubric's maximum. Where something is partial, it says so.
 
 - **Asks:** the whole system, including the database, starts with one command.
 - **Evidence:** [docker-compose.yaml](docker-compose.yaml) (Postgres, ElasticMQ, backend, dashboard, `k8s-mcp`, worker, and the observability stack); [compose/](compose/); the Dockerfiles under `backend/`, `frontend/`, `demo-app/`, `mcp-server/`; `make test-compose` checks the Compose invariants (loopback-only ports, no literal secrets, pinned images) without Docker.
-- **Verify:** `make local`; `docker compose ps` shows every service healthy. Images are arm64 for EKS and built for your machine locally.
+- **Verify:** `make local`; `docker compose ps` shows every service healthy. The Compose-only single command is `LOCAL_KIND=false make local`. It is a `make` target rather than a bare `docker compose up` so the admin password hash and generated secrets reach Compose correctly ([README → Try it without AWS](README.md#try-it-without-aws)). Images are arm64 for EKS and built for your machine locally.
 
 ### 8. Deployment (2)
 
@@ -138,8 +138,9 @@ Points are the rubric's maximum. Where something is partial, it says so.
 
 ### 9. CI/CD (3)
 
-- **Asks:** CI on every PR (1), plus automatic deploy (2), plus deploy to dev with a manual production deploy (3).
+- **Asks:** CI on every PR (1), plus automatic deploy (2), plus deploy to dev with a manual production deploy (3). ConsoleTrack claims 2 of 3: it has one environment, deployed automatically. Dev auto-deploy with production behind approval is Phase 2.
 - **Evidence:** [ci.yaml](.github/workflows/ci.yaml) (every PR and push, nightly; required checks `lint`, `test`, `terraform-fmt`); [deploy.yaml](.github/workflows/deploy.yaml) (green `main` → arm64 images to GHCR → `helmfile -l tier=app apply`); [terraform.yaml](.github/workflows/terraform.yaml) (plan on PRs, apply after approval); [README → Testing and CI/CD](README.md#testing-and-cicd). AWS access is GitHub OIDC; the deploy role only runs `-l tier=app`.
+- **Rollback paths:** a failed Helm deploy rolls itself back (releases are `atomic: true` in [helm/helmfile.yaml.gotmpl](helm/helmfile.yaml.gotmpl)), and a failed automatic fix is rolled back by the backend ([docs/remediation-graduation.md](docs/remediation-graduation.md)).
 - **Verify:** open any merged PR's checks; open the Actions tab for the `deploy` run after a green `ci` on `main`.
 
 ### 10. Observability (2)
