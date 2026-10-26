@@ -70,6 +70,25 @@ database. A run **passes** when the proposal is `set_memory_limit` → `256Mi` f
 `demo/demo-app/demo-app` **and** the auto fix succeeded, which also needs the gate to let it
 through. Results are written to [eval/results/](../eval/results/README.md).
 
+**Summary of the four evaluations (Oct 24).** Per-run tables follow.
+
+| Model | `minConfidence` | Result | Note |
+|---|---|---|---|
+| Haiku | high | 0/5 | proposal correct 5/5; confidence `medium` every run, so the gate sent all to manual |
+| Sonnet | high | 1/5 | proposal correct 5/5; only one run self-rated `high` |
+| Sonnet | medium | **5/5** | 3:00 to 4:30 from open to resolved |
+| Haiku | medium | **5/5** | 3:00 to 3:30; the default `TRIAGE_MODEL` |
+
+The proposal (`set_memory_limit` → `256Mi` for `demo/demo-app/demo-app`) was correct in **20 of 20**
+runs across both models. The graduation evidence covers both models. EKS runs the default (Haiku),
+so its 5/5 is the evidence for the shipped configuration; Sonnet's 5/5 shows the result doesn't
+depend on the model. The result files are gitignored (see [eval/results/](../eval/results/README.md)),
+so the per-run tables below are the record.
+
+**Next (Phase 2).** Gate on evidence (`OOMKilled` read through `k8s-mcp`) instead of self-reported
+confidence ([#100](https://github.com/jennasrunbooks/consoletrack/issues/100)), and a prompt v5
+that defines what `low`, `medium`, and `high` mean.
+
 **Haiku (`claude-haiku-5-5`, the default `TRIAGE_MODEL`): 0/5 PASS**
 
 | Run | Result | Diagnosis | Confidence | Proposal | Mode | Remediation | Model | Escalated | Tool calls | Input tokens | Output tokens | Incident open → resolved |
