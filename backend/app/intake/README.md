@@ -51,5 +51,5 @@ The change intake: CloudTrail → EventBridge → SQS → this worker → a chan
 
 `INTAKE_MODE=replay` reads ElasticMQ (`AWS_ENDPOINT_URL_SQS`, unsigned requests) instead of AWS,
 and writes no health report: the indicator shows Replay. Compose's worker is set up for it; with
-the stack up, `make replay-fixtures` sends `backend/tests/fixtures/cloudtrail/*.json` (see that
+the stack up, `make local-replay-fixtures` sends `backend/tests/fixtures/cloudtrail/*.json` (see that
 folder's README). `make demo-replay` wiring is #15.
