@@ -7,7 +7,7 @@ Someone opens the AWS console (or the CLI, CloudShell, an SDK script, or a local
 
 ConsoleTrack catches every out-of-band AWS change within minutes, records who made it, how, and to which Terraform-managed resource, and links later EKS incidents back to the change that most likely caused them. A reviewer can **Accept** it with a note, **Revert** it (a gated GitHub workflow re-applies the reviewed Terraform, Phase 2), or **Codify** it (open a PR adopting it, Phase 2). Either way the change ends up documented. The triage agent only reads. AWS-side fixes always need a human's approval; one narrow cluster fix, raising a memory limit after an OOM kill, is applied automatically, verified, and rolled back if it doesn't work.
 
-## See it in 2 minutes
+## See it in 3 minutes
 
 - **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and the policy gate fixed on its own, a real recorded OOM run where you approve the fix by hand, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it.
 - **Recorded walkthrough of the live deployment ([3:30 on YouTube](https://youtu.be/dhfp_0nMhyo)):** the system running on EKS, clicked through as admin, on the Jenna's Runbooks YouTube channel.
@@ -29,7 +29,7 @@ Reviewing for the [AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-de
 
 ## Contents
 
-- [See it in 2 minutes](#see-it-in-2-minutes)
+- [See it in 3 minutes](#see-it-in-3-minutes)
 - [How it works](#how-it-works)
 - [Try it without AWS](#try-it-without-aws)
 - [Deploy to AWS](#deploy-to-aws)
