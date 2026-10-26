@@ -229,3 +229,59 @@ export function readableResult(excerpt: string): string {
     return excerpt; // not JSON, or cut off at the 8,000-character excerpt limit
   }
 }
+
+/**
+ * A source IP for the screen: IPv4 keeps its /16 (`198.51.x.x`), IPv6 its first three groups
+ * (`2001:db8:1::/48`). Anything else (`AWS Internal`, a service name) is shown as it is. The
+ * full address stays in the API for admins; this keeps it out of screenshots and recordings.
+ */
+export function maskSourceIp(ip: string): string {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+  if (v4) return `${v4[1]}.${v4[2]}.x.x`;
+  if (ip.includes(":") && /^[0-9a-fA-F:]+$/.test(ip)) {
+    const head = ip.split("::")[0] ?? "";
+    const groups = head.split(":").filter(Boolean).slice(0, 3);
+    return `${groups.join(":")}::/48`;
+  }
+  return ip;
+}
+
+/** `text` with every occurrence of `ip` replaced by its masked form (for request parameters). */
+export function maskIpIn(text: string, ip: string | null | undefined): string {
+  if (!ip) return text;
+  const masked = maskSourceIp(ip);
+  return masked === ip ? text : text.split(ip).join(masked);
+}
+
+const ACCOUNT_ID = /(?<![\d.])\d{12}(?!\d)/g;
+const IPV4 = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\d|\.\d)/g;
+
+/** Private, loopback, link-local, CGNAT, and 0.0.0.0: shown as they are (`0.0.0.0/0` is the point of a rule). */
+function isNonPublicIpv4(a: number, b: number): boolean {
+  return (
+    a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/**
+ * Display-only redaction for recordings and screenshots: every 12-digit number (AWS account IDs,
+ * also inside ARNs) becomes `************`, and every public IPv4 address keeps only its /16
+ * (`198.51.x.x`). Applied to all API data as it reaches the page (useResource), so agent
+ * summaries, evidence, request parameters, and tooltips are covered too. The API is unchanged.
+ */
+export function redactText(text: string): string {
+  return text
+    .replace(ACCOUNT_ID, "************")
+    .replace(IPV4, (ip, a: string, b: string) => (isNonPublicIpv4(Number(a), Number(b)) ? ip : `${a}.${b}.x.x`));
+}
+
+/** `redactText` on every string inside a JSON-shaped value. */
+export function redactDeep<T>(value: T): T {
+  if (typeof value === "string") return redactText(value) as T;
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v)) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v)])) as T;
+  }
+  return value;
+}

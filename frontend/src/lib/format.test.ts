@@ -1,4 +1,7 @@
 import {
+  redactText,
+  maskIpIn,
+  maskSourceIp,
   changeLabel,
   duration,
   incidentTitle,
@@ -89,4 +92,26 @@ describe("change detail helpers", () => {
     expect(utcTime("2026-10-14T14:52:07Z")).toBe("Oct 14, 2026 14:52:07 UTC");
     expect(utcTime("garbage")).toBe("garbage");
   });
+});
+
+describe("maskSourceIp", () => {
+  it("keeps an IPv4 address's /16", () => expect(maskSourceIp("198.51.100.7")).toBe("198.51.x.x"));
+  it("keeps an IPv6 address's /48", () => expect(maskSourceIp("2001:db8:1:2:3:4:5:6")).toBe("2001:db8:1::/48"));
+  it("leaves non-addresses alone", () => {
+    expect(maskSourceIp("AWS Internal")).toBe("AWS Internal");
+    expect(maskSourceIp("ec2.amazonaws.com")).toBe("ec2.amazonaws.com");
+  });
+  it("masks the address inside request parameters", () =>
+    expect(maskIpIn('{"cidrIp": "198.51.100.7/32"}', "198.51.100.7")).toBe('{"cidrIp": "198.51.x.x/32"}'));
+});
+
+describe("redactText", () => {
+  it("hides account IDs, also inside ARNs", () =>
+    expect(redactText("arn:aws:iam::123456789012:role/x and 123456789012")).toBe(
+      "arn:aws:iam::************:role/x and ************",
+    ));
+  it("keeps a public IPv4's /16 and leaves 0.0.0.0/0 and private ranges alone", () =>
+    expect(redactText("from 198.51.100.7, rule 0.0.0.0/0, vpc 10.0.1.5 and 172.20.0.1")).toBe(
+      "from 198.51.x.x, rule 0.0.0.0/0, vpc 10.0.1.5 and 172.20.0.1",
+    ));
 });

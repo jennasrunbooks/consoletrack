@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "../api";
+import { redactDeep } from "./format";
 
 export interface Resource<T> {
   data: T | undefined;
@@ -32,7 +33,7 @@ export function useResource<T>(
     const controller = new AbortController();
     fetcherRef
       .current(controller.signal)
-      .then((data) => setState({ key, data, done: true }))
+      .then((data) => setState({ key, data: redactDeep(data), done: true }))
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
         const error = err instanceof ApiError ? err : new ApiError(0, { code: "client_error", message: String(err) });

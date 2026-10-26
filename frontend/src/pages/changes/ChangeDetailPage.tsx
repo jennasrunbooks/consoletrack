@@ -21,6 +21,8 @@ import {
   fullTime,
   INCIDENT_STATUS_LABELS,
   incidentTitle,
+  maskIpIn,
+  maskSourceIp,
   relativeTime,
   resourceId,
   RISK_LABELS,
@@ -553,9 +555,32 @@ function RevertDialog({
 
 // --- What happened -------------------------------------------------------------------------------
 
+/** Masked by default; admins can reveal it for this page view (never remembered). */
+function SourceIp({ ip, shown, onShow }: { ip: string; shown: boolean; onShow: () => void }) {
+  const user = useUser();
+  const masked = maskSourceIp(ip);
+  if (shown || masked === ip) return <>{ip}</>;
+  return (
+    <>
+      {masked}
+      {user.role === "admin" && (
+        <>
+          {" "}
+          <button type="button" className="link-button" onClick={onShow} aria-label="Show the full source IP">
+            Show
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
 function WhatHappened({ change: c }: { change: Change }) {
   const principal = c.principal_arn.split(":").slice(5).join(":") || c.principal_arn;
-  const params = c.request_parameters ? JSON.stringify(c.request_parameters, null, 2) : null;
+  const [ipShown, setIpShown] = useState(false);
+  const raw = c.request_parameters ? JSON.stringify(c.request_parameters, null, 2) : null;
+  // The caller's address is masked everywhere on the page unless an admin chooses to see it.
+  const params = raw && !ipShown ? maskIpIn(raw, c.source_ip) : raw;
   return (
     <section className="card" aria-labelledby="what-heading">
       <h2 id="what-heading">What happened</h2>
@@ -578,7 +603,13 @@ function WhatHappened({ change: c }: { change: Change }) {
         <dt>Region</dt>
         <dd className="mono">{c.region}</dd>
         <dt>Source IP</dt>
-        <dd className="mono">{c.source_ip ?? <span className="muted">Unknown</span>}</dd>
+        <dd className="mono">
+          {c.source_ip ? (
+            <SourceIp ip={c.source_ip} shown={ipShown} onShow={() => setIpShown(true)} />
+          ) : (
+            <span className="muted">Unknown</span>
+          )}
+        </dd>
         <dt>Resource</dt>
         <dd className="mono" title={c.resource_arn}>
           {resourceId(c.resource_arn)}
