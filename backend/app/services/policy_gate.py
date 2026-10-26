@@ -13,8 +13,10 @@ otherwise `manual` with the reason recorded on the remediation:
    kinds can't be, remediation_policy.py);
 2. the kill switch is on: the file's `autoEnabled` and AUTOFIX_ENABLED;
 3. the agent's confidence is at least the policy's `minConfidence`;
-4. no earlier auto fix of this workload failed (a failure turns auto off for it for good);
-5. the rate limit: at most `perWorkload` auto fixes of the workload per `window`;
+4. no earlier auto fix of this workload failed (a failure turns auto off for it for good). A fix
+   a backend restart interrupted, and whose rollback succeeded, doesn't count (#105);
+5. the rate limit: at most `perWorkload` auto fixes of the workload per `window`, interrupted
+   ones included;
 6. the validator's cluster-free checks (namespace, allowed fields, ceiling). The backend runs
    the full validator against the live Deployment before applying.
 
@@ -44,6 +46,7 @@ from app.enums import (
 )
 from app.services import incident_state, remediation_state
 from app.services.incident_state import IncidentEvent
+from app.services.remediation_apply import interrupted_cleanly
 from app.services.remediation_policy import Policy, PolicyConfig
 from app.services.remediation_state import RemediationEvent
 from app.services.remediation_validator import Refused, check_proposal
@@ -177,7 +180,11 @@ class ConfiguredPolicyGate:
             return "the proposal names no workload"
         earlier = uow.remediations.auto_for_workload(row.namespace, row.workload)
         history = [r for r in earlier if r is not row]
-        failed = [r for r in history if r.status is RemediationStatus.failed]
+        failed = [
+            r
+            for r in history
+            if r.status is RemediationStatus.failed and not interrupted_cleanly(r)
+        ]
         if failed:
             return (
                 f"an auto fix of {row.namespace}/{row.workload} failed before (remediation "
