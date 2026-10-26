@@ -1,6 +1,7 @@
 # ConsoleTrack
 
-<!-- TODO badges: CI | License -->
+[![CI](https://github.com/jennasrunbooks/consoletrack/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/jennasrunbooks/consoletrack/actions/workflows/ci.yaml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Someone opens the AWS console (or the CLI, CloudShell, an SDK script, or a local `terraform apply`), changes a security group, and moves on. Nobody records why. A week later a pod gets `AccessDenied` and the on-call engineer starts from scratch.
 
