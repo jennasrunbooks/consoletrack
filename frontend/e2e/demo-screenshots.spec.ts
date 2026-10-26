@@ -13,7 +13,7 @@ for (const theme of ["light", "dark"] as const) {
 
     test("banner and tour", async ({ page }) => {
       await page.goto("/changes");
-      await expect(page.getByRole("region", { name: "Take the 2-minute tour" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Take the 3-minute tour" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "Change log" })).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({
@@ -26,7 +26,7 @@ for (const theme of ["light", "dark"] as const) {
     test("banner at phone width", async ({ page }) => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto("/changes");
-      await expect(page.getByRole("region", { name: "Take the 2-minute tour" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Take the 3-minute tour" })).toBeVisible();
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: `${OUT}demo-mobile${suffix}.png`, animations: "disabled" });
     });

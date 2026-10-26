@@ -51,7 +51,7 @@ The full table is in [product-spec.md → Scope](product-spec.md#scope).
 
 **No-install tour of the demo site** (a reload resets it):
 
-1. Open the [demo site](https://consoletrack-demo.jennasrunbooks.com). No login. The "Take the 2-minute tour" banner lists the three stops below.
+1. Open the [demo site](https://consoletrack-demo.jennasrunbooks.com). No login. The "Take the 3-minute tour" banner lists the three stops below.
 2. **INC-11**: an out-of-memory incident the agent diagnosed and the policy gate fixed automatically. Read the evidence and the verified fix.
 3. **INC-14**: a real recorded run where an admin approves the fix by hand. Approve it, then try **Edit postmortem**.
 4. **A console change waiting for review**: SSH opened to the internet. See who made it and what it touched.

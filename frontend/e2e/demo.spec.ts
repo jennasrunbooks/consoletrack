@@ -119,7 +119,7 @@ test("Reject closes the recorded incident with a reason", async ({ page }) => {
 
 test("the first-visit tour has three steps, and dismissing it sticks", async ({ page }) => {
   await page.goto("/changes");
-  const tour = page.getByRole("region", { name: "Take the 2-minute tour" });
+  const tour = page.getByRole("region", { name: "Take the 3-minute tour" });
   await expect(tour.getByRole("listitem")).toHaveCount(3);
   await tour.getByRole("link", { name: /INC-11/ }).click();
   await expect(page).toHaveURL(/\/incidents\/11$/);
@@ -143,7 +143,7 @@ test("the tour works without storage", async ({ page }) => {
     });
   });
   await page.goto("/changes");
-  const tour = page.getByRole("region", { name: "Take the 2-minute tour" });
+  const tour = page.getByRole("region", { name: "Take the 3-minute tour" });
   await expect(tour).toBeVisible();
   await tour.getByRole("button", { name: "Dismiss" }).click();
   await expect(tour).toBeHidden();
@@ -192,7 +192,7 @@ for (const theme of ["light", "dark"] as const) {
         expect(violations.map((v) => ({ id: v.id, nodes: v.nodes.map((n) => n.target.join(" ")) }))).toEqual([]);
       };
       await page.goto("/changes");
-      await expect(page.getByRole("region", { name: "Take the 2-minute tour" })).toBeVisible();
+      await expect(page.getByRole("region", { name: "Take the 3-minute tour" })).toBeVisible();
       await check();
       await page.getByRole("button", { name: "Account: demo" }).click();
       await page.getByRole("button", { name: "Log out" }).click();

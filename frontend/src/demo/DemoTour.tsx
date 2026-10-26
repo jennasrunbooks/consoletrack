@@ -29,7 +29,7 @@ export function DemoTour() {
   return (
     <section className="demo-tour" aria-labelledby="demo-tour-heading">
       <div className="demo-tour-head">
-        <h2 id="demo-tour-heading">Take the 2-minute tour</h2>
+        <h2 id="demo-tour-heading">Take the 3-minute tour</h2>
         <button type="button" className="button button-secondary" onClick={dismiss}>
           Dismiss
         </button>
