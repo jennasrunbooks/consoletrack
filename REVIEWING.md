@@ -23,7 +23,7 @@ backend's own `remediator` identity, and only after the policy gate allows them.
 | Way | Needs | Time |
 |---|---|---|
 | [Demo site](https://consoletrack-demo.jennasrunbooks.com): the real frontend, recorded sample data | a browser | 5 min |
-| Walkthrough video of the live EKS deployment: <!-- TODO: YouTube link once recorded --> | a browser | 5 min |
+| [Walkthrough video](https://youtu.be/dhfp_0nMhyo) of the live EKS deployment | a browser | 3:30 min |
 | `make local`: the full system on kind and Docker Compose, no AWS ([README](README.md#try-it-without-aws)) | Docker, kind, an Anthropic API key | 30 min |
 | `make up`: your own AWS account ([README](README.md#deploy-to-aws)) | AWS account, a domain | 45 min, about $0.20/hour |
 
@@ -133,8 +133,8 @@ Points are the rubric's maximum. Where something is partial, it says so.
   - EKS via [terraform/](terraform/) and [helm/](helm/); [README → Deploy to AWS](README.md#deploy-to-aws).
   - The always-on [demo site](https://consoletrack-demo.jennasrunbooks.com), published by the Pages workflow ([#89](https://github.com/jennasrunbooks/consoletrack/issues/89)).
   - The EKS screenshot of a real console change: [docs/screenshots/eks/](docs/screenshots/eks/change-detail-console-sg.png).
-  - The walkthrough video of the live deployment: <!-- TODO: YouTube link once recorded -->.
-- **Verify:** video timestamps: `make up` <!-- TODO mm:ss -->, the console change appearing as a change record <!-- TODO mm:ss -->. No cluster is kept running for visitors, so the live EKS deployment is shown by the video and screenshot. `make up` builds the same thing in your account.
+  - The [walkthrough video](https://youtu.be/dhfp_0nMhyo) of the live deployment (3:30).
+- **Verify:** watch the [3:30 video](https://youtu.be/dhfp_0nMhyo). No cluster is kept running for visitors, so the live EKS deployment is shown by the video and screenshot. `make up` builds the same thing in your account.
 
 ### 9. CI/CD (3)
 
@@ -167,7 +167,7 @@ Points are the rubric's maximum. Where something is partial, it says so.
   - Eval: 5/5 on Haiku (the default `TRIAGE_MODEL`) and 5/5 on Sonnet, both at `minConfidence: medium`; the proposal was correct in 20 of 20 runs.
   - Code: [policy_gate.py](backend/app/services/policy_gate.py), [remediation_validator.py](backend/app/services/remediation_validator.py).
   - Spec: [product-spec.md → Remediation modes](product-spec.md#remediation-modes). Built in [issue #34](https://github.com/jennasrunbooks/consoletrack/issues/34) / [PR #63](https://github.com/jennasrunbooks/consoletrack/pull/63).
-- **Verify:** demo site, incident **INC-11**: alert, diagnosis, automatic fix, resolved. Locally, `make local-oom-run` prints PASS after the incident resolves. Video: <!-- TODO mm:ss -->.
+- **Verify:** demo site, incident **INC-11**: alert, diagnosis, automatic fix, resolved. Locally, `make local-oom-run` prints PASS after the incident resolves. The [walkthrough video](https://youtu.be/dhfp_0nMhyo) shows the same loop on EKS.
 - **Known limits:** the gate's `medium` threshold relies on self-reported confidence; the reasons and the planned evidence-based gate are in the graduation doc. Rollback of a bad image stays manual, and Revert is Phase 2.
 
 ## Numbers, measured not guessed
