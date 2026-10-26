@@ -94,12 +94,12 @@ describe("change detail helpers", () => {
 });
 
 describe("maskSourceIp", () => {
-  it("keeps an IPv4 address's /24", () => expect(maskSourceIp("198.51.100.7")).toBe("198.51.100.x"));
-  it("keeps an IPv6 address's /64", () => expect(maskSourceIp("2001:db8:1:2:3:4:5:6")).toBe("2001:db8:1:2::/64"));
+  it("keeps an IPv4 address's /16", () => expect(maskSourceIp("198.51.100.7")).toBe("198.51.x.x"));
+  it("keeps an IPv6 address's /48", () => expect(maskSourceIp("2001:db8:1:2:3:4:5:6")).toBe("2001:db8:1::/48"));
   it("leaves non-addresses alone", () => {
     expect(maskSourceIp("AWS Internal")).toBe("AWS Internal");
     expect(maskSourceIp("ec2.amazonaws.com")).toBe("ec2.amazonaws.com");
   });
   it("masks the address inside request parameters", () =>
-    expect(maskIpIn('{"cidrIp": "198.51.100.7/32"}', "198.51.100.7")).toBe('{"cidrIp": "198.51.100.x/32"}'));
+    expect(maskIpIn('{"cidrIp": "198.51.100.7/32"}', "198.51.100.7")).toBe('{"cidrIp": "198.51.x.x/32"}'));
 });

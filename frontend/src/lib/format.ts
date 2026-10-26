@@ -231,17 +231,17 @@ export function readableResult(excerpt: string): string {
 }
 
 /**
- * A source IP for the screen: IPv4 keeps its /24 (`198.51.100.x`), IPv6 its first four groups
- * (`2001:db8:1:2::/64`). Anything else (`AWS Internal`, a service name) is shown as it is. The
+ * A source IP for the screen: IPv4 keeps its /16 (`198.51.x.x`), IPv6 its first three groups
+ * (`2001:db8:1::/48`). Anything else (`AWS Internal`, a service name) is shown as it is. The
  * full address stays in the API for admins; this keeps it out of screenshots and recordings.
  */
 export function maskSourceIp(ip: string): string {
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
-  if (v4) return `${v4[1]}.${v4[2]}.${v4[3]}.x`;
+  if (v4) return `${v4[1]}.${v4[2]}.x.x`;
   if (ip.includes(":") && /^[0-9a-fA-F:]+$/.test(ip)) {
     const head = ip.split("::")[0] ?? "";
-    const groups = head.split(":").filter(Boolean).slice(0, 4);
-    return `${groups.join(":")}::/64`;
+    const groups = head.split(":").filter(Boolean).slice(0, 3);
+    return `${groups.join(":")}::/48`;
   }
   return ip;
 }
