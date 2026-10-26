@@ -163,7 +163,8 @@ safe doesn't depend on the agent's confidence:
 - a server-side dry run checks the live object first;
 - verify (rollout, no new `OOMKilled`, incident resolved or error ratio below 0.05) and the
   automatic rollback undo the one patch if it doesn't hold;
-- one auto fix per workload per hour, no further auto attempts after a failure, and the kill switch.
+- one auto fix per workload per hour, no further auto attempts after a failure (not counting a
+  run a backend restart interrupted, #105), and the kill switch.
 
 `low` confidence still goes to a human, and the setting applies to this policy only: the `default`
 policy stays manual and no other kind can be `auto`.
@@ -201,9 +202,13 @@ a human, with the reason stored as `remediations.gate_reason`:
 4. the incident is still `awaiting_review`;
 5. the agent's confidence is at least the policy's `minConfidence` (`medium` for `oom-memory-bump`). After an escalation
    (#60) that's the escalated run's analysis, the incident's latest;
-6. no earlier auto fix of this workload failed;
+6. no earlier auto fix of this workload failed. A fix a backend restart interrupted (a deploy or
+   a node drain during verify) doesn't count, provided its rollback succeeded (#105). The next
+   backend can't prove such a fix worked, so it rolls the fix back and records an `interrupted`
+   step, but the fix wasn't proven wrong either. If the rollback failed, the fix still counts;
+   a human has to look at the workload;
 7. the rate limit: at most `rateLimit.perWorkload` (1) auto fixes per workload per
-   `rateLimit.window` (1h);
+   `rateLimit.window` (1h), interrupted fixes included;
 8. the validator's cluster-free checks (namespace, allowed fields, ceiling).
 
 Then the remediation is `approved` with `decided_by = policy:oom-memory-bump`, the incident moves

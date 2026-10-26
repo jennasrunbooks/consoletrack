@@ -346,8 +346,64 @@ def test_an_interrupted_run_is_rolled_back(
     applier(store, cluster, clock).run_next()
     assert row.status is RemediationStatus.failed
     assert "backend stopped before verify finished" in (row.error or "")
+    assert ("interrupted", False) in steps(row) and ("rollback", True) in steps(row)
     assert cluster.limit == "128Mi"
     assert incident.status is IncidentStatus.awaiting_review
+
+
+def interrupt_then_recover(
+    store: FakeStore, make_incident: Any, clock: Clock, cluster: FakeCluster
+) -> Any:
+    """An auto fix patched, then cut off by a backend restart, then rolled back by the next."""
+    _, row = auto_approved(store, make_incident, clock)
+    first = applier(store, cluster, clock)
+    first._wait = lambda _: True
+    first.run_next()
+    clock.now = row.lease_until + timedelta(seconds=1)
+    applier(store, cluster, clock).run_next()
+    return row
+
+
+def test_an_interrupted_fix_doesnt_turn_auto_off_for_the_workload(
+    store: FakeStore, make_incident: Any, clock: Clock
+) -> None:
+    """A restart (a deploy, a node drain) during verify isn't a failed fix (#105): after the
+    rate limit window, the workload's next proposal can go auto again."""
+    interrupt_then_recover(store, make_incident, clock, FakeCluster(clock=clock))
+    incident, row = triaged(store, make_incident)
+    within = gate(store, now=clock.now).submit_proposal(
+        incident.id, SetMemoryLimit.model_validate(OOM_PROPOSAL)
+    )
+    # It still counts toward the rate limit.
+    assert within.mode is RemediationMode.manual and "rate limit" in within.reason
+    clock.now += timedelta(hours=2)
+    incident, row = triaged(store, make_incident)
+    later = gate(store, now=clock.now).submit_proposal(
+        incident.id, SetMemoryLimit.model_validate(OOM_PROPOSAL)
+    )
+    assert later.approved, later.reason
+
+
+def test_an_interrupted_fix_whose_rollback_failed_still_turns_auto_off(
+    store: FakeStore, make_incident: Any, clock: Clock
+) -> None:
+    cluster = FakeCluster(clock=clock)
+    original = cluster.patch_deployment
+
+    def patch(namespace: str, name: str, body: dict[str, Any], *, dry_run: bool) -> Any:
+        if not dry_run and cluster.limit == "256Mi":
+            cluster.fail_on.add("patch")  # the rollback
+        return original(namespace, name, body, dry_run=dry_run)
+
+    cluster.patch_deployment = patch  # type: ignore[method-assign]
+    row = interrupt_then_recover(store, make_incident, clock, cluster)
+    assert ("interrupted", False) in steps(row) and ("rollback", False) in steps(row)
+    clock.now += timedelta(hours=2)
+    incident, _ = triaged(store, make_incident)
+    decision = gate(store, now=clock.now).submit_proposal(
+        incident.id, SetMemoryLimit.model_validate(OOM_PROPOSAL)
+    )
+    assert decision.mode is RemediationMode.manual and "failed before" in decision.reason
 
 
 def test_a_tighter_policy_is_honoured(store: FakeStore, make_incident: Any, clock: Clock) -> None:

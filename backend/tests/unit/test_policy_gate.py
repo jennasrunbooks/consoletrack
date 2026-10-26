@@ -163,7 +163,13 @@ def test_namespace_outside_the_allowlist_stays_manual(store: FakeStore, make_inc
     assert_manual(store, incident, row, "K8S_ALLOWED_NAMESPACES", settings=narrow)
 
 
-def earlier_auto(store: FakeStore, *, status: RemediationStatus, decided_at: Any) -> None:
+def earlier_auto(
+    store: FakeStore,
+    *,
+    status: RemediationStatus,
+    decided_at: Any,
+    steps: list[tuple[str, bool]] = (),  # type: ignore[assignment]
+) -> None:
     store.remediations.insert(
         RemediationRow(
             subject_type=SubjectType.incident,
@@ -175,6 +181,7 @@ def earlier_auto(store: FakeStore, *, status: RemediationStatus, decided_at: Any
             namespace="demo",
             workload="demo-app",
             decided_at=decided_at,
+            steps=[{"step": n, "at": "", "ok": ok, "detail": ""} for n, ok in steps],
         )
     )
 
@@ -199,6 +206,20 @@ def test_a_failed_auto_fix_turns_auto_off_for_that_workload(
     earlier_auto(store, status=RemediationStatus.failed, decided_at=NOW - timedelta(days=3))
     incident, row = triaged(store, make_incident)
     assert_manual(store, incident, row, "failed before")
+
+
+def test_an_interrupted_auto_fix_that_rolled_back_doesnt_count_as_failed(
+    store: FakeStore, make_incident: Any
+) -> None:
+    # A backend restart cut it off after the patch; the next backend rolled it back (#105).
+    earlier_auto(
+        store,
+        status=RemediationStatus.failed,
+        decided_at=NOW - timedelta(days=3),
+        steps=[("patch", True), ("interrupted", False), ("rollback", True), ("failed", False)],
+    )
+    incident, row = triaged(store, make_incident)
+    assert gate(store).submit_proposal(incident.id, PROPOSAL).approved
 
 
 def test_aws_kinds_are_never_auto(store: FakeStore, make_incident: Any) -> None:

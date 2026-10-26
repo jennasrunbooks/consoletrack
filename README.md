@@ -24,8 +24,6 @@ Reviewing for the [AI Dev Tools Zoomcamp](https://github.com/DataTalksClub/ai-de
 
 <sub>Dark-theme versions are in [docs/screenshots/](docs/screenshots/).</sub>
 
-**Reviewing this project for the course?** The [rubric table](#course-rubric-mapping) at the end maps every criterion to where its evidence is. The demo site is the quickest look; `make local` is the full system on your laptop.
-
 <sub>The EKS screenshot of a real console change, with the agent's summary, is [docs/screenshots/eks/](docs/screenshots/eks/); the account ID and source IP are blacked out.</sub>
 
 ## Contents
@@ -88,11 +86,22 @@ flowchart TB
 The agent only reads; every fix goes through the policy gate (thick arrows).
 
 1. **Intake.** A CloudTrail trail feeds an EventBridge rule that keeps write events from people and scripts and drops pipeline sessions (`gh-<run id>`), AWS services acting on your behalf, and ConsoleTrack's own controllers. Matches land in an SQS queue with a dead-letter queue.
-2. **Change records.** The worker parses each event (who, `via` = console, CLI, CloudShell, SDK, or Terraform outside the pipeline, source IP, resource), dedupes it, looks up the resource's Terraform address, and stores a change record in Postgres.
+2. **Change records.** The worker parses each event (who, `via` = console, CLI, CloudShell, SDK, or Terraform outside the pipeline, source IP, resource), dedupes it, and stores a change record in Postgres. (Looking up the resource's Terraform address at intake is Phase 2; the agent can look it up today.)
 3. **Analysis.** The triage agent (Claude) reads the change and related CloudTrail activity through the read-only `aws-mcp` server and writes a summary, a risk rating, and options.
 4. **Incidents.** Alertmanager posts alerts to the backend, which opens an incident. The agent gathers pod evidence through the read-only `k8s-mcp` server; if logs show an AWS error such as `AccessDenied`, it links the incident to the recent change that caused it.
 5. **Review.** Revert, Codify (Phase 2), or Accept for changes; approve or reject the proposed fix for incidents. AWS-side fixes always need a human; the OOM memory-limit fix is the one cluster fix that runs automatically.
 6. **Intake health.** A canary CronJob makes a known, harmless change every 15 minutes, so the header indicator can tell "nothing changed" from "intake is broken": Live, Delayed, Down, or Replay.
+
+**Who does what.** There is one AI agent, the triage agent (Claude), run by the worker. The two MCP servers are its
+tools, not agents: they can only read. Fixes are applied by the backend, under its own narrowly scoped identity, and
+only after the policy gate allows them.
+
+| | Started by | The agent reads through | Fix applied by |
+|---|---|---|---|
+| **Change** (an out-of-band AWS write) | A CloudTrail event reaching the SQS queue (EventBridge rule) | `aws-mcp`: CloudTrail lookups, the security group's live rules, IAM role and policy reads and simulation, the Terraform state | Nobody automatically. A person Accepts it (Revert and Codify are Phase 2) |
+| **Incident** (a user-facing failure) | A Prometheus alert, e.g. `DemoAppHighErrorRate`: more than 5% of the traffic generator's requests failing for a minute | `k8s-mcp`: pods, restarts and termination reasons, events, logs, rollout history, metrics; plus `aws-mcp` when the logs show an AWS error such as `AccessDenied` | The backend's `remediator` identity (patch one Deployment in the `demo` namespace), automatically for the memory-limit fix within its bounds, after a person's Approve for everything else |
+
+`aws-mcp` runs on EKS only; under `make local` the agent works without it and says so in its summary.
 
 Full design: [product-spec.md](product-spec.md) · API: [openapi.yaml](openapi.yaml)
 
@@ -109,9 +118,20 @@ cp .env.example .env
 export ANTHROPIC_API_KEY=...   # or keep it in a password manager: op run --env-file=.env -- make local
 make local                     # a kind cluster with Prometheus and the demo app, then Docker Compose
 # open http://localhost:8080 (DASHBOARD_PORT) and log in as admin with the password make local prints
+make local-replay-fixtures     # load recorded AWS console/CLI changes into the change log (see below)
 ```
 
-The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". `make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, the replayed CloudTrail change flow, is still a stub (#15).
+**The change log starts empty.** There is no AWS account locally, so nothing reaches the change queue until you load
+the recorded CloudTrail events: `make local-replay-fixtures` sends them to the local SQS-compatible queue (ElasticMQ),
+and within about a minute the change log shows them: a console security-group change, a CLI `PutRolePolicy`, a
+`terraform apply` from a laptop, and more, each with who, how, and risk. The agent analyzes each one (it uses your
+API key; a few cents). Run it again any time: duplicates are ignored. Read-only and pipeline events in the fixtures are
+filtered out on purpose, and the canary event updates intake health instead of adding a change.
+
+The intake indicator shows **Replay**, and Revert and Codify are disabled with "AWS required". In replay mode the
+agent's AWS lookups aren't available (`aws-mcp` runs on EKS), so its summaries say AWS evidence was unavailable.
+`make local-down` removes everything, including the kind cluster and the database volume. `make demo-replay`, which
+will do all of this in one command, is Phase 2 (#15).
 
 **Run a fault scenario.** This is the on-call loop end to end on kind. A fault breaks the demo app, and the traffic generator's requests start failing. `DemoAppHighErrorRate` fires and Alertmanager posts it to the backend, which opens an incident. The triage worker then investigates through `k8s-mcp` and the Claude API, and proposes a fix for a human to approve.
 
@@ -418,10 +438,9 @@ consoletrack/
 
 ## Roadmap
 
-- **Phase 1 (Oct 26):** CloudTrail change intake with intake health and canary; change records, analysis, and Accept; Alertmanager incidents with the read-only `k8s-mcp` and `aws-mcp`; the security-group cloud scenario (and the demo role permission scenario if it's working by Oct 26) and three cluster faults; the recorded demo site; automatic fix for the OOM fault (the first remediation kind to graduate); OpenTelemetry traces, metrics, and logs in Grafana, with an alert on user impact; the dashboard; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team and extension pack.
-- **Phase 2 (Nov 16):** the gated Revert workflow; Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); the eval harness (`make eval`: each scenario N times, reporting attribution accuracy, time to triage, and cost per triage); attribute-level drift from `terraform plan -refresh-only`; harder identity scenarios (Pod Identity association, trust policy, KMS key policy); the next remediation kinds to graduate (rollback of a bad image, probe fixes).
-- **Later:** Slack notifications and analytics; network-path incidents; the production hardening path.
-- **Later:** a NAT gateway per AZ, or fck-nat as a raw NAT instance under `/ct/` to cut the NAT cost; Claude through Bedrock over PrivateLink, ECR pull-through cache, private API endpoint with Argo CD, Argo CD out-of-sync events as a change source, multi-region and multi-account watching (hub and spoke).
+- **Phase 1 (Oct 26, submitted):** CloudTrail change intake with intake health and a canary; change records, the agent's analysis through the read-only `aws-mcp`, and Accept; Alertmanager incidents triaged through the read-only `k8s-mcp`; the security-group scenario (made by hand in the console) and three cluster faults; the automatic, verified fix for the OOM fault (the first remediation kind to graduate, eval 5/5 on Haiku and on Sonnet); OpenTelemetry traces, metrics, and logs in Grafana with Tempo and Loki, on EKS and with `make local`, plus an alert on user impact; the dashboard and the recorded demo site; `make local` with one command; EKS via Terraform and Helmfile; CI/CD; the agent team, context docs, and the guard hooks.
+- **Phase 2 (Nov 16):** the gated Revert workflow; Codify (the agent drafts a Terraform PR adopting the change; CI must plan with no diff); the eval harness (`make eval` for every scenario); the IAM scenarios (demo app role permission removed; Pod Identity association, trust policy, KMS key policy) on the demo-app Terraform root; attribute-level drift from `terraform plan -refresh-only`; the Phase 1 stubs (`make demo-replay` with `aws-mcp`'s fixtures mode, `make demo-drift`, `make demo-identity`, the domain targets); a link from each incident and change to its Grafana trace; an evidence-based policy gate instead of self-reported confidence; the agent extension pack's skills and reviewer subagent; the next remediation kinds to graduate (rollback of a bad image, probe fixes).
+- **Later:** Slack notifications and analytics; network-path incidents; the production hardening path (a NAT gateway per AZ or fck-nat, Claude through Bedrock over PrivateLink, ECR pull-through cache, a private API endpoint with Argo CD, Argo CD out-of-sync events as a change source); multi-region and multi-account watching (hub and spoke).
 
 ## Course rubric mapping
 
@@ -440,7 +459,7 @@ Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalks
 | Containerization | 2 | [docker-compose.yaml](docker-compose.yaml) · [check](REVIEWING.md#7-containerization-2) |
 | Deployment | 2 | [terraform/](terraform/), [helm/](helm/), [Deploy to AWS](#deploy-to-aws), [EKS screenshot](docs/screenshots/eks/), [demo site](https://consoletrack-demo.jennasrunbooks.com), walkthrough video · [check](REVIEWING.md#8-deployment-2) |
 | CI/CD | 3 | [ci.yaml](.github/workflows/ci.yaml), [deploy.yaml](.github/workflows/deploy.yaml); third point not claimed · [check](REVIEWING.md#9-cicd-3) |
-| Observability | 2 | [docs/observability.md](docs/observability.md), [redaction test](backend/tests/unit/test_telemetry_redaction.py), [screenshots](docs/screenshots/observability-trace.png); Tempo and Loki on `make local` only · [check](REVIEWING.md#10-observability-2) |
+| Observability | 2 | [docs/observability.md](docs/observability.md), [redaction test](backend/tests/unit/test_telemetry_redaction.py), [screenshots](docs/observability.md#screenshots); Tempo and Loki on EKS and with `make local` · [check](REVIEWING.md#10-observability-2) |
 | Alerting on user impact | 1 | [`DemoAppHighErrorRate`](helm/charts/demo-app/templates/prometheusrule.yaml) · [check](REVIEWING.md#11-alerting-on-user-impact-1) |
 | On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md), `make local-oom-run`, eval 5/5 on Haiku and on Sonnet ([results](docs/remediation-graduation.md#eval-results-and-the-confidence-floor)) · [check](REVIEWING.md#12-on-call-agent-2) |
 

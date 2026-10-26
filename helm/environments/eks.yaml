@@ -40,5 +40,9 @@ demoReportCacheMi: ""
 # pushed and public first (`make images`, or deploy.yaml).
 awsMcpEnabled: true
 
+# Tempo, Loki, the OpenTelemetry Collector, and the Incident journey dashboard in the cluster, and
+# the apps exporting to the collector (docs/observability.md).
+observability: true
+
 intakeMode: live
 storageClass: gp3

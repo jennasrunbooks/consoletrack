@@ -1,0 +1,60 @@
+{{- /*
+OpenTelemetry Collector (tier=addons, namespace monitoring, eks only): the same pipeline `make
+local` runs. The config is observability/otel-collector/config.yaml (OTLP in, traces to Tempo, logs
+to Loki) with kind.yaml merged over it (metrics by Prometheus remote write), then only the
+endpoints changed to this cluster's Services. Nothing is copied: edit those two files.
+*/}}
+{{- $config := readFile "../../observability/otel-collector/config.yaml" | fromYaml }}
+{{- $metrics := readFile "../../observability/otel-collector/kind.yaml" | fromYaml }}
+{{- $inCluster := dict
+  "exporters" (dict
+    "otlp_http/tempo" (dict "endpoint" "http://tempo.monitoring.svc.cluster.local:4318")
+    "otlp_http/loki" (dict "endpoint" "http://loki.monitoring.svc.cluster.local:3100/otlp")
+    "prometheus_remote_write" (dict "endpoint" "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090/api/v1/write")) }}
+{{- $config = mergeOverwrite $config $metrics $inCluster }}
+{{- /* The chart's defaults add Jaeger, Zipkin, and a self-scrape receiver; no pipeline uses them,
+so remove them (null deletes a default) instead of leaving them defined. */}}
+{{- range $unused := list "jaeger" "zipkin" "prometheus" }}{{ $_ := set $config.receivers $unused nil }}{{ end }}
+{{- /* OTLP/HTTP only, and the memory limit in MiB only: the chart's default gRPC receiver and
+percentage limits would otherwise be merged in next to ours. */}}
+{{- $_ := set $config.receivers.otlp.protocols "grpc" nil }}
+{{- $_ := set $config.processors.memory_limiter "limit_percentage" nil }}
+{{- $_ := set $config.processors.memory_limiter "spike_limit_percentage" nil }}
+# Contrib: the OTLP/HTTP exporter, Prometheus remote write, and the health check.
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: 0.163.2
+  digest: sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849
+command:
+  name: otelcol-contrib
+mode: deployment
+fullnameOverride: otel-collector
+replicaCount: 1
+config:
+{{ toYaml $config | indent 2 }}
+# OTLP/HTTP only (4318); the chart's other ports belong to the receivers removed above.
+ports:
+  otlp: {enabled: false}
+  jaeger-compact: {enabled: false}
+  jaeger-thrift: {enabled: false}
+  jaeger-grpc: {enabled: false}
+  zipkin: {enabled: false}
+resources:
+  requests: {cpu: 25m, memory: 64Mi}
+  # memory_limiter (config.yaml) refuses data at 160 MiB, below this limit.
+  limits: {memory: 192Mi}
+serviceAccount:
+  create: true
+  automountServiceAccountToken: false
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]

@@ -25,7 +25,7 @@ CONFIGS = ("eks", "eks-alb", "local")
 
 # Our releases that a namespaced deploy identity applies (tier=app), and every chart of ours.
 APP_CHARTS = ("consoletrack", "demo-app")
-OUR_CHARTS = (*APP_CHARTS, "cluster-defaults")
+OUR_CHARTS = (*APP_CHARTS, "cluster-defaults", "grafana-dashboards")
 
 
 def _aws_mcp_enabled(environment: str) -> bool:
@@ -56,6 +56,14 @@ _EKS_AWS = {
     "trailName": "ct-trail-use1-test",
     "canarySecurityGroupId": "sg-0123456789abcdef0",
 }
+# The Incident journey dashboard, which Helmfile reads from observability/ into the
+# grafana-dashboards release (eks only).
+INCIDENT_JOURNEY = (
+    HELM_DIR.parent / "observability/grafana/dashboards/incident-journey.json"
+)
+_DASHBOARDS = {"dashboards": {INCIDENT_JOURNEY.name: INCIDENT_JOURNEY.read_text()}}
+# Tempo, Loki, and the collector are third-party charts: only `helmfile template` renders them.
+OBSERVABILITY_CHARTS = ("tempo", "loki", "opentelemetry-collector")
 _ALB = {
     "exposure": "alb",
     "domain": "consoletrack.example.com",
@@ -81,8 +89,14 @@ _FALLBACK = {
             "demo-app",
             {"aws": {"bucket": "demo-app-data-use1-test"}},
         ),
-        ("consoletrack", "consoletrack", "consoletrack", {"aws": _EKS_AWS, **_AWS_MCP}),
+        (
+            "consoletrack",
+            "consoletrack",
+            "consoletrack",
+            {"aws": _EKS_AWS, **_AWS_MCP, "observability": {"enabled": True}},
+        ),
         ("cluster-defaults", "kube-system", "cluster-defaults", {}),
+        ("grafana-dashboards", "monitoring", "grafana-dashboards", _DASHBOARDS),
     ],
     "eks-alb": [
         (
@@ -95,7 +109,12 @@ _FALLBACK = {
             "consoletrack",
             "consoletrack",
             "consoletrack",
-            {"aws": _EKS_AWS, **_AWS_MCP, **_ALB},
+            {
+                "aws": _EKS_AWS,
+                **_AWS_MCP,
+                **_ALB,
+                "observability": {"enabled": True},
+            },
         ),
         (
             "cluster-defaults",
@@ -103,6 +122,7 @@ _FALLBACK = {
             "cluster-defaults",
             {"albGatewayClass": {"enabled": True}},
         ),
+        ("grafana-dashboards", "monitoring", "grafana-dashboards", _DASHBOARDS),
     ],
     "local": [
         ("demo-app", "demo", "demo-app", {"image": {"tag": "local"}}),

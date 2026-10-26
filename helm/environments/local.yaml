@@ -36,6 +36,9 @@ demoReportCacheMi: ""
 # so kind runs without it and the worker without AWS tools.
 awsMcpEnabled: false
 
+# Off on kind: `make local` runs Tempo, Loki, and the collector in Compose (docs/observability.md).
+observability: false
+
 intakeMode: replay
 # kind's built-in local-path class.
 storageClass: standard

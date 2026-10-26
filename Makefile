@@ -158,7 +158,7 @@ check_human = @if [ -n "$$CI" ] || [ ! -t 0 ]; then \
 	echo "make $@: applies only from an interactive terminal, by a human (never in CI)" >&2; exit 1; fi
 
 # Stub for a target a later issue fills in: says where it belongs and fails.
-todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
+todo = @echo "make $@: Phase 2, not built yet (planned for Nov 16). $(1)." >&2; exit 2
 
 .DEFAULT_GOAL := help
 .PHONY: help lint test fmt env-check env-check-up env-check-aws env-check-local env-check-tf tf-env \
@@ -169,7 +169,7 @@ todo = @echo "make $@: not implemented yet (see $(1))" >&2; exit 1
 	preflight bootstrap up down down-all verify-clean dns-clean wait-for-url logins addons deploy open helm-values create-secrets \
 	images kubeconfig tf-destroy clean-enis \
 	domain domain-zone domain-cert domain-destroy \
-	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
+	local local-down local-fault local-incidents local-measure local-oom-run local-eval-oom local-replay-fixtures measure fault demo demo-replay replay-fixtures demo-drift demo-identity revert eval audit-rbac
 
 ##@ Development
 
@@ -581,8 +581,8 @@ verify-clean: env-check-aws ## List project=consoletrack load balancers, ENIs, E
 
 ##@ Custom domain
 
-domain: env-check-aws ## Zone and certificate in one run (DNS_PARENT=route53) (stub)
-	$(call todo,#82)
+domain: ## [Phase 2] Zone and certificate in one run (DNS_PARENT=route53)
+	$(call todo,Tracked in #82)
 
 gh-secrets: ## Set each GitHub environment's AWS_ROLE_ARN from the global root's outputs (humans only)
 	$(call check_env,GITHUB_REPO)
@@ -601,11 +601,11 @@ domain-zone: env-check-aws env-check-tf ## Apply only the Route 53 zone and prin
 		-target=module.zone -target=module.parent_delegation
 	@$(TERRAFORM) -chdir=terraform/consoletrack/global output -raw domain_ns_instructions; echo
 
-domain-cert: env-check-aws ## Wait for delegation, then issue the ACM certificate (stub)
-	$(call todo,#82)
+domain-cert: ## [Phase 2] Wait for delegation, then issue the ACM certificate
+	$(call todo,Tracked in #82)
 
-domain-destroy: env-check-aws ## Remove the zone (stub)
-	$(call todo,#82)
+domain-destroy: ## [Phase 2] Remove the zone
+	$(call todo,Tracked in #82)
 
 ##@ Demo and evaluation
 
@@ -676,31 +676,34 @@ local-down: ## Remove the Compose stack and its volumes, and the `consoletrack` 
 	fi
 	rm -f kind-internal.kubeconfig kind-remediator.kubeconfig kind-remediation-policies.yaml
 
-replay-fixtures: ## Send the recorded CloudTrail fixtures to Compose's ElasticMQ (the worker records them)
+local-replay-fixtures: ## Load the recorded CloudTrail changes into make local's change log (the worker records them, the agent analyzes them)
 	$(BACKEND_RUN) python ../scripts/replay-fixtures.py
 
-demo-replay: env-check-local ## Local stack with recorded CloudTrail events, no AWS (stub)
-	$(call todo,#15 (Compose + kind wiring around make replay-fixtures))
+# The earlier name, kept so existing notes and muscle memory still work.
+replay-fixtures: local-replay-fixtures
 
-demo: env-check-aws ## Run the three cluster fault scenarios (stub)
-	$(call todo,the agent loop workstream; no issue yet)
+demo-replay: ## [Phase 2] Local stack with recorded CloudTrail events, no AWS
+	$(call todo,Tracked in #15; today make local-replay-fixtures loads the recorded events into ElasticMQ)
 
-demo-drift: env-check-aws ## Open port 22 on the demo security group as the developer role (stub)
-	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+demo: ## [Phase 2] Run the three cluster fault scenarios
+	$(call todo,Today make local-fault (kind) and make fault (EKS) run one fault at a time)
 
-demo-identity: env-check-aws ## Remove s3:GetObject from the demo app role as the developer role (stub)
-	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+demo-drift: ## [Phase 2] Open port 22 on the demo security group as the developer role
+	$(call todo,Tracked in #14)
 
-revert: env-check-aws ## Plan and apply the demo-app root for CHANGE=<id>, with confirmation (stub)
-	$(call todo,the cloud scenarios + revert workstream; no issue yet)
+demo-identity: ## [Phase 2] Remove s3:GetObject from the demo app role as the developer role
+	$(call todo,Tracked in #14)
+
+revert: ## [Phase 2] Plan and apply the demo-app root for CHANGE=<id>, with confirmation
+	$(call todo,Tracked in #14)
 
 triage-smoke: env-check-local ## One real Messages API request with the triage prompt, tools, and TRIAGE_MODEL (needs ANTHROPIC_API_KEY)
 	@tools=$$(mktemp) && trap 'rm -f "$$tools"' EXIT && \
 	( $(K8S_MCP_RUN) env K8S_ALLOWED_NAMESPACES=demo python -m k8s_mcp.tool_definitions ) > "$$tools" && \
 	( $(BACKEND_RUN) python -m app.agents.smoke --k8s-tools "$$tools" )
 
-eval: env-check-local ## Agent eval against kind with the real model (stub)
-	$(call todo,the tests + evals workstream; no issue yet)
+eval: ## [Phase 2] Agent eval against kind with the real model
+	$(call todo,Tracked in #60; today make local-eval-oom runs the OOM scenario)
 
 audit-rbac: ## kubectl auth can-i --list for each ServiceAccount, in the consoletrack and demo namespaces (needs cluster admin)
 	$(check_human)

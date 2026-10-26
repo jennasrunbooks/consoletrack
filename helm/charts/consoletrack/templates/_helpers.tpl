@@ -83,6 +83,18 @@ capabilities:
 without a release. */}}
 - name: AUTOFIX_ENABLED
   value: {{ .Values.remediation.autoEnabled | toString | quote }}
+{{- include "consoletrack.telemetryEnv" . }}
+{{- end }}
+
+{{/* Telemetry to the OpenTelemetry Collector (app/telemetry.py), only when observability is on; without
+these the processes export nothing (TELEMETRY_EXPORTER defaults to none). */}}
+{{- define "consoletrack.telemetryEnv" -}}
+{{- if .Values.observability.enabled }}
+- name: TELEMETRY_EXPORTER
+  value: otlp
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .Values.observability.endpoint | quote }}
+{{- end }}
 {{- end }}
 
 {{/* kube-prometheus-stack's Prometheus, for k8s-mcp's query_prometheus and the backend's verify. */}}

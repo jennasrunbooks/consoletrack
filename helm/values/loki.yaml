@@ -1,0 +1,99 @@
+# Loki (tier=addons, namespace monitoring, eks only): single binary, filesystem storage on an
+# emptyDir, 24 hours of logs. No gateway, canary, caches, MinIO, or tests; the collector writes
+# straight to Loki's OTLP endpoint (observability/loki/loki.yaml is the local equivalent).
+# Called SingleBinary before chart 18; the other targets' replicas must be zero (the chart refuses
+# to render otherwise).
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false
+  image:
+    registry: docker.io
+    repository: grafana/loki
+    tag: 3.7.9
+    digest: sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2020-10-24"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    # trace_id and span_id arrive as structured metadata (the v13 schema keeps it).
+    allow_structured_metadata: true
+    retention_period: 24h
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+  analytics:
+    reporting_enabled: false
+  podSecurityContext:
+    fsGroup: 10001
+    runAsGroup: 10001
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: [ALL]
+
+singleBinary:
+  replicas: 1
+  # The data directory is an emptyDir: logs last until the pod restarts and `make down` leaves
+  # no PVC behind.
+  persistence:
+    enabled: false
+  resources:
+    requests: {cpu: 25m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  extraEnv:
+    # A little below the memory limit, so Go collects before the kernel kills the pod.
+    - name: GOMEMLIMIT
+      value: 320MiB
+
+backend: {replicas: 0}
+read: {replicas: 0}
+write: {replicas: 0}
+ingester: {replicas: 0}
+querier: {replicas: 0}
+queryFrontend: {replicas: 0}
+queryScheduler: {replicas: 0}
+distributor: {replicas: 0}
+compactor: {replicas: 0}
+indexGateway: {replicas: 0}
+bloomGateway: {replicas: 0}
+bloomPlanner: {replicas: 0}
+bloomBuilder: {replicas: 0}
+patternIngester: {replicas: 0}
+ruler: {enabled: false}
+
+# No cluster-wide ClusterRole (it would read ConfigMaps and Secrets in every namespace for a rules
+# sidecar that is off), and no API token in the pod.
+rbac: {namespaced: true}
+serviceAccount: {automountServiceAccountToken: false}
+defaults: {automountServiceAccountToken: false}
+memcached: {enabled: false}
+
+gateway: {enabled: false}
+lokiCanary: {enabled: false}
+test: {enabled: false}
+chunksCache: {enabled: false}
+resultsCache: {enabled: false}
+minio: {enabled: false}
+sidecar: {rules: {enabled: false}}
+monitoring:
+  selfMonitoring: {enabled: false}
+  lokiCanary: {enabled: false}
+  serviceMonitor: {enabled: false}
+  rules: {enabled: false}
+  dashboards: {enabled: false}

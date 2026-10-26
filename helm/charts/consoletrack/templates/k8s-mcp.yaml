@@ -39,6 +39,9 @@ spec:
               value: {{ join "," .Values.allowedNamespaces | quote }}
             - name: PROMETHEUS_URL
               value: {{ include "consoletrack.prometheusUrl" . | quote }}
+            {{- if .Values.observability.enabled }}
+            {{- include "consoletrack.telemetryEnv" . | nindent 12 }}
+            {{- end }}
           {{- include "consoletrack.httpProbes" (dict "port" "http" "live" "/healthz" "ready" "/readyz") | nindent 10 }}
           resources:
             {{- toYaml .Values.k8sMcp.resources | nindent 12 }}

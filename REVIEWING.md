@@ -14,6 +14,10 @@ ConsoleTrack records the AWS changes made outside the pipeline (console, CLI, Cl
 on-call triage agent diagnoses the incident through read-only tools; one narrow fix, raising a
 memory limit after an OOM kill, is applied automatically, verified, and rolled back if it fails.
 
+**Who does what.** There is one AI agent, the triage agent (Claude), run by the worker. The two MCP
+servers (`k8s-mcp`, `aws-mcp`) are its read-only toolsets, not agents. Fixes are applied by the
+backend's own `remediator` identity, and only after the policy gate allows them.
+
 **Four ways to see it**
 
 | Way | Needs | Time |
@@ -34,7 +38,7 @@ The full table is in [product-spec.md → Scope](product-spec.md#scope).
 | Security-group scenario (by hand in the console) and three cluster faults | Eval harness `make eval` (every scenario, N runs) |
 | Dashboard: incidents, change log, evidence, Accept, postmortem editor | Attribute-level drift from `terraform plan -refresh-only` |
 | Automatic OOM fix behind the policy gate | More remediation kinds (rollback, probe fixes) |
-| OpenTelemetry in Grafana (Tempo, Loki) on `make local`; Prometheus and Alertmanager on EKS | Tempo and Loki on EKS |
+| OpenTelemetry in Grafana (collector, Tempo, Loki, the Incident journey dashboard) on EKS and with `make local`; metrics reach Prometheus | A link from each incident and change to its Grafana trace |
 | Terraform + Helmfile on EKS, `make local`, CI/CD, agent team and extension pack | `make demo-replay` (still a stub) |
 
 ## Three review paths
@@ -60,7 +64,11 @@ cp .env.example .env && export ANTHROPIC_API_KEY=...
 make local            # kind + Prometheus + demo app, then Compose; prints the admin password
 make test-all         # unit, contract, frontend, and integration (needs Docker)
 make local-oom-run    # one OOM run end to end (about 15 min); prints PASS or FAIL
+make local-replay-fixtures   # optional: load the recorded CloudTrail changes
 ```
+
+The change log starts empty until you run `make local-replay-fixtures`; the worker records the
+fixtures and the agent analyzes them.
 
 **AWS path in detail.** [README → Deploy to AWS](README.md#deploy-to-aws) lists the prerequisites and
 steps, and [the cost table](README.md#cost) shows about $0.20 per hour while the cluster is up.
@@ -141,9 +149,9 @@ Points are the rubric's maximum. Where something is partial, it says so.
 - **Evidence:**
   - [docs/observability.md](docs/observability.md): [the journey](docs/observability.md#the-journey), [metrics](docs/observability.md#metrics), [logs](docs/observability.md#logs), [privacy](docs/observability.md#privacy).
   - The redaction test: [backend/tests/unit/test_telemetry_redaction.py](backend/tests/unit/test_telemetry_redaction.py) (bearer tokens, cookies, IPs, ARNs, account IDs, and keys in the inputs must not appear in exported telemetry).
-  - Screenshots: [trace](docs/screenshots/observability-trace.png), [trace to logs](docs/screenshots/observability-trace-to-logs.png), [dashboard](docs/screenshots/observability-dashboard.png).
-- **Verify:** after `make local` and a fault run, open Grafana at http://localhost:3000, the **Incident journey** dashboard, and follow one trace from `alert.receive` to `incident.resolve`, then jump to its logs. `cd backend && uv run pytest tests/unit/test_telemetry_redaction.py` passes.
-- **Partial:** Tempo and Loki run on the local stack only. On EKS today there are Prometheus, Alertmanager, and the intake dashboard; Tempo and Loki on EKS are Phase 2.
+  - Screenshots (local and EKS): [docs/observability.md → Screenshots](docs/observability.md#screenshots).
+- **Verify:** after `make local` (or on EKS) and a fault run, open Grafana at http://localhost:3000, the **Incident journey** dashboard, and follow one trace from `alert.receive` to `incident.resolve`, then jump to its logs. `cd backend && uv run pytest tests/unit/test_telemetry_redaction.py` passes.
+- **Both environments** (EKS and `make local`) have the OpenTelemetry collector, Tempo, Loki, and the **Incident journey** dashboard. Metrics reach Prometheus by remote write from the collector. EKS screenshots: [docs/observability.md → Screenshots](docs/observability.md#screenshots).
 
 ### 11. Alerting on user impact (1)
 

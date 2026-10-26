@@ -7,6 +7,7 @@ only. RBAC is namespaced, read-only for k8s-mcp, and patch-only for the remediat
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -17,6 +18,8 @@ from conftest import (
     APP_CHARTS,
     AWS_MCP_ENABLED,
     HELM_DIR,
+    INCIDENT_JOURNEY,
+    OBSERVABILITY_CHARTS,
     DuplicateKeyLoader,
     chart_of,
     helm_template,
@@ -373,6 +376,134 @@ def test_exposure(ours: list[dict], config: str) -> None:
         m["path"]["value"] for rule in app["spec"]["rules"] for m in rule["matches"]
     }
     assert paths == {"/api", "/"}
+
+
+def observability_workloads(rendered: dict[str, list[dict]], config: str) -> list[dict]:
+    """Tempo, Loki, and the collector (third-party charts, so only `helmfile template` has them)."""
+    return [
+        d
+        for d in rendered[config]
+        if d["kind"] in WORKLOAD_KINDS and chart_of(d) in OBSERVABILITY_CHARTS
+    ]
+
+
+def test_observability_releases_are_on_eks_only(
+    rendered: dict[str, list[dict]], config: str
+) -> None:
+    if not os.environ.get("HELM_RENDER_DIR"):
+        pytest.skip("Tempo, Loki, and the collector render only through helmfile")
+    workloads = observability_workloads(rendered, config)
+    if config == "local":
+        # `make local` runs the same three in Compose.
+        assert workloads == []
+        return
+    assert {chart_of(d) for d in workloads} == set(OBSERVABILITY_CHARTS)
+    assert {d["metadata"]["namespace"] for d in workloads} == {"monitoring"}
+    assert {d["metadata"]["name"] for d in workloads} == {
+        "tempo",
+        "loki",
+        "otel-collector",
+    }
+
+
+def test_observability_containers_are_locked_down(
+    rendered: dict[str, list[dict]], config: str
+) -> None:
+    if not os.environ.get("HELM_RENDER_DIR"):
+        pytest.skip("Tempo, Loki, and the collector render only through helmfile")
+    for workload, pod in pod_specs(observability_workloads(rendered, config)):
+        for c in pod.get("initContainers", []) + pod["containers"]:
+            sc, psc = c.get("securityContext", {}), pod.get("securityContext", {})
+            label = name(workload, c)
+            assert sc.get("runAsNonRoot", psc.get("runAsNonRoot")) is True, label
+            assert isinstance(sc.get("runAsUser", psc.get("runAsUser")), int), label
+            assert sc.get("allowPrivilegeEscalation") is False, label
+            assert sc.get("readOnlyRootFilesystem") is True, label
+            assert "ALL" in sc.get("capabilities", {}).get("drop", []), label
+            assert psc.get("seccompProfile", {}).get("type") == "RuntimeDefault", label
+            assert not (
+                pod.get("hostNetwork") or pod.get("hostPID") or pod.get("hostIPC")
+            ), label
+            # Requests and a memory limit, like the rest of the monitoring stack (no CPU limits).
+            res = c.get("resources", {})
+            assert {"cpu", "memory"} <= res.get("requests", {}).keys(), label
+            assert "memory" in res.get("limits", {}), label
+            assert "livenessProbe" in c and "readinessProbe" in c, label
+            # Pinned by digest, and no API token: none of the three calls the Kubernetes API.
+            assert "@sha256:" in c["image"], label
+        assert pod.get("automountServiceAccountToken") is False, name(workload, c)
+
+
+def test_observability_leaves_no_cluster_objects_or_volumes_behind(
+    rendered: dict[str, list[dict]], config: str
+) -> None:
+    if not os.environ.get("HELM_RENDER_DIR"):
+        pytest.skip("Tempo, Loki, and the collector render only through helmfile")
+    names = {"tempo", "loki", "otel-collector"}
+    mine = [
+        d
+        for d in rendered[config]
+        if chart_of(d) in OBSERVABILITY_CHARTS or d["metadata"]["name"] in names
+    ]
+    # emptyDir storage: `make down` has no PVC to remove, and nothing needs cluster-wide RBAC.
+    assert [d for d in mine if d["kind"] == "PersistentVolumeClaim"] == []
+    for d in mine:
+        if d["kind"] == "StatefulSet":
+            assert "volumeClaimTemplates" not in d["spec"], d["metadata"]["name"]
+    assert [d for d in mine if d["kind"] in {"ClusterRole", "ClusterRoleBinding"}] == []
+
+
+def test_dashboards_come_from_the_one_json_file(
+    rendered: dict[str, list[dict]], config: str
+) -> None:
+    cms = {
+        d["metadata"]["name"]: d
+        for d in rendered[config]
+        if d["kind"] == "ConfigMap" and chart_of(d) == "grafana-dashboards"
+    }
+    if config == "local":
+        assert cms == {}
+        return
+    assert set(cms) == {
+        "grafana-dashboard-incident-journey",
+        "grafana-dashboard-nodes",
+        "grafana-dashboard-k8s-resources-pod",
+        "grafana-dashboard-alertmanager-overview",
+    }
+    for cm in cms.values():
+        assert cm["metadata"]["labels"]["grafana_dashboard"] == "1"
+        assert cm["metadata"]["namespace"] == "monitoring"
+        for text in cm["data"].values():
+            json.loads(text)
+    # Equal to observability/grafana/dashboards/incident-journey.json, not a second copy.
+    source = json.loads(INCIDENT_JOURNEY.read_text())
+    shipped = json.loads(
+        cms["grafana-dashboard-incident-journey"]["data"]["incident-journey.json"]
+    )
+    assert shipped == source
+
+
+def test_apps_export_to_the_collector_only_where_it_runs(
+    ours: list[dict], config: str
+) -> None:
+    for workload in ("backend", "worker", "k8s-mcp"):
+        ((_, _, container, _),) = [
+            c
+            for c in containers(ours)
+            if c[0]["metadata"]["name"] == workload and not c[3]
+        ]
+        env = {e["name"]: e.get("value") for e in container["env"]}
+        if config == "local":
+            # Compose's apps do their own wiring; the chart exports nothing.
+            assert "TELEMETRY_EXPORTER" not in env and not any(
+                k.startswith("OTEL_") for k in env
+            )
+            continue
+        assert env["TELEMETRY_EXPORTER"] == "otlp", workload
+        assert (
+            env["OTEL_EXPORTER_OTLP_ENDPOINT"]
+            == "http://otel-collector.monitoring.svc.cluster.local:4318"
+        ), workload
 
 
 def test_charts_are_labelled(app_objects: list[dict]) -> None:
