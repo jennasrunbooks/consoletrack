@@ -1,8 +1,9 @@
 # Every release in the cluster, third-party and ConsoleTrack's own (product-spec.md →
 # Infrastructure as code). Terraform is AWS-only and installs nothing in Kubernetes.
 #
-#   tier=addons  Gateway API CRDs, cluster defaults, kube-prometheus-stack, cloudnative-pg, and
-#                with EXPOSURE=alb / DOMAIN the Load Balancer Controller and ExternalDNS.
+#   tier=addons  Gateway API CRDs, cluster defaults, kube-prometheus-stack, Tempo, Loki, the
+#                OpenTelemetry Collector and the Incident journey dashboard (eks), cloudnative-pg,
+#                and with EXPOSURE=alb / DOMAIN the Load Balancer Controller and ExternalDNS.
 #                Cluster-wide; a human applies them (`make addons`).
 #   tier=app     consoletrack and demo-app, namespaced; `make deploy` and CI (deploy.yaml)
 #                apply only these (`helmfile -l tier=app apply`).
@@ -37,6 +38,8 @@ exports this; anything else running helmfile must too. */}}
 {{- end }}
 {{- $alb := eq .Values.exposure "alb" }}
 {{- $dns := ne .Values.domain "" }}
+{{- /* Tempo, Loki, the collector, and the Incident journey dashboard (eks only; kind uses Compose's). */}}
+{{- $observability := and (eq .Values.target "eks") .Values.observability }}
 {{- $cidrs := .Values.allowedCidrs }}
 {{- /* One demo-app fault for the baseline scenarios: --state-values-set demoFault=oom|badImage|badProbe. */}}
 {{- $fault := .Values.demoFault }}
@@ -64,6 +67,11 @@ repositories:
     url: https://aws.github.io/eks-charts
   - name: external-dns
     url: https://kubernetes-sigs.github.io/external-dns/
+  # Grafana's community-maintained charts: Tempo and Loki moved here from grafana/helm-charts.
+  - name: grafana-community
+    url: https://grafana-community.github.io/helm-charts
+  - name: open-telemetry
+    url: https://open-telemetry.github.io/opentelemetry-helm-charts
 
 helmDefaults:
   # Wait for every resource to be ready, and roll back a failed upgrade.
@@ -107,7 +115,64 @@ releases:
       - values/kube-prometheus-stack.yaml
       {{- if eq .Values.target "local" }}
       - values/kube-prometheus-stack-local.yaml
+      {{- else }}
+      # Tempo and Loki datasources, the default dashboards off, remote write on.
+      - values/kube-prometheus-stack-eks.yaml
       {{- end }}
+
+  # Observability on EKS (docs/observability.md). On kind, `make local` runs the same stack in
+  # Compose, so these four stay out of the local environment.
+  - name: tempo
+    namespace: monitoring
+    chart: grafana-community/tempo
+    version: 3.1.0
+    installed: {{ $observability }}
+    labels:
+      tier: addons
+    needs:
+      - monitoring/kube-prometheus-stack
+    values:
+      - values/tempo.yaml
+
+  - name: loki
+    namespace: monitoring
+    chart: grafana-community/loki
+    version: 18.15.1
+    installed: {{ $observability }}
+    labels:
+      tier: addons
+    needs:
+      - monitoring/kube-prometheus-stack
+    values:
+      - values/loki.yaml
+
+  - name: otel-collector
+    namespace: monitoring
+    chart: open-telemetry/opentelemetry-collector
+    version: 0.175.1
+    installed: {{ $observability }}
+    labels:
+      tier: addons
+    needs:
+      - monitoring/kube-prometheus-stack
+      - monitoring/tempo
+      - monitoring/loki
+    values:
+      - values/otel-collector.yaml.gotmpl
+
+  # The Incident journey dashboard for the Grafana sidecar, from the one JSON file `make local`
+  # also mounts (nothing is copied into the chart).
+  - name: grafana-dashboards
+    namespace: monitoring
+    chart: ./charts/grafana-dashboards
+    installed: {{ $observability }}
+    labels:
+      tier: addons
+    needs:
+      - monitoring/kube-prometheus-stack
+    values:
+      - dashboards:
+          incident-journey.json: {{ readFile "../observability/grafana/dashboards/incident-journey.json" | toJson }}
 
   - name: cloudnative-pg
     namespace: cnpg-system
@@ -213,6 +278,8 @@ releases:
           trailName: {{ .Values.trailName | quote }}
           canarySecurityGroupId: {{ .Values.canarySecurityGroupId | quote }}
           watchedIamPaths: {{ .Values.watchedIamPaths | quote }}
+        observability:
+          enabled: {{ $observability }}
         app:
           intakeMode: {{ .Values.intakeMode }}
           triageModel: {{ .Values.triageModel | quote }}

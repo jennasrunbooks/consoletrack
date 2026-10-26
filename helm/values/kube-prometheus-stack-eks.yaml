@@ -1,0 +1,58 @@
+# kube-prometheus-stack on EKS (helm/environments/eks.yaml), on top of kube-prometheus-stack.yaml:
+# the Tempo and Loki datasources and the dashboards that go with them (#99). Not read on kind,
+# where `make local`'s Compose Grafana does the same job.
+
+prometheus:
+  prometheusSpec:
+    # The OpenTelemetry Collector remote-writes ConsoleTrack's metrics (ct_*) here: the apps send
+    # them over OTLP and serve no /metrics for them. Cluster-internal only; the Service is
+    # ClusterIP.
+    enableRemoteWriteReceiver: true
+
+grafana:
+  # The long list of default dashboards (etcd, API server, CoreDNS, ...) isn't useful for this
+  # cluster. The ones worth keeping (node, pod, Alertmanager overview) and the Incident journey
+  # dashboard come from the grafana-dashboards release; Intake health from the consoletrack chart.
+  defaultDashboardsEnabled: false
+  grafana.ini:
+    dashboards:
+      # Incident journey opens first, as it does in `make local`. The sidecar writes ConfigMaps
+      # to /tmp/dashboards/<key>.
+      default_home_dashboard_path: /tmp/dashboards/incident-journey.json
+  # Same UIDs as observability/grafana/provisioning/datasources/datasources.yaml (Prometheus is
+  # `prometheus` in this chart already), so the dashboard's queries and the trace-to-logs links
+  # work unchanged. `$$` keeps Grafana from expanding ${...} while it reads this file.
+  additionalDataSources:
+    - name: Tempo
+      type: tempo
+      uid: tempo
+      access: proxy
+      url: http://tempo.monitoring.svc.cluster.local:3200
+      editable: false
+      jsonData:
+        # "Related logs" on a span: the Loki lines with this trace's ID, from any ConsoleTrack service.
+        tracesToLogsV2:
+          datasourceUid: loki
+          spanStartTimeShift: -5m
+          spanEndTimeShift: 5m
+          customQuery: true
+          query: '{service_name=~".+"} | trace_id="$${__trace.traceId}"'
+        tracesToMetrics:
+          datasourceUid: prometheus
+        nodeGraph:
+          enabled: true
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      editable: false
+      jsonData:
+        # A log line's trace_id (structured metadata) links back to the trace in Tempo.
+        derivedFields:
+          - name: TraceID
+            matcherType: label
+            matcherRegex: trace_id
+            datasourceUid: tempo
+            url: "$${__value.raw}"
+            urlDisplayLabel: Open trace

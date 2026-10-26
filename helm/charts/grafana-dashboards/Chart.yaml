@@ -1,0 +1,6 @@
+apiVersion: v2
+name: grafana-dashboards
+description: Dashboards for kube-prometheus-stack's Grafana sidecar, each a labelled ConfigMap built from a JSON file the Helmfile passes in.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
