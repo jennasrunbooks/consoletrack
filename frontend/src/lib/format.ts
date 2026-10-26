@@ -239,7 +239,7 @@ export function maskSourceIp(ip: string): string {
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
   if (v4) return `${v4[1]}.${v4[2]}.${v4[3]}.x`;
   if (ip.includes(":") && /^[0-9a-fA-F:]+$/.test(ip)) {
-    const [head] = ip.split("::");
+    const head = ip.split("::")[0] ?? "";
     const groups = head.split(":").filter(Boolean).slice(0, 4);
     return `${groups.join(":")}::/64`;
   }
