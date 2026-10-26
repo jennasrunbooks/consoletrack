@@ -17,7 +17,9 @@ worker or the agent. The same path for an auto fix and a human's approval:
 A refusal before anything is applied downgrades an auto fix to manual (it waits for a human,
 with the reason) and fails a human's approval. Every step is appended to `remediations.steps`
 and committed as it happens, so the incident page shows progress. A backend that dies mid-run
-leaves a `running` row whose lease expires; the next claim rolls back whatever was applied.
+leaves a `running` row whose lease expires; the next claim records an `interrupted` step and
+rolls back whatever was applied. The fix is `failed`, but the policy gate doesn't count it as a
+failed fix of the workload (#105): it was never verified, not proven wrong.
 
 Annotations (#79): the patch and the rollback both carry `consoletrack.io/remediation: <id>` and
 `consoletrack.io/action: patch|rollback` on the Deployment. The Deployment controller copies them
@@ -80,6 +82,8 @@ REMEDIATION_ANNOTATION = "consoletrack.io/remediation"
 ACTION_ANNOTATION = "consoletrack.io/action"
 # How long to wait for the controller to see a rollback before removing the annotations anyway.
 ANNOTATION_SETTLE = timedelta(seconds=30)
+# The step recorded when a backend restart cut a run off after the patch (see interrupted_cleanly).
+INTERRUPTED_STEP = "interrupted"
 
 
 class Stopped(Exception):
@@ -172,8 +176,10 @@ class RemediationApplier:
 
     def _run(self, claim: Claim) -> None:
         if claim.applied is not None:
+            reason = "the backend stopped before verify finished"
             with self._span("remediation.verify", claim):
-                self._roll_back(claim, claim.applied, "the backend stopped before verify finished")
+                self._record(claim, INTERRUPTED_STEP, False, reason)
+                self._roll_back(claim, claim.applied, reason)
             return
         with self._span("remediation.validate", claim) as span:
             patch = self._validate(claim)
@@ -442,6 +448,17 @@ class _Failed(Exception):
     def __init__(self, step: str, message: str) -> None:
         self.step = step
         super().__init__(message)
+
+
+def interrupted_cleanly(row: Any) -> bool:
+    """Whether a failed fix only failed because a backend restart interrupted it, and its
+    rollback then succeeded. The policy gate doesn't count such a fix as failed (#105); a fix
+    whose rollback failed still counts, because a human must look at the workload."""
+    names = [(s.get("step"), s.get("ok")) for s in row.steps or []]
+    if (INTERRUPTED_STEP, False) not in names:
+        return False
+    after = names[names.index((INTERRUPTED_STEP, False)) + 1 :]
+    return ("rollback", True) in after and ("rollback", False) not in after
 
 
 def _step(row: Any, step: str, at: datetime, ok: bool, detail: str) -> None:
