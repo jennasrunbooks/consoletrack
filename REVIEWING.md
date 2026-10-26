@@ -32,14 +32,14 @@ The full table is in [product-spec.md → Scope](product-spec.md#scope).
 
 | In the submission (Phase 1, Oct 26) | Phase 2 (Nov 16) |
 |---|---|
-| Alertmanager → incident → triage agent with read-only `k8s-mcp` | Revert (the gated GitHub workflow) |
+| Alertmanager → incident → triage agent with read-only `k8s-mcp` | Revert (the gated GitHub workflow) and the IAM scenarios (demo app role permission removed, Pod Identity, trust and KMS policies) |
 | CloudTrail → EventBridge → SQS change intake, intake health, canary | Codify (the agent drafts a Terraform PR) |
 | Read-only `aws-mcp` | Scripted scenarios `make demo-drift`, `make demo-identity` |
 | Security-group scenario (by hand in the console) and three cluster faults | Eval harness `make eval` (every scenario, N runs) |
 | Dashboard: incidents, change log, evidence, Accept, postmortem editor | Attribute-level drift from `terraform plan -refresh-only` |
 | Automatic OOM fix behind the policy gate | More remediation kinds (rollback, probe fixes) |
 | OpenTelemetry in Grafana (collector, Tempo, Loki, the Incident journey dashboard) on EKS and with `make local`; metrics reach Prometheus | A link from each incident and change to its Grafana trace |
-| Terraform + Helmfile on EKS, `make local`, CI/CD, agent team and extension pack | `make demo-replay` (still a stub); dev auto-deploy with production behind approval |
+| Terraform + Helmfile on EKS, `make local`, CI/CD, agent team, context docs, and the guard hooks | `make demo-replay` (still a stub); dev auto-deploy with production behind approval; an evidence-based policy gate; the extension pack's skills and reviewer subagent |
 
 ## Three review paths
 
@@ -100,7 +100,7 @@ Points are the rubric's maximum. Where something is partial, it says so.
 
 - **Asks:** the team, and how its members collaborate.
 - **Evidence:** [docs/agent-team.md](docs/agent-team.md): [roles](docs/agent-team.md#roles), [how an issue becomes a merged PR](docs/agent-team.md#how-work-flows), [rules for parallel agents](docs/agent-team.md#rules-that-keep-parallel-agents-from-colliding), [access by role](docs/agent-team.md#access-by-role), [evidence](docs/agent-team.md#evidence).
-- **Verify:** the [pull requests](https://github.com/jennasrunbooks/consoletrack/pulls?q=is%3Apr) authored by `jksprattler-agent` each close an issue, with the review thread on the PR.
+- **Verify:** the [pull requests](https://github.com/jennasrunbooks/consoletrack/pulls?q=is%3Apr) authored by `jksprattler-agent`: feature PRs close or reference their issue (`Closes #N` / `Part of #N`), with the review thread on the PR.
 
 ### 4. Context management (2)
 
@@ -168,7 +168,7 @@ Points are the rubric's maximum. Where something is partial, it says so.
   - Code: [policy_gate.py](backend/app/services/policy_gate.py), [remediation_validator.py](backend/app/services/remediation_validator.py).
   - Spec: [product-spec.md → Remediation modes](product-spec.md#remediation-modes). Built in [issue #34](https://github.com/jennasrunbooks/consoletrack/issues/34) / [PR #63](https://github.com/jennasrunbooks/consoletrack/pull/63).
 - **Verify:** demo site, incident **INC-11**: alert, diagnosis, automatic fix, resolved. Locally, `make local-oom-run` prints PASS after the incident resolves. Video: <!-- TODO mm:ss -->.
-- **Partial:** the gate's `medium` threshold relies on self-reported confidence; the reasons and the planned evidence-based gate are in the graduation doc. Rollback of a bad image stays manual, and Revert is Phase 2.
+- **Known limits:** the gate's `medium` threshold relies on self-reported confidence; the reasons and the planned evidence-based gate are in the graduation doc. Rollback of a bad image stays manual, and Revert is Phase 2.
 
 ## Numbers, measured not guessed
 
@@ -188,7 +188,7 @@ Run in the devcontainer on Oct 24, from the repo root. These need no Docker and 
 | Compose invariants | `make test-compose` | 50 passed |
 
 **Not run here (need Docker, so they run in CI):** the backend integration tests (`make test-integration`,
-Testcontainers Postgres), the kind RBAC tests (`make test-k8s`), `make local`, and `make demo-replay`.
+Testcontainers Postgres), the kind RBAC tests (`make test-k8s`), and `make local`.
 
 ## Safety and permissions
 
