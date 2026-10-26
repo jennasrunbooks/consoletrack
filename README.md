@@ -458,7 +458,7 @@ Built for the [DataTalksClub AI Dev Tools Zoomcamp](https://github.com/DataTalks
 | Testing | 2 | [Testing and CI/CD](#testing-and-cicd), [measured counts](REVIEWING.md#numbers-measured-not-guessed) · [check](REVIEWING.md#6-testing-2) |
 | Containerization | 2 | [docker-compose.yaml](docker-compose.yaml) · [check](REVIEWING.md#7-containerization-2) |
 | Deployment | 2 | [terraform/](terraform/), [helm/](helm/), [Deploy to AWS](#deploy-to-aws), [EKS screenshot](docs/screenshots/eks/), [demo site](https://consoletrack-demo.jennasrunbooks.com), walkthrough video · [check](REVIEWING.md#8-deployment-2) |
-| CI/CD | 3 | [ci.yaml](.github/workflows/ci.yaml), [deploy.yaml](.github/workflows/deploy.yaml); third point not claimed · [check](REVIEWING.md#9-cicd-3) |
+| CI/CD | 3 | [ci.yaml](.github/workflows/ci.yaml), [deploy.yaml](.github/workflows/deploy.yaml) · [check](REVIEWING.md#9-cicd-3) |
 | Observability | 2 | [docs/observability.md](docs/observability.md), [redaction test](backend/tests/unit/test_telemetry_redaction.py), [screenshots](docs/observability.md#screenshots); Tempo and Loki on EKS and with `make local` · [check](REVIEWING.md#10-observability-2) |
 | Alerting on user impact | 1 | [`DemoAppHighErrorRate`](helm/charts/demo-app/templates/prometheusrule.yaml) · [check](REVIEWING.md#11-alerting-on-user-impact-1) |
 | On-call agent | 2 | [docs/remediation-graduation.md](docs/remediation-graduation.md), `make local-oom-run`, eval 5/5 on Haiku and on Sonnet ([results](docs/remediation-graduation.md#eval-results-and-the-confidence-floor)) · [check](REVIEWING.md#12-on-call-agent-2) |

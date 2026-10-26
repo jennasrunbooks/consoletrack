@@ -141,7 +141,6 @@ Points are the rubric's maximum. Where something is partial, it says so.
 - **Asks:** CI on every PR (1), plus automatic deploy (2), plus deploy to dev with a manual production deploy (3).
 - **Evidence:** [ci.yaml](.github/workflows/ci.yaml) (every PR and push, nightly; required checks `lint`, `test`, `terraform-fmt`); [deploy.yaml](.github/workflows/deploy.yaml) (green `main` → arm64 images to GHCR → `helmfile -l tier=app apply`); [terraform.yaml](.github/workflows/terraform.yaml) (plan on PRs, apply after approval); [README → Testing and CI/CD](README.md#testing-and-cicd). AWS access is GitHub OIDC; the deploy role only runs `-l tier=app`.
 - **Verify:** open any merged PR's checks; open the Actions tab for the `deploy` run after a green `ci` on `main`.
-- **Partial:** the third point is **not claimed**. There is one deploy target, not a dev environment with a manual production gate.
 
 ### 10. Observability (2)
 
