@@ -23,7 +23,7 @@ backend's own `remediator` identity, and only after the policy gate allows them.
 | Way | Needs | Time |
 |---|---|---|
 | [Demo site](https://consoletrack-demo.jennasrunbooks.com): the real frontend, recorded sample data | a browser | 5 min |
-| [Walkthrough video](https://youtu.be/dhfp_0nMhyo) of the live EKS deployment | a browser | 3:30 min |
+| [Walkthrough video](https://youtu.be/dhfp_0nMhyo) of the live EKS deployment | a browser | 3 min |
 | `make local`: the full system on kind and Docker Compose, no AWS ([README](README.md#try-it-without-aws)) | Docker, kind, an Anthropic API key | 30 min |
 | `make up`: your own AWS account ([README](README.md#deploy-to-aws)) | AWS account, a domain | 45 min, about $0.20/hour |
 
@@ -133,8 +133,8 @@ Points are the rubric's maximum. Where something is partial, it says so.
   - EKS via [terraform/](terraform/) and [helm/](helm/); [README → Deploy to AWS](README.md#deploy-to-aws).
   - The always-on [demo site](https://consoletrack-demo.jennasrunbooks.com), published by the Pages workflow ([#89](https://github.com/jennasrunbooks/consoletrack/issues/89)).
   - The EKS screenshot of a real console change: [docs/screenshots/eks/](docs/screenshots/eks/change-detail-console-sg.png).
-  - The [walkthrough video](https://youtu.be/dhfp_0nMhyo) of the live deployment (3:30).
-- **Verify:** watch the [3:30 video](https://youtu.be/dhfp_0nMhyo). No cluster is kept running for visitors, so the live EKS deployment is shown by the video and screenshot. `make up` builds the same thing in your account.
+  - The [walkthrough video](https://youtu.be/dhfp_0nMhyo) of the live deployment.
+- **Verify:** watch the [3 min video](https://youtu.be/dhfp_0nMhyo). No cluster is kept running for visitors, so the live EKS deployment is shown by the video and screenshot. `make up` builds the same thing in your account.
 
 ### 9. CI/CD (3)
 
