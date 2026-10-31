@@ -9,7 +9,7 @@ ConsoleTrack catches every out-of-band AWS change within minutes, records who ma
 
 ## See it in 3 minutes
 
-- **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and the policy gate fixed on its own, a real recorded OOM run where you approve the fix by hand, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it.
+- **Recorded demo, always on:** [consoletrack-demo.jennasrunbooks.com](https://consoletrack-demo.jennasrunbooks.com). The real frontend with sample data and no live AWS: click through an OOM incident the agent diagnosed and the policy gate fixed on its own, a real recorded OOM run where you approve the fix by hand, a console change waiting for review, and the postmortem editor. Nothing to log in to; a reload resets it. How it's built: [A Zero-Cost Demo for a Cloud App](https://blog.jennasrunbooks.com/a-zero-cost-demo-for-a-cloud-app).
 - **Recorded walkthrough of the live deployment ([on YouTube](https://youtu.be/dhfp_0nMhyo)):** the system running on EKS, clicked through as admin, on the Jenna's Runbooks YouTube channel.
 - **Run it yourself:** `make local` on your machine with kind and Docker ([Try it without AWS](#try-it-without-aws)), or `make up` in your own AWS account ([Deploy to AWS](#deploy-to-aws)).
 
