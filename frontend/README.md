@@ -68,8 +68,9 @@ e2e/              Playwright specs; fixtures.ts fails any test that requests bey
 
 ## Recorded demo site
 
-`npm run build:demo` publishes the mock mode as a static site (GitHub Pages; the workflow is proposed in
-[`../docs/proposed-workflows/pages.yaml`](../docs/proposed-workflows/pages.yaml)). It differs from `dev:mock`:
+The write-up behind it: [A Zero-Cost Demo for a Cloud App](https://blog.jennasrunbooks.com/a-zero-cost-demo-for-a-cloud-app).
+
+`npm run build:demo` publishes the mock mode as a static site on GitHub Pages ([`.github/workflows/pages.yaml`](../.github/workflows/pages.yaml)). It differs from `dev:mock`:
 
 - **Signed in as `demo` (admin) on every load**, with no login form; logging out lands on a "Restart demo" page.
   Nothing is stored, so a reload resets the state.
