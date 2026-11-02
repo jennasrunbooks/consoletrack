@@ -142,7 +142,7 @@ canary:
   schedule: "*/15 * * * *"
   image:
     repository: public.ecr.aws/aws-cli/aws-cli
-    tag: 2.37.4
+    tag: 2.39.3
     digest: sha256:fdd8d1fcbea9c371678dee5a40df8b178c7a781b4586605756ee28114c97ead6
   resources:
     requests: {cpu: 50m, memory: 96Mi}
