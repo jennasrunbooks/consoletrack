@@ -90,7 +90,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "moto", extras = ["ec2", "iam", "s3"], specifier = ">=5.1" },
+    { name = "moto", extras = ["ec2", "iam", "s3"], specifier = ">=5.2.4" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=6.0" },
 ]
