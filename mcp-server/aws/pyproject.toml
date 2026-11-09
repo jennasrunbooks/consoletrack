@@ -5,18 +5,18 @@ description = "Read-only AWS MCP server for the ConsoleTrack triage agent"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "boto3>=1.40",
-    "fastmcp>=4.1.4,<5",
-    "opentelemetry-exporter-otlp-proto-http>=1.45,<2",
+    "boto3>=1.43.123",
+    "fastmcp>=4.1.5,<5",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.2,<2",
     "opentelemetry-sdk>=1.45,<2",
-    "pydantic>=2.10",
-    "pydantic-settings>=2.6",
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
 ]
 
 [dependency-groups]
 dev = [
     "moto[ec2,iam,s3]>=5.2.4",
-    "pytest>=8.3",
+    "pytest>=9.2.0",
     "pytest-cov>=6.0",
 ]
 
