@@ -3,9 +3,9 @@
 # `docker buildx build --platform linux/arm64 backend/`; Compose builds it for the local machine.
 # Bases are pinned by version and multi-arch index digest; bump both together.
 
-FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv
 
-FROM python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS build
+FROM python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS build
 COPY --from=uv /uv /usr/local/bin/uv
 # The image's own Python, never a downloaded one; compiled bytecode, so the runtime user needn't
 # write any.
@@ -16,7 +16,7 @@ COPY pyproject.toml uv.lock ./
 # --locked fails if uv.lock is stale; dev tools (pytest, ruff, testcontainers) stay out.
 RUN uv sync --locked --no-dev --no-install-project
 
-FROM python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+FROM python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 # /run/consoletrack holds Compose's generated local secrets (app/compose_entrypoint.py); a named
 # volume mounted there starts with this ownership.
 RUN useradd --system --uid 10001 --user-group --no-create-home --home-dir /nonexistent consoletrack \
